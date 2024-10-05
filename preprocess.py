@@ -42,7 +42,7 @@ poi_df = pd.read_excel(poi_file)
 print("Preprocessing data...")
 df['from_tract'] = df['from_tract'].apply(clean_and_pad)
 df['to_tract'] = df['to_tract'].apply(clean_and_pad)
-zones['STAT11'] = zones['STAT11'].apply(clean_and_pad)
+zones['YISHUV_STAT11'] = zones['YISHUV_STAT11'].apply(clean_and_pad)
 zones = zones.to_crs(epsg=4326)
 
 print("Sample of preprocessed df:")
@@ -147,15 +147,27 @@ def process_poi_trips(poi_id, poi_name, trip_type):
     
     trip_summary = pd.concat([metro_summary, outside_row], ignore_index=True)
     
-    return trip_summary
+    # Save total trips information
+    trips_info = {
+        'total_trips': total_trips,
+        'metro_trips': metro_trips_total,
+        'outside_trips': outside_trips_total
+    }
+    
+    return trip_summary, trips_info
 
 # Process all POIs
 for poi_id, poi_info in poi_locations.items():
     for trip_type in ['inbound', 'outbound']:
-        data = process_poi_trips(poi_id, poi_info['name'], trip_type)
+        data, trips_info = process_poi_trips(poi_id, poi_info['name'], trip_type)
         if data is not None:
             output_file = os.path.join(output_dir, f"{poi_info['name'].replace(' ', '_')}_{trip_type}_trips.csv")
             data.to_csv(output_file, index=False)
+            
+            # Save trips info
+            trips_info_file = os.path.join(output_dir, f"{poi_info['name'].replace(' ', '_')}_{trip_type}_trips_info.csv")
+            pd.DataFrame([trips_info]).to_csv(trips_info_file, index=False)
+            
             print(f"Processed {trip_type} data saved for {poi_info['name']}")
 
 # Add this debug print to see the unique tract values in the dataframe
