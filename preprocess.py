@@ -1,47 +1,23 @@
 import pandas as pd
 import geopandas as gpd
 import os
+import requests
+import time
 
-# File paths
-base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
-excel_file = os.path.join(base_dir, 'All-Stages.xlsx')
-gdb_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')
-poi_file = os.path.join(base_dir, 'output/poi_with_approximate_coordinates.csv')
-output_dir = os.path.join(base_dir, 'output', 'processed_poi_data')
-os.makedirs(output_dir, exist_ok=True)
+def geocode_plus_code(plus_code):
+    base_url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "address": plus_code,
+        "key": "AIzaSyCaPaazlDYXSJIGFXuzjlhcAE1zt-cyQ8U"  # Replace with your Google Maps API key
+    }
+    response = requests.get(base_url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if data['status'] == 'OK':
+            location = data['results'][0]['geometry']['location']
+            return location['lat'], location['lng']
+    return None
 
-# POI tract codes and names
-poi_dict = {
-    '1': 'Emek Shara industrial area',
-    '2': 'BGU',
-    '3': 'Soroka Hospital',
-    '4': 'Yes Planet',
-    '5': 'Grand Kenyon',
-    '6': 'Omer industrial area',
-    '7': 'K collage',
-    '8': 'HaNegev Mall',
-    '9': 'BIG',
-    '10': 'Assuta Hospital',
-    '11': 'Gev Yam',
-    '12': 'Ramat Hovav Industry',
-    '13': 'Sami Shimon collage'
-}
-
-print("Loading data...")
-df = pd.read_excel(excel_file, sheet_name='StageB1')
-zones = gpd.read_file(gdb_file)
-poi_df = pd.read_csv(poi_file)
-
-print(zones.columns)
-
-print(f"Number of zones loaded: {len(zones)}")
-print(f"CRS of zones: {zones.crs}")
-print(f"Columns in zones: {zones.columns.tolist()}")
-print(f"Columns in df: {df.columns.tolist()}")
-
-print("\nPreprocessing data...")
-
-# Clean and pad function
 def clean_and_pad(value):
     if pd.isna(value):
         return '000000'
@@ -50,58 +26,115 @@ def clean_and_pad(value):
     except ValueError:
         return '000000'
 
-# Apply clean_and_pad to relevant columns
+# File paths
+base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
+excel_file = os.path.join(base_dir, 'All-Stages.xlsx')
+gdb_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')
+poi_file = os.path.join(base_dir, 'POI-PlusCode.xlsx')
+output_dir = os.path.join(base_dir, 'output', 'processed_poi_data')
+os.makedirs(output_dir, exist_ok=True)
+
+print("Loading data...")
+df = pd.read_excel(excel_file, sheet_name='StageB1')
+zones = gpd.read_file(gdb_file)
+poi_df = pd.read_excel(poi_file)
+
+print("Preprocessing data...")
 df['from_tract'] = df['from_tract'].apply(clean_and_pad)
 df['to_tract'] = df['to_tract'].apply(clean_and_pad)
 zones['STAT11'] = zones['STAT11'].apply(clean_and_pad)
-
-# Convert zones to WGS84 for Folium
 zones = zones.to_crs(epsg=4326)
 
-def process_poi(poi_tract, poi_name):
-    print(f"\nProcessing POI: {poi_name} (Tract: {poi_tract})")
+print("Geocoding POI locations...")
+poi_locations = {}
+for _, row in poi_df.iterrows():
+    plus_code = row['Plus-Code']
+    if "Israel" not in plus_code:
+        plus_code += " Israel"
+    print(f"Processing POI: {row['Name']} (Plus Code: {plus_code})")
     
-    # Filter trips to this POI
-    poi_trips = df[df['to_tract'] == clean_and_pad(poi_tract)]
+    location = geocode_plus_code(plus_code)
+    if location:
+        lat, lon = location
+        poi_locations[str(row['ID'])] = {
+            'name': row['Name'],
+            'lat': lat,
+            'lon': lon,
+            'tract': clean_and_pad(row['ID'])
+        }
+        print(f"Successfully geocoded: {row['Name']}")
+    else:
+        print(f"Could not geocode Plus Code for {row['Name']}")
     
-    # Mark outside trips with '000000' instead of filtering them out
-    poi_trips.loc[(poi_trips['IC'] == True) | (poi_trips['from_tract'] == '0'), 'from_tract'] = '000000'
+    time.sleep(0.5)  # Add a small delay between requests to avoid rate limiting
+
+# Save POI locations with coordinates
+poi_locations_df = pd.DataFrame.from_dict(poi_locations, orient='index')
+poi_locations_df = poi_locations_df.reset_index().rename(columns={'index': 'ID'})
+poi_locations_df['ID'] = poi_locations_df['ID'].astype(int)
+poi_locations_df.to_csv(os.path.join(output_dir, 'poi_with_exact_coordinates.csv'), index=False)
+print("POI locations with exact coordinates saved.")
+
+def process_poi_trips(poi_tract, poi_name, trip_type):
+    print(f"\nProcessing {trip_type} trips for POI: {poi_name} (Tract: {poi_tract})")
     
-    # Calculate total trips and percentages
-    total_trips = poi_trips.groupby('from_tract').agg({
+    if trip_type == 'inbound':
+        poi_trips = df[df['to_tract'] == poi_tract]
+    else:  # outbound
+        poi_trips = df[df['from_tract'] == poi_tract]
+    
+    # Separate trips from outside the metro
+    outside_trips = poi_trips[(poi_trips['IC'] == True) | (poi_trips['from_tract'] == '000000') | (poi_trips['to_tract'] == '000000')]
+    metro_trips = poi_trips[~((poi_trips['IC'] == True) | (poi_trips['from_tract'] == '000000') | (poi_trips['to_tract'] == '000000'))]
+    
+    # Process metro trips
+    if trip_type == 'inbound':
+        group_col = 'from_tract'
+    else:
+        group_col = 'to_tract'
+    
+    metro_summary = metro_trips.groupby(group_col).agg({
         'count': 'sum',
         'Frequency': lambda x: (x == ' Frequent').mean() * 100,
         'mode': lambda x: (x == 'car').mean() * 100,
         'purpose': lambda x: (x == 'Work ').mean() * 100
     }).reset_index()
     
-    total_trips.columns = ['from_tract', 'total_trips', 'percent_frequent', 'percent_car', 'percent_work']
+    metro_summary.columns = ['tract', 'total_trips', 'percent_frequent', 'percent_car', 'percent_work']
     
-    print("\nSample of processed data:")
-    print(total_trips.head())
-    print(f"Total trips to this POI: {total_trips['total_trips'].sum()}")
+    # Calculate total trips
+    total_trips = poi_trips['count'].sum()
+    metro_trips_total = metro_trips['count'].sum()
+    outside_trips_total = outside_trips['count'].sum()
     
-    return total_trips
+    print(f"Total trips: {total_trips}")
+    print(f"Trips from/to Beer Sheva metro: {metro_trips_total}")
+    print(f"Trips from/to outside metro: {outside_trips_total}")
+    
+    # Add a row for outside trips
+    outside_row = pd.DataFrame({
+        'tract': ['000000'],
+        'total_trips': [outside_trips_total],
+        'percent_frequent': [outside_trips['Frequency'].eq(' Frequent').mean() * 100],
+        'percent_car': [outside_trips['mode'].eq('car').mean() * 100],
+        'percent_work': [outside_trips['purpose'].eq('Work ').mean() * 100]
+    })
+    
+    trip_summary = pd.concat([metro_summary, outside_row], ignore_index=True)
+    
+    return trip_summary
 
 # Process all POIs
-processed_data = {}
-for poi_tract, poi_name in poi_dict.items():
-    data = process_poi(poi_tract, poi_name)
-    if data is not None:
-        processed_data[poi_name] = data
-        # Save processed data
-        output_file = os.path.join(output_dir, f"{poi_name.replace(' ', '_')}_processed_data.csv")
-        data.to_csv(output_file, index=False)
-        print(f"Processed data saved for {poi_name}")
-
-print("All POI data has been processed and saved in the output directory.")
+for poi_id, poi_info in poi_locations.items():
+    for trip_type in ['inbound', 'outbound']:
+        data = process_poi_trips(poi_info['tract'], poi_info['name'], trip_type)
+        if data is not None:
+            output_file = os.path.join(output_dir, f"{poi_info['name'].replace(' ', '_')}_{trip_type}_trips.csv")
+            data.to_csv(output_file, index=False)
+            print(f"Processed {trip_type} data saved for {poi_info['name']}")
 
 # Save zones for later use
-try:
-    zones.to_file(os.path.join(output_dir, "zones.geojson"), driver="GeoJSON")
-    print("Zones data saved as GeoJSON.")
-except AttributeError as e:
-    print(f"Error saving zones data: {e}")
-    print("Attempting to save zones data using an alternative method...")
-    zones.to_file(os.path.join(output_dir, "zones.shp"))
-    print("Zones data saved as Shapefile.")
+zones.to_file(os.path.join(output_dir, "zones.geojson"), driver="GeoJSON")
+print("Zones data saved as GeoJSON.")
+
+print("All POI data has been processed and saved in the output directory.")

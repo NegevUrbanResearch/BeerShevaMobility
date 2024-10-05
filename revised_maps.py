@@ -5,96 +5,25 @@ from folium.plugins import MarkerCluster
 import os
 import branca.colormap as cm
 import numpy as np
-import requests
-import time
 
-def geocode_plus_code(plus_code):
-    base_url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {
-        "address": plus_code,
-        "key": "api-key-here"  # Replace with your Google Maps API key
-    }
-    response = requests.get(base_url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data['status'] == 'OK':
-            location = data['results'][0]['geometry']['location']
-            return location['lat'], location['lng']
-    return None
-
-def load_poi_locations(excel_file):
+def load_poi_locations(csv_file):
     try:
-        poi_df = pd.read_excel(excel_file)
-        print(f"Loaded {len(poi_df)} POIs from the Excel file.")
+        poi_df = pd.read_csv(csv_file)
+        print(f"Loaded {len(poi_df)} POIs from the CSV file.")
+        return poi_df.set_index('ID').to_dict(orient='index')
     except Exception as e:
-        print(f"Error reading Excel file: {e}")
+        print(f"Error reading CSV file: {e}")
         return {}
 
-    poi_locations = {}
-    successful_geocodes = 0
-    failed_geocodes = 0
-
-    for _, row in poi_df.iterrows():
-        plus_code = row['Plus-Code']
-        if "Israel" not in plus_code:
-            plus_code += " Israel"
-        print(f"\nProcessing POI: {row['Name']} (Plus Code: {plus_code})")
-        
-        try:
-            location = geocode_plus_code(plus_code)
-            if location:
-                lat, lon = location
-                poi_locations[str(row['ID'])] = {
-                    'name': row['Name'],
-                    'lat': lat,
-                    'lon': lon
-                }
-                print(f"Successfully geocoded: {row['Name']}")
-                print(f"  Plus Code: {plus_code}")
-                print(f"  Latitude: {lat}, Longitude: {lon}")
-                successful_geocodes += 1
-            else:
-                print(f"Could not geocode Plus Code for {row['Name']}")
-                failed_geocodes += 1
-        except Exception as e:
-            print(f"Error geocoding Plus Code for {row['Name']}: {e}")
-            failed_geocodes += 1
-        
-        time.sleep(0.5)  # Add a small delay between requests to avoid rate limiting
-
-    print(f"\nGeocoding summary:")
-    print(f"- Successful geocodes: {successful_geocodes}")
-    print(f"- Failed geocodes: {failed_geocodes}")
-    print(f"- Total POIs processed: {len(poi_df)}")
-
-    return poi_locations
-
-def create_poi_map(poi_id, poi_info, inbound_trips, outbound_trips, zones):
+def create_poi_map(poi_id, poi_info, trip_data, zones):
     print(f"\nCreating map for POI: {poi_info['name']} (ID: {poi_id})")
     
-    # Print column names for debugging
-    print("Inbound trips columns:", inbound_trips.columns)
-    print("Outbound trips columns:", outbound_trips.columns)
+    # Ensure tract is string type in both dataframes
+    zones['YISHUV_STAT11'] = zones['YISHUV_STAT11'].astype(str)
+    trip_data['tract'] = trip_data['tract'].astype(str)
     
-    # Combine inbound and outbound trips
-    inbound_trips['trip_type'] = 'inbound'
-    outbound_trips['trip_type'] = 'outbound'
-    all_trips = pd.concat([inbound_trips, outbound_trips])
-    
-    # Calculate outside trips (assuming '0' represents trips from outside)
-    outside_trips = all_trips[all_trips['from_tract'] == '0']['total_trips'].sum()
-    
-    # Remove outside trips from the main dataset
-    all_trips = all_trips[all_trips['from_tract'] != '0']
-    
-    # Group by from_tract and sum the trips
-    trip_summary = all_trips.groupby('from_tract').agg({
-        'total_trips': 'sum',
-        'trip_type': lambda x: ', '.join(set(x))
-    }).reset_index()
-    
-    # Merge trip data with zones based on YISHUV_STAT11 and from_tract
-    zones_with_data = zones.merge(trip_summary, left_on='YISHUV_STAT11', right_on='from_tract', how='left')
+    # Merge trip data with zones based on YISHUV_STAT11 and tract
+    zones_with_data = zones.merge(trip_data, left_on='YISHUV_STAT11', right_on='tract', how='left')
     zones_with_data['total_trips'] = zones_with_data['total_trips'].fillna(0)
     
     print(f"Number of zones with trip data: {len(zones_with_data[zones_with_data['total_trips'] > 0])}")
@@ -110,10 +39,6 @@ def create_poi_map(poi_id, poi_info, inbound_trips, outbound_trips, zones):
                                  vmin=1,  # Start from 1 to exclude 0 trips
                                  vmax=max_trips)
     m.add_child(colormap)
-    
-    # Ensure YISHUV_STAT11 is included in the GeoJSON properties
-    zones_with_data = zones_with_data.to_crs(epsg=4326)
-    zones_with_data['YISHUV_STAT11'] = zones_with_data['YISHUV_STAT11'].astype(str)
     
     # Create a style function to handle zero trips
     def style_function(feature):
@@ -146,7 +71,9 @@ def create_poi_map(poi_id, poi_info, inbound_trips, outbound_trips, zones):
             popup_html = f"""
             <b>YISHUV_STAT11:</b> {row['YISHUV_STAT11']}<br>
             <b>Total Trips:</b> {row['total_trips']:.0f}<br>
-            <b>Trip Types:</b> {row['trip_type']}<br>
+            <b>Percent Frequent:</b> {row['percent_frequent']:.1f}%<br>
+            <b>Percent Car:</b> {row['percent_car']:.1f}%<br>
+            <b>Percent Work:</b> {row['percent_work']:.1f}%
             """
             folium.Marker(
                 location=[row.geometry.centroid.y, row.geometry.centroid.x],
@@ -155,6 +82,7 @@ def create_poi_map(poi_id, poi_info, inbound_trips, outbound_trips, zones):
             ).add_to(marker_cluster)
     
     # Add outside trips information
+    outside_trips = trip_data[trip_data['tract'] == '000000']['total_trips'].sum()
     outside_trips_html = f"""
     <h4>Outside Trips</h4>
     <p>Total trips from outside the Beer Sheva metropolitan area: {outside_trips:.0f}</p>
@@ -168,8 +96,8 @@ if __name__ == "__main__":
     print("Loading data...")
     # File paths
     base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
-    poi_locations_file = os.path.join(base_dir, 'POI-PlusCode.xlsx')
-    zones_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')
+    poi_locations_file = os.path.join(base_dir, 'output/processed_poi_data/poi_with_exact_coordinates.csv')
+    zones_file = os.path.join(base_dir, 'output/processed_poi_data/zones.geojson')
     output_dir = os.path.join(base_dir, 'output', 'poi_maps')
     os.makedirs(output_dir, exist_ok=True)
 
@@ -185,19 +113,28 @@ if __name__ == "__main__":
     # Create maps for all POIs
     for poi_id, poi_info in poi_locations.items():
         # Load trip data for this POI
-        inbound_file = os.path.join(base_dir, 'output', f"{poi_info['name']}_inbound_trips.csv")
-        outbound_file = os.path.join(base_dir, 'output', f"{poi_info['name']}_outbound_trips.csv")
+        inbound_file = os.path.join(base_dir, 'output/processed_poi_data', f"{poi_info['name'].replace(' ', '_')}_inbound_trips.csv")
+        outbound_file = os.path.join(base_dir, 'output/processed_poi_data', f"{poi_info['name'].replace(' ', '_')}_outbound_trips.csv")
         
         if os.path.exists(inbound_file) and os.path.exists(outbound_file):
             inbound_trips = pd.read_csv(inbound_file)
             outbound_trips = pd.read_csv(outbound_file)
             
-            print(f"\nInbound trips for {poi_info['name']}:")
-            print(inbound_trips.head())
-            print(f"\nOutbound trips for {poi_info['name']}:")
-            print(outbound_trips.head())
+            # Combine inbound and outbound trips
+            trip_data = pd.concat([inbound_trips, outbound_trips])
             
-            m = create_poi_map(poi_id, poi_info, inbound_trips, outbound_trips, zones)
+            # Group by tract and sum the trips
+            trip_summary = trip_data.groupby('tract').agg({
+                'total_trips': 'sum',
+                'percent_frequent': 'mean',
+                'percent_car': 'mean',
+                'percent_work': 'mean'
+            }).reset_index()
+            
+            print(f"\nProcessed data for {poi_info['name']}:")
+            print(trip_summary.head())
+            
+            m = create_poi_map(poi_id, poi_info, trip_summary, zones)
             
             # Save the map
             map_filename = f"{poi_info['name'].replace(' ', '_')}_map.html"
