@@ -45,43 +45,68 @@ df['to_tract'] = df['to_tract'].apply(clean_and_pad)
 zones['STAT11'] = zones['STAT11'].apply(clean_and_pad)
 zones = zones.to_crs(epsg=4326)
 
+print("Sample of preprocessed df:")
+print(df.head())
+print("\nUnique values in from_tract:", df['from_tract'].nunique())
+print("Unique values in to_tract:", df['to_tract'].nunique())
+
+# Load existing POI locations if available
+existing_poi_file = os.path.join(output_dir, 'poi_with_exact_coordinates.csv')
+if os.path.exists(existing_poi_file):
+    existing_poi_df = pd.read_csv(existing_poi_file)
+    existing_poi_df['ID'] = existing_poi_df['ID'].astype(str)
+    existing_poi_dict = existing_poi_df.set_index('ID').to_dict('index')
+    print(f"Loaded {len(existing_poi_dict)} existing POI coordinates")
+else:
+    existing_poi_dict = {}
+    print("No existing POI coordinates file found")
+
 print("Geocoding POI locations...")
 poi_locations = {}
 for _, row in poi_df.iterrows():
-    plus_code = row['Plus-Code']
-    if "Israel" not in plus_code:
-        plus_code += " Israel"
-    print(f"Processing POI: {row['Name']} (Plus Code: {plus_code})")
-    
-    location = geocode_plus_code(plus_code)
-    if location:
-        lat, lon = location
-        poi_locations[str(row['ID'])] = {
-            'name': row['Name'],
-            'lat': lat,
-            'lon': lon,
-            'tract': clean_and_pad(row['ID'])
-        }
-        print(f"Successfully geocoded: {row['Name']}")
+    poi_id = str(row['ID'])
+    if poi_id in existing_poi_dict:
+        poi_locations[poi_id] = existing_poi_dict[poi_id]
+        print(f"POI: {row['Name']} - Using existing coordinates")
     else:
-        print(f"Could not geocode Plus Code for {row['Name']}")
-    
-    time.sleep(0.5)  # Add a small delay between requests to avoid rate limiting
+        plus_code = row['Plus-Code']
+        if "Israel" not in plus_code:
+            plus_code += " Israel"
+        print(f"POI: {row['Name']} - Geocoding required")
+        
+        location = geocode_plus_code(plus_code)
+        if location:
+            lat, lon = location
+            poi_locations[poi_id] = {
+                'name': row['Name'],
+                'lat': lat,
+                'lon': lon,
+                'tract': clean_and_pad(str(row['ID']))
+            }
+            print(f"Successfully geocoded: {row['Name']}")
+        else:
+            print(f"Could not geocode Plus Code for {row['Name']}")
+        
+        time.sleep(0.5)
 
 # Save POI locations with coordinates
 poi_locations_df = pd.DataFrame.from_dict(poi_locations, orient='index')
 poi_locations_df = poi_locations_df.reset_index().rename(columns={'index': 'ID'})
-poi_locations_df['ID'] = poi_locations_df['ID'].astype(int)
 poi_locations_df.to_csv(os.path.join(output_dir, 'poi_with_exact_coordinates.csv'), index=False)
 print("POI locations with exact coordinates saved.")
 
-def process_poi_trips(poi_tract, poi_name, trip_type):
-    print(f"\nProcessing {trip_type} trips for POI: {poi_name} (Tract: {poi_tract})")
+def process_poi_trips(poi_id, poi_name, trip_type):
+    poi_id_padded = clean_and_pad(poi_id)
+    print(f"\nProcessing {trip_type} trips for POI: {poi_name} (ID: {poi_id_padded})")
     
     if trip_type == 'inbound':
-        poi_trips = df[df['to_tract'] == poi_tract]
+        poi_trips = df[df['to_tract'] == poi_id_padded]
     else:  # outbound
-        poi_trips = df[df['from_tract'] == poi_tract]
+        poi_trips = df[df['from_tract'] == poi_id_padded]
+    
+    print(f"Number of trips found: {len(poi_trips)}")
+    print("Sample of poi_trips:")
+    print(poi_trips.head())
     
     # Separate trips from outside the metro
     outside_trips = poi_trips[(poi_trips['IC'] == True) | (poi_trips['from_tract'] == '000000') | (poi_trips['to_tract'] == '000000')]
@@ -127,11 +152,17 @@ def process_poi_trips(poi_tract, poi_name, trip_type):
 # Process all POIs
 for poi_id, poi_info in poi_locations.items():
     for trip_type in ['inbound', 'outbound']:
-        data = process_poi_trips(poi_info['tract'], poi_info['name'], trip_type)
+        data = process_poi_trips(poi_id, poi_info['name'], trip_type)
         if data is not None:
             output_file = os.path.join(output_dir, f"{poi_info['name'].replace(' ', '_')}_{trip_type}_trips.csv")
             data.to_csv(output_file, index=False)
             print(f"Processed {trip_type} data saved for {poi_info['name']}")
+
+# Add this debug print to see the unique tract values in the dataframe
+print("\nUnique from_tract values:")
+print(df['from_tract'].unique())
+print("\nUnique to_tract values:")
+print(df['to_tract'].unique())
 
 # Save zones for later use
 zones.to_file(os.path.join(output_dir, "zones.geojson"), driver="GeoJSON")
