@@ -5,6 +5,7 @@ from folium.plugins import MarkerCluster
 import os
 import branca.colormap as cm
 import numpy as np
+from scipy import stats
 
 def load_poi_locations(csv_file):
     try:
@@ -40,58 +41,104 @@ def create_poi_map(poi_id, poi_info, trip_data, zones):
     print(f"Total outside trips: {total_outside_trips}")
 
     # Merge trip data with zones
-    zones_with_data = zones.merge(metro_trips, left_on='YISHUV_STAT11', right_on='tract', how='left')
+    zones_with_data = zones.merge(metro_trips, left_on='YISHUV_STAT11', right_on='tract', how='right')
     zones_with_data['total_trips'] = zones_with_data['total_trips'].fillna(0)
 
-    # Calculate log-transformed trip counts
-    zones_with_data['log_trips'] = np.log1p(zones_with_data['total_trips'])
+    # Filter out zones with no trips
+    zones_with_trips = zones_with_data[zones_with_data['total_trips'] > 0].copy()
+
+    print(f"Total zones: {len(zones_with_data)}")
+    print(f"Zones with trips: {len(zones_with_trips)}")
+
+    # Apply logarithmic transformation to trip counts
+    zones_with_trips['log_trips'] = np.log1p(zones_with_trips['total_trips'])
     
-    # Calculate max value for color scale (using log-transformed data)
-    max_log_trips = zones_with_data['log_trips'].max()
+    # Cap log-transformed trip counts at 95th percentile
+    log_trip_cap = zones_with_trips['log_trips'].quantile(0.95)
+    zones_with_trips['log_trips_capped'] = zones_with_trips['log_trips'].clip(upper=log_trip_cap)
+
+    print(f"Symbology approach for {poi_info['name']}:")
+    print(f"Mean trips: {zones_with_trips['total_trips'].mean():.2f}")
+    print(f"Median trips: {zones_with_trips['total_trips'].median():.2f}")
     
-    print(f"\nMax log trips: {max_log_trips}")
+    print(f"Trip count distribution:")
+    print(zones_with_trips['total_trips'].describe(percentiles=[.25, .5, .75, .95]))
+    print(f"Log-transformed trip count distribution:")
+    print(zones_with_trips['log_trips'].describe(percentiles=[.25, .5, .75, .95]))
+    print(f"95th percentile log trip count (cap value): {log_trip_cap:.2f}")
+
+    # Use a white to blue color scheme
+    colors = ['#ffffff', '#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
     
-    # Create color map with logarithmic scale
-    colormap = cm.LinearColormap(colors=['#FEF0D9', '#FDD49E', '#FDBB84', '#FC8D59', '#EF6548', '#D7301F'],
-                                 vmin=0,
-                                 vmax=max_log_trips)
+    # Create color map with log-transformed and capped trip count scale
+    colormap = cm.LinearColormap(colors=colors,
+                                 vmin=zones_with_trips['log_trips_capped'].min(),
+                                 vmax=zones_with_trips['log_trips_capped'].max())
     
     # Create the map
     m = folium.Map(location=[31.25, 34.8], zoom_start=11)
     
+    # Calculate total average percent for car and work
+    total_trips = zones_with_trips['total_trips'].sum()
+    total_avg_percent_car = (zones_with_trips['total_trips'] * zones_with_trips['percent_car']).sum() / total_trips
+    total_avg_percent_work = (zones_with_trips['total_trips'] * zones_with_trips['percent_work']).sum() / total_trips
+    
+    print(f"Total average percent car: {total_avg_percent_car:.2f}%")
+    print(f"Total average percent work: {total_avg_percent_work:.2f}%")
+    
     # Define style function
     def style_function(feature):
         trips = feature['properties']['total_trips']
-        log_trips = np.log1p(trips)
         if trips == 0:
             return {'fillColor': 'transparent', 'fillOpacity': 0, 'color': 'grey', 'weight': 1}
         else:
-            return {'fillColor': colormap(log_trips), 'fillOpacity': 0.7, 'color': 'black', 'weight': 1}
-    
+            log_trips = np.log1p(trips)
+            capped_log_trips = min(log_trips, log_trip_cap)
+            color = colormap(capped_log_trips)
+            return {'fillColor': color, 'fillOpacity': 0.7, 'color': 'black', 'weight': 1}
     
     # Add GeoJSON layer
     folium.GeoJson(
-        zones_with_data,
+        zones_with_trips,
         style_function=style_function,
-        tooltip=folium.GeoJsonTooltip(fields=['STAT11', 'total_trips'],
-                                      aliases=['Statistical Area', 'Total Trips'],
-                                      localize=True)
+        tooltip=folium.GeoJsonTooltip(fields=['STAT11', 'total_trips', 'percent_car', 'percent_work'],
+                                      aliases=['Statistical Area', 'Total Trips', '% Car', '% Work'],
+                                      localize=True,
+                                      labels=True,
+                                      sticky=False)
     ).add_to(m)
     
     # Add colormap to the map
     colormap.add_to(m)
     
-    # Customize colormap legend
-    colormap.caption = f'Number of Trips (log scale)'
+    # Customize colormap legend with actual trip counts
+    tick_values = np.linspace(zones_with_trips['log_trips_capped'].min(), zones_with_trips['log_trips_capped'].max(), 6)
+    tick_labels = [f"{np.expm1(v):.0f}" for v in tick_values]
+    colormap.caption = f'Number of Trips (log scale, capped at 95th percentile)'
+    colormap.tick_labels = tick_labels
     
-    # Add legend for metro and outside trips
+    # Add legend for trip summary and averages
     legend_html = f'''
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 220px; height: 90px; 
-                border:2px solid grey; z-index:9999; font-size:14px; background-color:white;
-                ">&nbsp;<b>Trip Summary:</b><br>
-    &nbsp;Trips within metro: {total_metro_trips}<br>
-    &nbsp;Trips from/to outside: {total_outside_trips}<br>
-    &nbsp;Total trips: {total_trips}
+    <div style="position: fixed; 
+                bottom: 50px; 
+                left: 50px; 
+                width: 280px; 
+                height: 160px; 
+                border:2px solid grey; 
+                z-index:9999; 
+                font-size:14px; 
+                background-color:white;
+                padding: 8px;
+                border-radius: 6px;
+                box-shadow: 0 0 15px rgba(0,0,0,0.2);
+                ">
+        <b>Trip Summary:</b><br>
+        Trips within metro: {total_metro_trips:.0f}<br>
+        Trips from/to outside: {total_outside_trips:.0f}<br>
+        Total trips: {total_trips:.0f}<br>
+        Avg trips per zone: {zones_with_trips['total_trips'].mean():.1f}<br>
+        Avg % Car: {total_avg_percent_car:.1f}%<br>
+        Avg % Work: {total_avg_percent_work:.1f}%
     </div>
     '''
     m.get_root().html.add_child(folium.Element(legend_html))
