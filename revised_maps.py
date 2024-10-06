@@ -101,8 +101,8 @@ def create_poi_map(poi_id, poi_info, trip_data, zones):
     folium.GeoJson(
         zones_with_trips,
         style_function=style_function,
-        tooltip=folium.GeoJsonTooltip(fields=['STAT11', 'total_trips', 'percent_car', 'percent_work'],
-                                      aliases=['Statistical Area', 'Total Trips', '% Car', '% Work'],
+        tooltip=folium.GeoJsonTooltip(fields=['YISHUV_STAT11', 'total_trips', 'percent_car', 'percent_work'],
+                                      aliases=['YISHUV_STAT11', 'Total Trips', '% Car', '% Work'],
                                       localize=True,
                                       labels=True,
                                       sticky=False)
