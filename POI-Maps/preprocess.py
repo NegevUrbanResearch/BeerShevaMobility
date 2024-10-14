@@ -1,22 +1,6 @@
 import pandas as pd
 import geopandas as gpd
 import os
-import requests
-import time
-
-def geocode_plus_code(plus_code):
-    base_url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = {
-        "address": plus_code,
-        "key": "AIzaSyCaPaazlDYXSJIGFXuzjlhcAE1zt-cyQ8U"  # Replace with your Google Maps API key
-    }
-    response = requests.get(base_url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data['status'] == 'OK':
-            location = data['results'][0]['geometry']['location']
-            return location['lat'], location['lng']
-    return None
 
 def clean_and_pad(value):
     if pd.isna(value):
@@ -30,14 +14,15 @@ def clean_and_pad(value):
 base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
 excel_file = os.path.join(base_dir, 'All-Stages.xlsx')
 gdb_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')
-poi_file = os.path.join(base_dir, 'POI-PlusCode.xlsx')
 output_dir = os.path.join(base_dir, 'output', 'processed_poi_data')
 os.makedirs(output_dir, exist_ok=True)
+
+# Exact path for POI coordinates file
+poi_locations_file = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset/output/processed_poi_data/poi_with_exact_coordinates.csv'
 
 print("Loading data...")
 df = pd.read_excel(excel_file, sheet_name='StageB1')
 zones = gpd.read_file(gdb_file)
-poi_df = pd.read_excel(poi_file)
 
 print("Preprocessing data...")
 df['from_tract'] = df['from_tract'].apply(clean_and_pad)
@@ -50,50 +35,11 @@ print(df.head())
 print("\nUnique values in from_tract:", df['from_tract'].nunique())
 print("Unique values in to_tract:", df['to_tract'].nunique())
 
-# Load existing POI locations if available
-existing_poi_file = os.path.join(output_dir, 'poi_with_exact_coordinates.csv')
-if os.path.exists(existing_poi_file):
-    existing_poi_df = pd.read_csv(existing_poi_file)
-    existing_poi_df['ID'] = existing_poi_df['ID'].astype(str)
-    existing_poi_dict = existing_poi_df.set_index('ID').to_dict('index')
-    print(f"Loaded {len(existing_poi_dict)} existing POI coordinates")
-else:
-    existing_poi_dict = {}
-    print("No existing POI coordinates file found")
-
-print("Geocoding POI locations...")
-poi_locations = {}
-for _, row in poi_df.iterrows():
-    poi_id = str(row['ID'])
-    if poi_id in existing_poi_dict:
-        poi_locations[poi_id] = existing_poi_dict[poi_id]
-        print(f"POI: {row['Name']} - Using existing coordinates")
-    else:
-        plus_code = row['Plus-Code']
-        if "Israel" not in plus_code:
-            plus_code += " Israel"
-        print(f"POI: {row['Name']} - Geocoding required")
-        
-        location = geocode_plus_code(plus_code)
-        if location:
-            lat, lon = location
-            poi_locations[poi_id] = {
-                'name': row['Name'],
-                'lat': lat,
-                'lon': lon,
-                'tract': clean_and_pad(str(row['ID']))
-            }
-            print(f"Successfully geocoded: {row['Name']}")
-        else:
-            print(f"Could not geocode Plus Code for {row['Name']}")
-        
-        time.sleep(0.5)
-
-# Save POI locations with coordinates
-poi_locations_df = pd.DataFrame.from_dict(poi_locations, orient='index')
-poi_locations_df = poi_locations_df.reset_index().rename(columns={'index': 'ID'})
-poi_locations_df.to_csv(os.path.join(output_dir, 'poi_with_exact_coordinates.csv'), index=False)
-print("POI locations with exact coordinates saved.")
+# Load POI locations from the exact coordinates file
+poi_locations_df = pd.read_csv(poi_locations_file)
+poi_locations_df['ID'] = poi_locations_df['ID'].astype(str)
+poi_locations = poi_locations_df.set_index('ID').to_dict('index')
+print(f"Loaded {len(poi_locations)} POI coordinates")
 
 def process_poi_trips(poi_id, poi_name, trip_type):
     poi_id_padded = clean_and_pad(poi_id)
@@ -113,10 +59,7 @@ def process_poi_trips(poi_id, poi_name, trip_type):
     metro_trips = poi_trips[~((poi_trips['IC'] == True) | (poi_trips['from_tract'] == '000000') | (poi_trips['to_tract'] == '000000'))]
     
     # Process metro trips
-    if trip_type == 'inbound':
-        group_col = 'from_tract'
-    else:
-        group_col = 'to_tract'
+    group_col = 'from_tract' if trip_type == 'inbound' else 'to_tract'
     
     metro_summary = metro_trips.groupby(group_col).agg({
         'count': 'sum',
