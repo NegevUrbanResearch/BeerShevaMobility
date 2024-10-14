@@ -10,7 +10,7 @@ def clean_and_pad(value):
     except ValueError:
         return '000000'
 
-# File paths
+# File paths (must be changed to the actual paths on your local machine)
 base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
 excel_file = os.path.join(base_dir, 'All-Stages.xlsx')
 gdb_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')

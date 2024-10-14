@@ -172,7 +172,7 @@ def create_poi_map(poi_id, poi_info, trip_data, zones):
 # Main execution
 if __name__ == "__main__":
     print("Loading data...")
-    # File paths
+    # File paths (must be changed to the actual paths on your local machine)
     base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
     poi_locations_file = os.path.join(base_dir, 'output/processed_poi_data/poi_with_exact_coordinates.csv')
     zones_file = os.path.join(base_dir, 'output/processed_poi_data/zones.geojson')

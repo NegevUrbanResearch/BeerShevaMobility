@@ -10,8 +10,8 @@ This project processes and visualizes Point of Interest (POI) data to create map
 
 ## Required Data Sources
 
-- Excel files containing trip data
-- GDB file with statistical area spatial data
+- Excel files containing trip data (Proprietary)
+- GDB file with statistical area spatial data (Download from [here](https://www.cbs.gov.il/he/Pages/geo-layers.aspx))
 - CSV file with POI locations and coordinates (pulled from Google Maps API)
 
 
