@@ -1,0 +1,6 @@
+__pycache__/
+.DS_Store
+*.pyc
+dashboard-draft1.py
+pie-charts-draft1.py
+
