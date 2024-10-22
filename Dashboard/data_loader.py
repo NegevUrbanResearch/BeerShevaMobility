@@ -2,7 +2,7 @@
 import pandas as pd
 import geopandas as gpd
 import os
-from Dashboard.config import BASE_DIR, OUTPUT_DIR, COLOR_SCHEME, CHART_COLORS
+from config import BASE_DIR, OUTPUT_DIR, COLOR_SCHEME, CHART_COLORS
 
 class DataLoader:
     def __init__(self, base_dir, output_dir):
