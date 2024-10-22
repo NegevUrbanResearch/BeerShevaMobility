@@ -2,7 +2,8 @@ import os
 
 # Configuration and constants
 # File paths
-BASE_DIR = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output', 'dashboard_data')
 
 # Color scheme

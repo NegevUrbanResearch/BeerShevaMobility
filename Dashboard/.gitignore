@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 dashboard-draft1.py
 pie-charts-draft1.py
-
+data/*
+!data/.gitkeep

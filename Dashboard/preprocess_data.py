@@ -8,13 +8,14 @@ import json
 import datetime
 
 # File paths (must be changed to the actual paths on your local machine)
-base_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset'
-excel_file = os.path.join(base_dir, 'All-Stages.xlsx')
-gdb_file = os.path.join(base_dir, 'statisticalareas_demography2019.gdb')
+base_dir = os.path.dirname(os.path.abspath(__file__))
+data_dir = os.path.join(base_dir, 'data')
+excel_file = os.path.join(data_dir, 'All-Stages.xlsx')
+gdb_file = os.path.join(data_dir, 'statisticalareas_demography2019.gdb')
 output_dir = os.path.join(base_dir, 'output', 'dashboard_data')
 os.makedirs(output_dir, exist_ok=True)
 
-poi_file = os.path.join(output_dir, "poi_with_exact_coordinates.csv")
+poi_file = os.path.join(data_dir, "poi_with_exact_coordinates.csv")
 
 def clean_and_pad(value):
     if pd.isna(value):
