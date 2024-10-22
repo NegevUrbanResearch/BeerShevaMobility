@@ -34,3 +34,25 @@ The dashboard provides an interactive web interface for comparing patterns for d
 - Charts for visualizing trip modes, purposes, and frequencies
 - Time-based analysis of trip patterns
 
+## Usage
+
+1. Ensure Docker is installed on your machine.
+
+2. Place the required data files in the `data` folder:
+   - `All-Stages.xlsx`
+   - `statisticalareas_demography2019.gdb`
+   - `poi_with_exact_coordinates.csv`
+
+3. Open a terminal and navigate to the Dashboard folder.
+
+4. Build the Docker image:
+   ```
+   docker build -t beer-sheva-dashboard .
+   ```
+
+5. Run the Docker container:
+   ```
+   docker run -p 8050:8050 beer-sheva-dashboard
+   ```
+
+6. Open a web browser and go to `http://localhost:8050/` to view the dashboard.
