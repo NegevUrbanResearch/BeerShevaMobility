@@ -1,0 +1,22 @@
+*# Python*
+**pycache**/
+*.pyc
+*# System files*
+.DS_Store
+*# Draft files*
+Dashboard/dashboard-draft1.py
+Dashboard/pie-charts-draft1.py
+*# Data and output directories*
+Dashboard/data/*
+Dashboard/output/*
+**/output/dashboard_data/*
+**/output/comparison_maps/*
+*# Excel files*
+*.xlsx
+*# GDB files*
+*.gdb
+*.gdb/*
+*# CSV files*
+*.csv
+*# CSV files with sensitive/proprietary data*
+**/poi_with_exact_coordinates.csv
