@@ -34,7 +34,7 @@ The dashboard provides an interactive web interface for comparing patterns for d
 - Charts for visualizing trip modes, purposes, and frequencies
 - Time-based analysis of trip patterns
 
-## Usage
+## Deployment Setup Instructions
 
 1. Ensure Docker is installed on your machine.
 
