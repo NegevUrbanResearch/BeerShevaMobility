@@ -70,7 +70,7 @@ class DashboardApp:
                             )
                         ])
                     ], className="mb-4")
-                ], width={"size": 4, "offset": 4})  
+                ], width={"size": 4, "offset": 3})  
             ], justify="start"),
             
             # Add padding to main content
