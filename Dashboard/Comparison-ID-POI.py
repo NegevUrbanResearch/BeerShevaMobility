@@ -3,11 +3,9 @@ import os
 import numpy as np
 import random
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from config import BASE_DIR, OUTPUT_DIR, DATA_DIR
 
-from Dashboard.data_loader import DataLoader
-from Dashboard.config import BASE_DIR, OUTPUT_DIR
-
+from data_loader import DataLoader
 import pandas as pd
 import geopandas as gpd
 import folium
@@ -15,7 +13,10 @@ from folium.plugins import FloatImage
 from branca.colormap import LinearColormap
 
 def load_data():
-    loader = DataLoader(BASE_DIR, OUTPUT_DIR)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    
+    loader = DataLoader(DATA_DIR, OUTPUT_DIR)
+    print(f"Looking for zones file at: {loader.zones_file}")
     zones = loader.load_zones()
     poi_df = loader.load_poi_data()
     trip_data = loader.load_trip_data()
@@ -32,8 +33,12 @@ def create_comparative_map(poi1, poi2, trip_type, zones, trip_data):
     df2 = calculate_percentages(trip_data[(poi2, trip_type)])
 
     merged_df = pd.merge(df1, df2, on='tract', suffixes=('_1', '_2'))
-    merged_df['ratio'] = np.where(merged_df['percentage_2'] == 0, 100, 
-                                  merged_df['percentage_1'] / merged_df['percentage_2'])
+    merged_df['ratio'] = np.where(
+        merged_df['percentage_2'] == 0,
+        merged_df['percentage_1'].clip(lower=1e-10),  # Use a small positive value instead of 0
+        merged_df['percentage_1'] / merged_df['percentage_2']
+    )
+    merged_df['ratio'] = merged_df['ratio'].clip(lower=1e-10, upper=100)  # Limit extreme ratios
     merged_df['log_ratio'] = np.log2(merged_df['ratio'])
     merged_df['difference'] = merged_df['percentage_1'] - merged_df['percentage_2']
     merged_df = merged_df.dropna(subset=['ratio', 'difference'])
@@ -52,15 +57,17 @@ def create_comparative_map(poi1, poi2, trip_type, zones, trip_data):
 
     m = folium.Map(location=[31.2529, 34.7915], zoom_start=11, tiles='CartoDB dark_matter')
 
-    vmin, vmax = merged_df['log_ratio'].min(), merged_df['log_ratio'].max()
-    colormap = LinearColormap(colors=['blue', 'white', 'red'], vmin=vmin, vmax=vmax)
+    colormap = LinearColormap(
+        colors=['blue', 'white', 'red'], 
+        vmin=-5, 
+        vmax=5,
+        caption='Ratio of percentages (log scale)',
+        text_color = 'white'
+    )
+
+    # Add the colormap to the map
     colormap.add_to(m)
 
-    # Debug: Print colormap information
-    print(f"\nColormap information:")
-    print(f"vmin: {vmin}")
-    print(f"vmax: {vmax}")
-    print(f"Color for log_ratio 0: {colormap(0)}")
 
     def style_function(feature):
         log_ratio = feature['properties']['log_ratio']
@@ -99,8 +106,9 @@ def create_comparative_map(poi1, poi2, trip_type, zones, trip_data):
     total_trips2 = df2['total_trips'].sum()
 
     legend_html = f"""
-    <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; height: 220px; 
-                border:2px solid grey; z-index:9999; font-size:14px; background-color:rgba(255, 255, 255, 0.8);">
+    <div style="position: fixed; bottom: 50px; left: 50px; width: 250px; height: 250px; 
+                border:2px solid grey; z-index:9999; font-size:14px; 
+                background-color:rgba(0, 0, 0, 0.8); color: white;">
         <p style="margin: 10px;">
             <b>{poi1} vs {poi2} ({trip_type})</b><br>
             Color indicates the ratio of percentages of users from each zone.<br>
@@ -115,7 +123,7 @@ def create_comparative_map(poi1, poi2, trip_type, zones, trip_data):
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    output_dir = '/Users/noamgal/Downloads/NUR/Beer-Sheva-Mobility-Dataset/output/comparison_maps'
+    output_dir = os.path.join(OUTPUT_DIR, 'comparison_maps')
     os.makedirs(output_dir, exist_ok=True)
     m.save(os.path.join(output_dir, f'comparison_{poi1.replace(" ", "_")}_{poi2.replace(" ", "_")}_{trip_type}.html'))
 
