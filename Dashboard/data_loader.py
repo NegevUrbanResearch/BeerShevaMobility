@@ -9,7 +9,7 @@ class DataLoader:
         self.base_dir = base_dir
         self.output_dir = output_dir
         self.zones_file = os.path.join(self.output_dir, "zones.geojson")
-        self.poi_file = os.path.join(self.base_dir, "poi_with_exact_coordinates.csv")
+        self.poi_file = os.path.join(self.base_dir, "data", "poi_with_exact_coordinates.csv")
 
     def load_zones(self):
         return gpd.read_file(self.zones_file)
