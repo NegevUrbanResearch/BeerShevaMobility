@@ -12,6 +12,10 @@ from data_loader import DataLoader
 from pyproj import Transformer
 from config import BASE_DIR, OUTPUT_DIR
 
+#    Bash Commands to Launch the OTP server on my local machine:
+#    cd /Users/noamgal/Downloads/NUR/otp_project
+#    java -Xmx8G -jar otp-2.5.0-shaded.jar --load --serve graphs
+
 class RouteModeler:
     def __init__(self):
         self.base_dir = BASE_DIR
@@ -206,8 +210,8 @@ class RouteModeler:
             
             # Create GeoDataFrame
             road_usage = gpd.GeoDataFrame({
-                'count': counts,
-                'geometry': geometries
+                'geometry': geometries,
+                'count': counts
             }, crs="EPSG:4326")
             
             print("\nBefore dissolve:")
