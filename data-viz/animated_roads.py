@@ -33,7 +33,7 @@ def create_road_heatmap(road_usage):
         tiles='CartoDB dark_matter'
     )
     
-    # Updated CSS with multiple randomized animations
+    # Updated CSS with white animation color
     css = """
     <style>
         @keyframes flow1 {
@@ -48,10 +48,6 @@ def create_road_heatmap(road_usage):
             0% { stroke-dashoffset: 600; }
             100% { stroke-dashoffset: -400; }
         }
-        @keyframes flow4 {
-            0% { stroke-dashoffset: 400; }
-            100% { stroke-dashoffset: -600; }
-        }
         .leaflet-overlay-pane svg path {
             stroke-linecap: round;
             stroke-linejoin: round;
@@ -61,26 +57,21 @@ def create_road_heatmap(road_usage):
         }
         .flow-line {
             stroke-width: 4px !important;
-            stroke: #FFD700 !important;
-            opacity: 0.9;
+            stroke: white !important;
         }
-        /* Animation variations */
         .flow-variant-1 { animation: flow1 20s linear infinite; }
-        .flow-variant-2 { animation: flow2 22s linear infinite; }
-        .flow-variant-3 { animation: flow3 24s linear infinite; }
-        .flow-variant-4 { animation: flow4 26s linear infinite; }
-        /* Speed patterns */
-        .flow-speed-1 { stroke-dasharray: 10, 90; }
-        .flow-speed-2 { stroke-dasharray: 10, 190; }
-        .flow-speed-3 { stroke-dasharray: 10, 290; }
-        .flow-speed-4 { stroke-dasharray: 10, 390; }
-        .flow-speed-5 { stroke-dasharray: 10, 490; }
+        .flow-variant-2 { animation: flow2 23s linear infinite; }
+        .flow-variant-3 { animation: flow3 26s linear infinite; }
+        
+        .flow-speed-high { stroke-dasharray: 10, 90; }
+        .flow-speed-med { stroke-dasharray: 10, 190; }
+        .flow-speed-low { stroke-dasharray: 10, 290; }
     </style>
     """
     m.get_root().header.add_child(folium.Element(css))
     
-    # Filter out roads with less than 1 trip
-    road_usage = road_usage[road_usage['count'] >= 1]
+    # Filter out roads with less than 10 trips
+    road_usage = road_usage[road_usage['count'] >= 10]
     
     # Calculate percentiles for stepped scale
     percentiles = [0, 15, 30, 50, 70, 85, 95, 100]
@@ -101,67 +92,68 @@ def create_road_heatmap(road_usage):
     for idx, row in top_5_roads.iterrows():
         print(f"Segment {idx}: {int(row['count']):,} trips")
     
-    # Updated brighter color scheme
-    colors = ['#F2E6FF', '#D4B3FF', '#B366FF', '#9933FF', '#7F00FF', '#6600FF', '#5200CC']
-    
-    colormap = LinearColormap(
-        colors=colors,
-        vmin=thresholds[0],
-        vmax=thresholds[-1],
-        caption='',
-        text_color='white',
-        index=thresholds[1:-1]  # Use thresholds as break points
-    )
-    
     # Calculate speed thresholds using percentiles
     speed_thresholds = np.percentile(road_usage['count'], [20, 40, 60, 80])
+    
+    # Calculate logarithmic scale for opacity
+    min_count = road_usage['count'].min()
+    max_count = road_usage['count'].max()
+    
+    def get_opacity(count):
+        """Calculate opacity using cube root scale, range 0.1 to 0.9"""
+        if count <= 0:
+            return 0.1
+        # Using cube root instead of log for less compression of higher values
+        scale = np.cbrt(count - 10) / np.cbrt(max_count - 10)
+        # Alternative: could use square root for even less compression
+        # scale = np.sqrt(count - 10) / np.sqrt(max_count - 10)
+        return 0.1 + (scale * 0.8)  # Scale to range 0.1-0.9
+    
+    def get_weight(count):
+        """Calculate line weight using similar cube root scale"""
+        scale = np.cbrt(count - 10) / np.cbrt(max_count - 10)
+        return 2 + (scale * 6)  # Scale from 2 to 8 pixels
+    
+    def get_speed_class(count):
+        """Get speed class based on count terciles"""
+        if count >= np.percentile(road_usage['count'], 66):
+            return 'flow-speed-high'
+        elif count >= np.percentile(road_usage['count'], 33):
+            return 'flow-speed-med'
+        return 'flow-speed-low'
     
     # Add road segments with styling
     for _, row in road_usage.iterrows():
         if row.geometry is None or not row.geometry.is_valid:
             continue
             
-        color = colormap(row['count'])
-        weight = 3 + (np.log1p(row['count']) / np.log1p(thresholds[-1])) * 6  # Doubled from 1.5 and 3
-        
-        # Determine animation speed class based on count (higher traffic = faster)
-        if row['count'] <= speed_thresholds[0]:
-            speed_class = 'flow-speed-5'
-        elif row['count'] <= speed_thresholds[1]:
-            speed_class = 'flow-speed-4'
-        elif row['count'] <= speed_thresholds[2]:
-            speed_class = 'flow-speed-3'
-        elif row['count'] <= speed_thresholds[3]:
-            speed_class = 'flow-speed-2'
-        else:
-            speed_class = 'flow-speed-1'
+        opacity = get_opacity(row['count'])
+        weight = get_weight(row['count'])
+        speed_class = get_speed_class(row['count'])
         
         # Add base road
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, color=color, weight=weight: {
-                'color': color,
+            style_function=lambda x, opacity=opacity, weight=weight: {
+                'color': '#7F00FF',
                 'weight': weight,
-                'opacity': 0.8,
+                'opacity': opacity,
                 'className': 'road-base'
             },
             tooltip=f"Traffic Volume: {int(row['count']):,} trips"
         ).add_to(m)
         
-        # Add random animation variant
-        variant = np.random.randint(1, 5)  # Random number between 1 and 4
-        
-        # Add animated flow line with random variant
+        # Add animated flow line
+        variant = np.random.randint(1, 4)  # Only 3 variants now
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, speed_class=speed_class, variant=variant: {
-                'className': f'flow-line flow-variant-{variant} {speed_class}'
+            style_function=lambda x, speed_class=speed_class, variant=variant, opacity=opacity: {
+                'className': f'flow-line flow-variant-{variant} {speed_class}',
+                'opacity': opacity
             }
         ).add_to(m)
     
-    #colormap.add_to(m)
-    
-    # Add custom legend showing actual numbers
+    # Updated continuous legend with color bar
     legend_html = f"""
     <div style="position: fixed; 
                 bottom: 50px; 
@@ -175,33 +167,18 @@ def create_road_heatmap(road_usage):
                 color: white;">
         <div style="padding: 15px;">
             <h4 style="margin:0 0 10px 0;">Daily Trips to Innovation District</h4>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[6]}; margin-right: 10px;"></div>
-                <span>{thresholds[6]:,}+ trips</span>
+            <div style="height: 150px; width: 40px; margin-right: 20px; float: left;">
+                <div style="height: 100%; width: 100%; 
+                            background: linear-gradient(to bottom, 
+                                rgba(127, 0, 255, 0.9) 0%,
+                                rgba(127, 0, 255, 0.5) 50%,
+                                rgba(127, 0, 255, 0.1) 100%);
+                            border-radius: 3px;">
+                </div>
             </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[5]}; margin-right: 10px;"></div>
-                <span>{thresholds[5]:,} - {thresholds[6]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[4]}; margin-right: 10px;"></div>
-                <span>{thresholds[4]:,} - {thresholds[5]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[3]}; margin-right: 10px;"></div>
-                <span>{thresholds[3]:,} - {thresholds[4]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[2]}; margin-right: 10px;"></div>
-                <span>{thresholds[2]:,} - {thresholds[3]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[1]}; margin-right: 10px;"></div>
-                <span>{thresholds[1]:,} - {thresholds[2]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center;">
-                <div style="width: 20px; height: 20px; background-color: {colors[0]}; margin-right: 10px;"></div>
-                <span>{thresholds[0]:,} - {thresholds[1]:,} trips</span>
+            <div style="margin-left: 70px;">
+                <div style="margin-bottom: 120px;">{int(max_count):,} trips</div>
+                <div style="margin-bottom: 5px;">{int(min_count):,} trips</div>
             </div>
         </div>
     </div>
