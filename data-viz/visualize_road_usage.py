@@ -102,7 +102,7 @@ def create_road_heatmap(road_usage):
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
                 color: white;">
         <div style="padding: 15px;">
-            <h4 style="margin:0 0 10px 0;">Trips to Innovation District</h4>
+            <h4 style="margin:0 0 10px 0;">Daily Trips to Innovation District</h4>
             <div style="display: flex; align-items: center; margin-bottom: 5px;">
                 <div style="width: 20px; height: 20px; background-color: {colors[6]}; margin-right: 10px;"></div>
                 <span>{thresholds[6]:,}+ trips</span>

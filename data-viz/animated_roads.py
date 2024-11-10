@@ -33,12 +33,12 @@ def create_road_heatmap(road_usage):
         tiles='CartoDB dark_matter'
     )
     
-    # Updated CSS with dynamic animation classes
+    # Updated CSS with larger elements
     css = """
     <style>
         @keyframes flow {
             0% {
-                stroke-dashoffset: 1000;
+                stroke-dashoffset: 500;
             }
             100% {
                 stroke-dashoffset: 0;
@@ -47,14 +47,34 @@ def create_road_heatmap(road_usage):
         .leaflet-overlay-pane svg path {
             stroke-linecap: round;
             stroke-linejoin: round;
-            stroke-dasharray: 4, 4, 1, 4;
-            opacity: 0.9;
         }
-        .flow-speed-1 { animation: flow 360s linear infinite; }
-        .flow-speed-2 { animation: flow 270s linear infinite; }
-        .flow-speed-3 { animation: flow 180s linear infinite; }
-        .flow-speed-4 { animation: flow 135s linear infinite; }
-        .flow-speed-5 { animation: flow 90s linear infinite; }
+        /* Base road style */
+        .road-base {
+            opacity: 0.7;
+        }
+        /* Animated flow line */
+        .flow-line {
+            stroke-width: 4px !important;
+            stroke: #FFD700 !important;
+            opacity: 0.9;
+            animation: flow 15s linear infinite;
+        }
+        /* Only adjust density of dots based on traffic */
+        .flow-speed-1 { 
+            stroke-dasharray: 8, 40;
+        }
+        .flow-speed-2 { 
+            stroke-dasharray: 8, 100;
+        }
+        .flow-speed-3 { 
+            stroke-dasharray: 8, 200;
+        }
+        .flow-speed-4 { 
+            stroke-dasharray: 8, 400;
+        }
+        .flow-speed-5 { 
+            stroke-dasharray: 8, 800;
+        }
     </style>
     """
     m.get_root().header.add_child(folium.Element(css))
@@ -102,31 +122,38 @@ def create_road_heatmap(road_usage):
             continue
             
         color = colormap(row['count'])
-        weight = 1.5 + (np.log1p(row['count']) / np.log1p(thresholds[-1])) * 3
+        weight = 3 + (np.log1p(row['count']) / np.log1p(thresholds[-1])) * 6  # Doubled from 1.5 and 3
         
-        # Determine animation speed class based on count
+        # Determine animation speed class based on count (higher traffic = faster)
         if row['count'] <= speed_thresholds[0]:
-            speed_class = 'flow-speed-1'
+            speed_class = 'flow-speed-5'
         elif row['count'] <= speed_thresholds[1]:
-            speed_class = 'flow-speed-2'
+            speed_class = 'flow-speed-4'
         elif row['count'] <= speed_thresholds[2]:
             speed_class = 'flow-speed-3'
         elif row['count'] <= speed_thresholds[3]:
-            speed_class = 'flow-speed-4'
+            speed_class = 'flow-speed-2'
         else:
-            speed_class = 'flow-speed-5'
+            speed_class = 'flow-speed-1'
         
+        # Add base road
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, color=color, weight=weight, speed_class=speed_class: {
+            style_function=lambda x, color=color, weight=weight: {
                 'color': color,
                 'weight': weight,
                 'opacity': 0.8,
-                'lineCap': 'round',
-                'lineJoin': 'round',
-                'className': speed_class
+                'className': 'road-base'
             },
             tooltip=f"Traffic Volume: {int(row['count']):,} trips"
+        ).add_to(m)
+        
+        # Add animated flow line
+        folium.GeoJson(
+            row.geometry.__geo_interface__,
+            style_function=lambda x, speed_class=speed_class: {
+                'className': f'flow-line {speed_class}'
+            }
         ).add_to(m)
     
     #colormap.add_to(m)
@@ -144,7 +171,7 @@ def create_road_heatmap(road_usage):
                 box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
                 color: white;">
         <div style="padding: 15px;">
-            <h4 style="margin:0 0 10px 0;">Trips to Innovation District</h4>
+            <h4 style="margin:0 0 10px 0;">Daily Trips to Innovation District</h4>
             <div style="display: flex; align-items: center; margin-bottom: 5px;">
                 <div style="width: 20px; height: 20px; background-color: {colors[6]}; margin-right: 10px;"></div>
                 <span>{thresholds[6]:,}+ trips</span>
