@@ -33,48 +33,48 @@ def create_road_heatmap(road_usage):
         tiles='CartoDB dark_matter'
     )
     
-    # Updated CSS with larger elements
+    # Updated CSS with multiple randomized animations
     css = """
     <style>
-        @keyframes flow {
-            0% {
-                stroke-dashoffset: 500;
-            }
-            100% {
-                stroke-dashoffset: 0;
-            }
+        @keyframes flow1 {
+            0% { stroke-dashoffset: 1000; }
+            100% { stroke-dashoffset: 0; }
+        }
+        @keyframes flow2 {
+            0% { stroke-dashoffset: 800; }
+            100% { stroke-dashoffset: -200; }
+        }
+        @keyframes flow3 {
+            0% { stroke-dashoffset: 600; }
+            100% { stroke-dashoffset: -400; }
+        }
+        @keyframes flow4 {
+            0% { stroke-dashoffset: 400; }
+            100% { stroke-dashoffset: -600; }
         }
         .leaflet-overlay-pane svg path {
             stroke-linecap: round;
             stroke-linejoin: round;
         }
-        /* Base road style */
         .road-base {
             opacity: 0.7;
         }
-        /* Animated flow line */
         .flow-line {
             stroke-width: 4px !important;
             stroke: #FFD700 !important;
             opacity: 0.9;
-            animation: flow 15s linear infinite;
         }
-        /* Only adjust density of dots based on traffic */
-        .flow-speed-1 { 
-            stroke-dasharray: 8, 40;
-        }
-        .flow-speed-2 { 
-            stroke-dasharray: 8, 100;
-        }
-        .flow-speed-3 { 
-            stroke-dasharray: 8, 200;
-        }
-        .flow-speed-4 { 
-            stroke-dasharray: 8, 400;
-        }
-        .flow-speed-5 { 
-            stroke-dasharray: 8, 800;
-        }
+        /* Animation variations */
+        .flow-variant-1 { animation: flow1 20s linear infinite; }
+        .flow-variant-2 { animation: flow2 22s linear infinite; }
+        .flow-variant-3 { animation: flow3 24s linear infinite; }
+        .flow-variant-4 { animation: flow4 26s linear infinite; }
+        /* Speed patterns */
+        .flow-speed-1 { stroke-dasharray: 10, 90; }
+        .flow-speed-2 { stroke-dasharray: 10, 190; }
+        .flow-speed-3 { stroke-dasharray: 10, 290; }
+        .flow-speed-4 { stroke-dasharray: 10, 390; }
+        .flow-speed-5 { stroke-dasharray: 10, 490; }
     </style>
     """
     m.get_root().header.add_child(folium.Element(css))
@@ -148,11 +148,14 @@ def create_road_heatmap(road_usage):
             tooltip=f"Traffic Volume: {int(row['count']):,} trips"
         ).add_to(m)
         
-        # Add animated flow line
+        # Add random animation variant
+        variant = np.random.randint(1, 5)  # Random number between 1 and 4
+        
+        # Add animated flow line with random variant
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, speed_class=speed_class: {
-                'className': f'flow-line {speed_class}'
+            style_function=lambda x, speed_class=speed_class, variant=variant: {
+                'className': f'flow-line flow-variant-{variant} {speed_class}'
             }
         ).add_to(m)
     
