@@ -36,60 +36,43 @@ def create_road_heatmap(road_usage):
     # Filter out roads with less than 1 trip
     road_usage = road_usage[road_usage['count'] >= 1]
     
-    # Calculate percentiles for stepped scale
-    percentiles = [0, 15, 30, 50, 70, 85, 95, 100]
-    thresholds = np.percentile(road_usage['count'], percentiles)
-    thresholds = [int(t) for t in thresholds]
+    # Calculate min and max for scaling
+    min_count = road_usage['count'].min()
+    max_count = road_usage['count'].max()
     
-    # Calculate and print statistics
-    total_trips = road_usage['count'].sum()
-    avg_trips = road_usage['count'].mean()
+    def get_opacity(count):
+        """Calculate opacity using cube root scale, range 0.1 to 0.9"""
+        if count <= 0:
+            return 0.1
+        scale = np.cbrt(count - 1) / np.cbrt(max_count - 1)
+        return 0.1 + (scale * 0.8)
     
-    # Get top 5 road segments
-    top_5_roads = road_usage.nlargest(5, 'count')
-    
-    print(f"\nRoad Usage Statistics:")
-    print(f"Total trips: {int(total_trips):,}")
-    print(f"Average trips per segment: {avg_trips:.1f}")
-    print("\nTop 5 most used road segments:")
-    for idx, row in top_5_roads.iterrows():
-        print(f"Segment {idx}: {int(row['count']):,} trips")
-    
-    # Updated brighter color scheme
-    colors = ['#F2E6FF', '#D4B3FF', '#B366FF', '#9933FF', '#7F00FF', '#6600FF', '#5200CC']
-    
-    colormap = LinearColormap(
-        colors=colors,
-        vmin=thresholds[0],
-        vmax=thresholds[-1],
-        caption='',
-        text_color='white',
-        index=thresholds[1:-1]  # Use thresholds as break points
-    )
+    def get_weight(count):
+        """Calculate line weight using similar cube root scale"""
+        scale = np.cbrt(count - 1) / np.cbrt(max_count - 1)
+        return 1.5 + (scale * 4.5)  # Scale from 1.5 to 6 pixels
     
     # Add road segments with styling
     for _, row in road_usage.iterrows():
         if row.geometry is None or not row.geometry.is_valid:
             continue
             
-        color = colormap(row['count'])
-        weight = 1.5 + (np.log1p(row['count']) / np.log1p(thresholds[-1])) * 3
+        opacity = get_opacity(row['count'])
+        weight = get_weight(row['count'])
         
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, color=color, weight=weight: {
-                'color': color,
+            style_function=lambda x, opacity=opacity, weight=weight: {
+                'color': '#7F00FF',  # Single purple color like animated version
                 'weight': weight,
-                'opacity': 0.8,
+                'opacity': opacity,
                 'lineCap': 'round',
                 'lineJoin': 'round'
             },
             tooltip=f"Traffic Volume: {int(row['count']):,} trips"
         ).add_to(m)
     
-    #colormap.add_to(m)
-    
-    # Add custom legend showing actual numbers
+    # Updated continuous legend with color bar
     legend_html = f"""
     <div style="position: fixed; 
                 bottom: 50px; 
@@ -103,33 +86,18 @@ def create_road_heatmap(road_usage):
                 color: white;">
         <div style="padding: 15px;">
             <h4 style="margin:0 0 10px 0;">Daily Trips to Innovation District</h4>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[6]}; margin-right: 10px;"></div>
-                <span>{thresholds[6]:,}+ trips</span>
+            <div style="height: 150px; width: 40px; margin-right: 20px; float: left;">
+                <div style="height: 100%; width: 100%; 
+                            background: linear-gradient(to bottom, 
+                                rgba(127, 0, 255, 0.9) 0%,
+                                rgba(127, 0, 255, 0.5) 50%,
+                                rgba(127, 0, 255, 0.1) 100%);
+                            border-radius: 3px;">
+                </div>
             </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[5]}; margin-right: 10px;"></div>
-                <span>{thresholds[5]:,} - {thresholds[6]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[4]}; margin-right: 10px;"></div>
-                <span>{thresholds[4]:,} - {thresholds[5]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[3]}; margin-right: 10px;"></div>
-                <span>{thresholds[3]:,} - {thresholds[4]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[2]}; margin-right: 10px;"></div>
-                <span>{thresholds[2]:,} - {thresholds[3]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center; margin-bottom: 5px;">
-                <div style="width: 20px; height: 20px; background-color: {colors[1]}; margin-right: 10px;"></div>
-                <span>{thresholds[1]:,} - {thresholds[2]:,} trips</span>
-            </div>
-            <div style="display: flex; align-items: center;">
-                <div style="width: 20px; height: 20px; background-color: {colors[0]}; margin-right: 10px;"></div>
-                <span>{thresholds[0]:,} - {thresholds[1]:,} trips</span>
+            <div style="margin-left: 70px;">
+                <div style="margin-bottom: 120px;">{int(max_count):,} trips</div>
+                <div style="margin-bottom: 5px;">{int(min_count):,} trips</div>
             </div>
         </div>
     </div>
