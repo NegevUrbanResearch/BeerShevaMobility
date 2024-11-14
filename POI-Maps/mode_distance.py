@@ -37,6 +37,14 @@ poi_display_names = {
     'Gev_Yam': 'Gav Yam High-Tech Park'
 }
 
+# Update the mode info with cleaner labels
+mode_info = {
+    'car': {'color': '#FF6B6B', 'label': 'Car'},
+    'public_transit': {'color': '#4ECDC4', 'label': 'Public Transit'},
+    'ped': {'color': '#98FB98', 'label': 'Walking'},
+    'bike': {'color': '#FFA07A', 'label': 'Cycling'}
+}
+
 def calculate_distances(poi_data, zones_gdf):
     """Calculate distances from each zone centroid to POI"""
     # Create a GeoDataFrame for the POI point
@@ -82,56 +90,88 @@ def load_poi_locations(csv_file):
 def create_individual_plot(poi_key, poi_data):
     fig = go.Figure()
     
+    # Get total counts for each distance bin
+    distance_totals = {}
+    for distance_bin in range(5):  # 0 to 4 km bins
+        total = 0
+        for mode in ['car', 'public_transit', 'ped', 'bike']:
+            if mode in poi_data['data']:
+                mode_data = poi_data['data'][mode]
+                bin_data = mode_data[mode_data['distance_bin'] == distance_bin]
+                if not bin_data.empty:
+                    total += bin_data['count'].iloc[0]
+        distance_totals[distance_bin] = total
+    
+    # Create percentage-based stacked bars
     for mode in ['car', 'public_transit', 'ped', 'bike']:
         if mode in poi_data['data']:
             mode_data = poi_data['data'][mode]
+            percentages = []
+            x_values = []
+            
+            for distance_bin in range(5):  # 0 to 4 km bins
+                bin_data = mode_data[mode_data['distance_bin'] == distance_bin]
+                if not bin_data.empty and distance_totals[distance_bin] > 0:
+                    percentage = (bin_data['count'].iloc[0] / distance_totals[distance_bin]) * 100
+                    percentages.append(percentage)
+                    x_values.append(distance_bin + 0.5)
+                else:
+                    percentages.append(0)
+                    x_values.append(distance_bin + 0.5)
+            
             fig.add_trace(
                 go.Bar(
-                    x=mode_data['distance_bin'] + 0.5,  # Center bars between tick marks
-                    y=mode_data['count'],
-                    name=mode.title(),
-                    marker_color=colors[mode],
-                    opacity=0.85,  # Slightly more opaque
-                    width=0.8  # Slightly narrower bars
+                    x=x_values,
+                    y=percentages,
+                    name=mode_info[mode]['label'],  # Just the clean label, no icon
+                    marker_color=mode_info[mode]['color'],
+                    opacity=0.85,
+                    width=0.8
                 )
             )
-    
-    # Update layout with brighter text and better spacing
+
+    # Update layout (mostly the same, but with percentage y-axis)
     fig.update_layout(
         barmode='stack',
         title=dict(
-            text=f"Mode Choice Within 5km of {poi_display_names[poi_key]}",
-            font=dict(size=28, color='rgba(255,255,255,0.95)', family='Arial Black'),
+            text=f"Mode Share Distribution Within 5km of {poi_display_names[poi_key]}",
+            font=dict(size=32, color='rgba(255,255,255,0.95)', family='Arial Black'),
             x=0.5,
             xanchor='center',
             y=0.95
         ),
-        height=800,
+        height=900,
         width=1200,
         showlegend=True,
         paper_bgcolor='rgb(17,17,17)',
         plot_bgcolor='rgb(17,17,17)',
         hovermode='x unified',
-        margin=dict(l=100, r=100, t=120, b=100),
+        margin=dict(l=100, r=100, t=200, b=100),
         legend=dict(
-            yanchor="top",
-            y=0.99,
-            xanchor="right",
-            x=0.99,
+            orientation="h",
+            yanchor="bottom",
+            y=1.15,
+            xanchor="center",
+            x=0.5,
             bgcolor='rgba(0,0,0,0)',
-            font=dict(color='rgba(255,255,255,0.95)', size=14),
-            itemsizing='constant'
+            font=dict(
+                color='rgba(255,255,255,0.95)', 
+                size=36
+            ),
+            itemsizing='constant',
+            itemwidth=100,
+            tracegroupgap=60
         )
     )
     
-    # Update axes with better alignment and styling
+    # Update axes with larger text
     fig.update_xaxes(
         title_text="Distance (km)",
-        title_font=dict(color='rgba(255,255,255,0.95)', size=16),
+        title_font=dict(color='rgba(255,255,255,0.95)', size=24),
         title_standoff=15,
-        range=[0, 5],  # Exact range from 0 to 5
+        range=[0, 5],
         dtick=1,
-        tickfont=dict(color='rgba(255,255,255,0.95)', size=14),
+        tickfont=dict(color='rgba(255,255,255,0.95)', size=20),
         gridcolor='rgba(255,255,255,0.2)',
         gridwidth=1,
         showgrid=True,
@@ -146,15 +186,16 @@ def create_individual_plot(poi_key, poi_data):
         ticklen=8,
         tickwidth=2,
         mirror=True,
-        anchor='y'  # Anchor to y-axis
+        anchor='y'
     )
     
     fig.update_yaxes(
-        title_text="Number of Trips",
-        title_font=dict(color='rgba(255,255,255,0.95)', size=16),
+        title_text="Mode Share (%)",
+        range=[0, 100],
+        ticksuffix="%",
+        title_font=dict(color='rgba(255,255,255,0.95)', size=24),
         title_standoff=15,
-        range=[0, poi_data['max_trips'] * 1.05],  # Tighter top margin
-        tickfont=dict(color='rgba(255,255,255,0.95)', size=14),
+        tickfont=dict(color='rgba(255,255,255,0.95)', size=20),
         gridcolor='rgba(255,255,255,0.2)',
         gridwidth=1,
         showgrid=True,
@@ -169,7 +210,7 @@ def create_individual_plot(poi_key, poi_data):
         ticklen=8,
         tickwidth=2,
         mirror=True,
-        anchor='x'  # Anchor to x-axis
+        anchor='x'
     )
     
     return fig
