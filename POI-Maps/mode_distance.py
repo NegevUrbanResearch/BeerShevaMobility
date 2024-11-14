@@ -146,23 +146,35 @@ def create_individual_plot(poi_key, poi_data):
         paper_bgcolor='rgb(17,17,17)',
         plot_bgcolor='rgb(17,17,17)',
         hovermode='x unified',
-        margin=dict(l=100, r=100, t=200, b=100),
+        margin=dict(l=100, r=100, t=150, b=100),
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=1.15,
+            y=1.02,
             xanchor="center",
             x=0.5,
             bgcolor='rgba(0,0,0,0)',
             font=dict(
                 color='rgba(255,255,255,0.95)', 
-                size=36
+                size=24
             ),
             itemsizing='constant',
-            itemwidth=100,
-            tracegroupgap=60
+            tracegroupgap=40  # Increased gap between items
         )
     )
+    
+    # Update the traces with better visibility
+    for trace in fig.data:
+        trace.update(
+            marker=dict(
+                line=dict(width=3, color='rgba(255,255,255,0.5)'),  # Thicker, more visible borders
+                opacity=1  # Full opacity
+            ),
+            showlegend=True,
+            legendgrouptitle_font_size=24,
+            # Make the legend entries more prominent
+            name=f"<span style='display:inline-block;width:50px;height:50px;background-color:{trace.marker.color};border:2px solid rgba(255,255,255,0.5);margin-right:10px'></span>{trace.name}"
+        )
     
     # Update axes with larger text
     fig.update_xaxes(
