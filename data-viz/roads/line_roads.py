@@ -16,7 +16,7 @@ def load_road_usage():
     return trips
 
 def create_line_layer(trips_data):
-    """Create a deck.gl visualization with curved lines that arc up and back down"""
+    """Create a deck.gl visualization with lines following actual road routes"""
     
     # Define central destination as a polygon
     central_polygon = {
@@ -30,31 +30,10 @@ def create_line_layer(trips_data):
         "name": "Beer Sheva Center"
     }
     
-    # Aggregate trips by origin
-    aggregated_data = {}
-    for _, row in trips_data.iterrows():
-        origin_coords = row.geometry.coords[0]
-        if origin_coords not in aggregated_data:
-            aggregated_data[origin_coords] = {
-                'trips': 0,
-                'origin_zone': row.origin_zone
-            }
-        aggregated_data[origin_coords]['trips'] += row.num_trips
-
-    # Prepare line data with curved segments
+    # Prepare line data using actual route geometries
     line_data = []
-    max_height = 1000  # Base maximum height
+    max_trips = trips_data['num_trips'].max()
     
-    def calculate_distance(start, end):
-        """Calculate the distance between two points in degrees"""
-        return math.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
-    
-    # Find max distance and trips for scaling
-    center_point = [34.805, 31.255]  # Center point
-    max_distance = max(calculate_distance([coords[0], coords[1]], center_point) 
-                      for coords in aggregated_data.keys())
-    max_trips = max(data['trips'] for data in aggregated_data.values())
-
     def interpolate_color(t):
         """Interpolate between colors based on trip count ratio (t)
         Blue (low) -> Yellow (medium) -> Red (high)"""
@@ -69,41 +48,25 @@ def create_line_layer(trips_data):
             b = 0
         return [r, g, b]
 
-    def create_arc_points(start, end, height, num_segments=20):
-        points = []
-        for i in range(num_segments):
-            t = i / (num_segments - 1)
-            # Parabolic arc formula
-            x = start[0] + t * (end[0] - start[0])
-            y = start[1] + t * (end[1] - start[1])
-            # Height follows a parabolic curve: h = 4ax(1-x) where a is the max height
-            z = 4 * height * t * (1 - t)
-            points.append([x, y, z])
-        return points
-
-    for coords, data in aggregated_data.items():
-        # Calculate height based on distance
-        distance = calculate_distance([coords[0], coords[1]], center_point)
-        height = (distance / max_distance) * max_height
-        
+    # Process each route
+    for _, row in trips_data.iterrows():
         # Calculate color based on trips
-        trip_ratio = data['trips'] / max_trips
+        trip_ratio = row['num_trips'] / max_trips
         color = interpolate_color(trip_ratio)
         
-        # Create arc segments
-        arc_points = create_arc_points(
-            start=[coords[0], coords[1]], 
-            end=center_point,
-            height=height
-        )
+        # Get coordinates from the LineString geometry
+        coords = list(row.geometry.coords)
         
-        # Create line segments
-        for i in range(len(arc_points) - 1):
+        # Create line segments with small elevation
+        for i in range(len(coords) - 1):
+            start = list(coords[i]) + [50]  # Add small elevation
+            end = list(coords[i + 1]) + [50]
+            
             line_data.append({
-                "start": arc_points[i],
-                "end": arc_points[i + 1],
-                "name": f"{data['origin_zone']} to Beer Sheva",
-                "trips": float(data['trips']),
+                "start": start,
+                "end": end,
+                "name": f"{row['origin_zone']} to {row['destination']}",
+                "trips": float(row['num_trips']),
                 "color": color
             })
 
