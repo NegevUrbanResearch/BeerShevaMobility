@@ -1,210 +1,173 @@
-import geopandas as gpd
 import pydeck as pdk
-import numpy as np
+import geopandas as gpd
 import os
 import sys
+import math
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from data_loader import DataLoader
-from config import BASE_DIR, OUTPUT_DIR
-import logging
-from pyproj import Transformer
-from shapely.geometry import LineString, Point
-
-logger = logging.getLogger(__name__)
+from config import OUTPUT_DIR
+from shapely.geometry import Polygon
 
 def load_road_usage():
-    """Load the road usage data and process geometries"""
-    file_path = os.path.join(OUTPUT_DIR, "road_usage.geojson")
-    print(f"Loading road usage data from: {file_path}")
-    road_usage = gpd.read_file(file_path)
+    """Load the trips data"""
+    file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
+    trips = gpd.read_file(file_path)
+    print(f"Loaded {len(trips)} unique trip routes")
+    return trips
+
+def create_line_layer(trips_data):
+    """Create a deck.gl visualization with curved lines that arc up and back down"""
     
-    print("\nData Preview:")
-    print(f"Number of records: {len(road_usage)}")
-    print(f"Columns: {road_usage.columns.tolist()}")
-    print(f"CRS: {road_usage.crs}")
-    
-    # Ensure CRS is WGS84
-    if road_usage.crs is None:
-        print("Warning: No CRS found, assuming WGS84")
-        road_usage.set_crs(epsg=4326, inplace=True)
-    elif road_usage.crs.to_epsg() != 4326:
-        print(f"Converting from {road_usage.crs} to WGS84")
-        road_usage = road_usage.to_crs(epsg=4326)
-    
-    # Filter out any invalid geometries
-    initial_count = len(road_usage)
-    road_usage = road_usage[road_usage.geometry.notna()]
-    road_usage = road_usage[road_usage.geometry.is_valid]
-    if len(road_usage) < initial_count:
-        print(f"Filtered out {initial_count - len(road_usage)} invalid geometries")
-    
-    # Debug coordinate ranges
-    coords = np.array([(x, y) for geom in road_usage.geometry 
-                      for x, y in geom.coords])
-    print("\nCoordinate ranges:")
-    print(f"Longitude: {coords[:,0].min():.6f} to {coords[:,0].max():.6f}")
-    print(f"Latitude: {coords[:,1].min():.6f} to {coords[:,1].max():.6f}")
-    
-    # Verify coordinates are in reasonable range for Beer Sheva
-    beer_sheva_bounds = {
-        'lon_min': 34.7,
-        'lon_max': 34.9,
-        'lat_min': 31.2,
-        'lat_max': 31.3
+    # Define central destination as a polygon
+    central_polygon = {
+        "polygon": [
+            [34.795, 31.245],  # SW
+            [34.815, 31.245],  # SE
+            [34.815, 31.265],  # NE
+            [34.795, 31.265],  # NW
+            [34.795, 31.245]   # Close the polygon
+        ],
+        "name": "Beer Sheva Center"
     }
     
-    in_bounds = ((coords[:,0] >= beer_sheva_bounds['lon_min']) & 
-                 (coords[:,0] <= beer_sheva_bounds['lon_max']) &
-                 (coords[:,1] >= beer_sheva_bounds['lat_min']) &
-                 (coords[:,1] <= beer_sheva_bounds['lat_max']))
-    
-    if not np.all(in_bounds):
-        print("\nWarning: Some coordinates outside Beer Sheva bounds!")
-        out_of_bounds = coords[~in_bounds]
-        print(f"First 5 out-of-bounds coordinates:")
-        print(out_of_bounds[:5])
-    
-    return road_usage
+    # Aggregate trips by origin
+    aggregated_data = {}
+    for _, row in trips_data.iterrows():
+        origin_coords = row.geometry.coords[0]
+        if origin_coords not in aggregated_data:
+            aggregated_data[origin_coords] = {
+                'trips': 0,
+                'origin_zone': row.origin_zone
+            }
+        aggregated_data[origin_coords]['trips'] += row.num_trips
 
-def create_line_layer(road_usage):
-    """Create a deck.gl visualization with LineLayer"""
+    # Prepare line data with curved segments
     line_data = []
+    max_height = 1000  # Base maximum height
     
-    print("\nProcessing geometries...")
-    for idx, row in road_usage.iterrows():
-        coords = list(row.geometry.coords)
-        for i in range(len(coords) - 1):
+    def calculate_distance(start, end):
+        """Calculate the distance between two points in degrees"""
+        return math.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
+    
+    # Find max distance and trips for scaling
+    center_point = [34.805, 31.255]  # Center point
+    max_distance = max(calculate_distance([coords[0], coords[1]], center_point) 
+                      for coords in aggregated_data.keys())
+    max_trips = max(data['trips'] for data in aggregated_data.values())
+
+    def interpolate_color(t):
+        """Interpolate between colors based on trip count ratio (t)
+        Blue (low) -> Yellow (medium) -> Red (high)"""
+        if t < 0.5:  # Blue to Yellow
+            r = int(255 * (2 * t))
+            g = int(255 * (2 * t))
+            b = int(255 * (1 - 2 * t))
+        else:  # Yellow to Red
+            t = t * 2 - 1
+            r = 255
+            g = int(255 * (1 - t))
+            b = 0
+        return [r, g, b]
+
+    def create_arc_points(start, end, height, num_segments=20):
+        points = []
+        for i in range(num_segments):
+            t = i / (num_segments - 1)
+            # Parabolic arc formula
+            x = start[0] + t * (end[0] - start[0])
+            y = start[1] + t * (end[1] - start[1])
+            # Height follows a parabolic curve: h = 4ax(1-x) where a is the max height
+            z = 4 * height * t * (1 - t)
+            points.append([x, y, z])
+        return points
+
+    for coords, data in aggregated_data.items():
+        # Calculate height based on distance
+        distance = calculate_distance([coords[0], coords[1]], center_point)
+        height = (distance / max_distance) * max_height
+        
+        # Calculate color based on trips
+        trip_ratio = data['trips'] / max_trips
+        color = interpolate_color(trip_ratio)
+        
+        # Create arc segments
+        arc_points = create_arc_points(
+            start=[coords[0], coords[1]], 
+            end=center_point,
+            height=height
+        )
+        
+        # Create line segments
+        for i in range(len(arc_points) - 1):
             line_data.append({
-                'sourcePosition': [float(coords[i][0]), float(coords[i][1])],
-                'targetPosition': [float(coords[i+1][0]), float(coords[i+1][1])],
-                'count': float(row['count'])
+                "start": arc_points[i],
+                "end": arc_points[i + 1],
+                "name": f"{data['origin_zone']} to Beer Sheva",
+                "trips": float(data['trips']),
+                "color": color
             })
-    
-    # Calculate min and max counts
-    counts = [d['count'] for d in line_data]
-    min_count = min(counts)
-    max_count = max(counts)
-    print(f"\nCount range: {min_count:.2f} to {max_count:.2f}")
-    
-    return line_data, min_count, max_count
+
+    # Create 3D polygon layer for destination
+    polygon_layer = pdk.Layer(
+        "PolygonLayer",
+        [central_polygon],
+        get_polygon="polygon",
+        get_fill_color=[255, 140, 0, 180],  # Semi-transparent orange
+        get_line_color=[255, 140, 0],
+        get_line_width=2,
+        pickable=True,
+        filled=True,
+        extruded=True,
+        get_elevation=500,  # Height of the 3D polygon
+        elevation_scale=1,
+        wireframe=True
+    )
+
+    line_layer = pdk.Layer(
+        "LineLayer",
+        line_data,
+        get_source_position="start",
+        get_target_position="end",
+        get_color="color",
+        get_width="trips / 50",  # Width also scales with trips
+        opacity=0.8,
+        highlight_color=[255, 255, 255],
+        picking_radius=10,
+        auto_highlight=True,
+        pickable=True,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=31.255,
+        longitude=34.805,
+        zoom=12,
+        pitch=50,
+        bearing=0
+    )
+
+    deck = pdk.Deck(
+        layers=[line_layer, polygon_layer],  # Polygon layer on top
+        initial_view_state=view_state,
+        tooltip={"text": "{name}: {trips} trips"},
+        map_style='dark'
+    )
+
+    return deck
 
 def main():
-    print("\nStarting road usage visualization...")
-    road_usage = load_road_usage()
+    print("\nStarting trip route visualization...")
+    trips_data = load_road_usage()
     
-    # Expand bounds for filtering
-    bounds = (34.65, 31.15, 34.95, 31.35)  # minx, miny, maxx, maxy
-    road_usage = road_usage.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]]
-    print(f"Processing {len(road_usage)} road segments after filtering")
+    # Filter to the Beer Sheva area
+    bounds = (34.65, 31.15, 34.95, 31.35)
+    trips_data = trips_data.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]]
+    print(f"Processing {len(trips_data)} routes after filtering")
     
-    line_data, min_count, max_count = create_line_layer(road_usage)
+    deck = create_line_layer(trips_data)
+    output_path = os.path.join(OUTPUT_DIR, "trip_routes_deck.html")
+    deck.to_html(output_path)
     
-    output_file = os.path.join(OUTPUT_DIR, "road_usage_deck.html")
-    
-    # Updated HTML wrapper with fixed data handling
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Beer Sheva Road Usage</title>
-        <script src="https://unpkg.com/@deck.gl/core@8.8.23/dist.min.js"></script>
-        <script src="https://unpkg.com/@deck.gl/layers@8.8.23/dist.min.js"></script>
-        <style>
-          body {{
-            margin: 0;
-            padding: 0;
-            background: #000000;
-            overflow: hidden;
-          }}
-          #deck-container {{
-            width: 100vw;
-            height: 100vh;
-            background: #000000;
-            position: fixed;
-            top: 0;
-            left: 0;
-          }}
-          .legend {{
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 10px;
-            border-radius: 5px;
-            color: white;
-            font-family: Arial;
-          }}
-        </style>
-      </head>
-      <body>
-        <div id="deck-container"></div>
-        <div class="legend">
-          <h3 style="margin: 0 0 10px 0">Traffic Volume</h3>
-          <div style="display: flex; align-items: center; margin: 5px 0;">
-            <div style="width: 20px; height: 10px; background: rgb(63, 0, 113); margin-right: 10px;"></div>
-            <span>Low ({min_count:.0f})</span>
-          </div>
-          <div style="display: flex; align-items: center; margin: 5px 0;">
-            <div style="width: 20px; height: 10px; background: rgb(233, 0, 255); margin-right: 10px;"></div>
-            <span>Medium ({(min_count + max_count)/2:.0f})</span>
-          </div>
-          <div style="display: flex; align-items: center; margin: 5px 0;">
-            <div style="width: 20px; height: 10px; background: rgb(255, 0, 0); margin-right: 10px;"></div>
-            <span>High ({max_count:.0f})</span>
-          </div>
-        </div>
-        <script type="text/javascript">
-          const {{DeckGL, LineLayer}} = deck;
-
-          const data = {line_data};
-          const minCount = {min_count};
-          const maxCount = {max_count};
-          
-          new DeckGL({{
-            container: 'deck-container',
-            initialViewState: {{
-              latitude: 31.25,
-              longitude: 34.80,
-              zoom: 11.5,
-              pitch: 45,
-              bearing: 0
-            }},
-            controller: true,
-            layers: [
-              new LineLayer({{
-                id: 'traffic',
-                data: data,
-                getSourcePosition: d => d.sourcePosition,
-                getTargetPosition: d => d.targetPosition,
-                getWidth: d => {{
-                  const normalized = (d.count - minCount) / (maxCount - minCount);
-                  return 1 + normalized * 19;
-                }},
-                getColor: d => {{
-                  const normalized = (d.count - minCount) / (maxCount - minCount);
-                  if (normalized < 0.2) return [63, 0, 113, 80];      // Deep purple
-                  if (normalized < 0.4) return [123, 0, 221, 120];    // Bright purple
-                  if (normalized < 0.6) return [233, 0, 255, 160];    // Pink
-                  if (normalized < 0.8) return [255, 51, 51, 200];    // Light red
-                  return [255, 0, 0, 255];                            // Bright red
-                }},
-                pickable: true,
-                widthUnits: 'pixels',
-                opacity: 0.8
-              }})
-            ]
-          }});
-        </script>
-      </body>
-    </html>
-    """
-    
-    with open(output_file, 'w') as f:
-        f.write(html_content)
-    
-    print(f"\nVisualization saved to: {output_file}")
+    print(f"\nVisualization saved to: {output_path}")
 
 if __name__ == "__main__":
     main()

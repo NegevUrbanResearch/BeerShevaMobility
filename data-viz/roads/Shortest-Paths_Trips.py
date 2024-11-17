@@ -150,6 +150,10 @@ class RouteModeler:
         """Process routes for all zones to each POI"""
         # Initialize list to store individual trips
         trips = []
+        route_cache = {}  # Cache for storing unique routes
+        
+        # Set fixed departure time
+        departure_time = datetime.now().replace(hour=8, minute=0, second=0)
         
         for poi_name in ['BGU', 'Gev Yam', 'Soroka Hospital']:
             print(f"\nProcessing routes to {poi_name}")
@@ -161,44 +165,50 @@ class RouteModeler:
                 if not len(car_trips) or car_trips[0] < 1:
                     continue
                 
-                # Round car_trips to nearest integer
                 num_trips = int(round(car_trips[0]))
-                print(f"\nProcessing {num_trips} trips from zone {zone['YISHUV_STAT11']}")
                 
-                # Get route once for this origin-destination pair
-                centroid = zone.geometry.centroid
-                route = self.get_car_route(
-                    centroid.x, centroid.y,
-                    float(poi_coords['lat']), float(poi_coords['lon'])
-                )
+                # Create cache key for this origin-destination pair
+                cache_key = f"{zone['YISHUV_STAT11']}_{poi_name}"
                 
-                if route and 'plan' in route:
-                    try:
-                        leg = route['plan']['itineraries'][0]['legs'][0]
-                        points = self.decode_polyline(leg['legGeometry']['points'])
-                        
-                        # Create multiple trips with slightly different timestamps
-                        base_time = datetime.now().replace(hour=8, minute=0, second=0)
-                        for trip_num in range(num_trips):
-                            # Add some random variation to departure times (within 2 hours)
-                            departure_time = base_time + pd.Timedelta(minutes=np.random.randint(0, 120))
-                            
-                            trips.append({
-                                'geometry': LineString([(p[1], p[0]) for p in points]),
-                                'departure_time': departure_time,
-                                'arrival_time': departure_time + pd.Timedelta(seconds=leg['duration']),
-                                'origin_zone': zone['YISHUV_STAT11'],
-                                'destination': poi_name
-                            })
-                            
-                    except Exception as e:
-                        print(f"Error processing route: {e}")
+                # Check if route is already cached
+                if cache_key not in route_cache:
+                    centroid = zone.geometry.centroid
+                    route = self.get_car_route(
+                        centroid.x, centroid.y,
+                        float(poi_coords['lat']), float(poi_coords['lon'])
+                    )
+                    
+                    if route and 'plan' in route:
+                        try:
+                            leg = route['plan']['itineraries'][0]['legs'][0]
+                            points = self.decode_polyline(leg['legGeometry']['points'])
+                            route_cache[cache_key] = {
+                                'points': points,
+                                'duration': leg['duration']
+                            }
+                        except Exception as e:
+                            print(f"Error processing route: {e}")
+                            continue
+                    
+                    time.sleep(0.1)  # Rate limiting
                 
-                time.sleep(0.1)  # Rate limiting
-            
-        # Create GeoDataFrame with individual trips
+                # Use cached route data
+                if cache_key in route_cache:
+                    route_data = route_cache[cache_key]
+                    # Create single trip entry with number of trips as attribute
+                    trips.append({
+                        'geometry': LineString([(p[1], p[0]) for p in route_data['points']]),
+                        'departure_time': departure_time,
+                        'arrival_time': departure_time + pd.Timedelta(seconds=route_data['duration']),
+                        'origin_zone': zone['YISHUV_STAT11'],
+                        'destination': poi_name,
+                        'route_id': cache_key,
+                        'num_trips': num_trips  # Add number of trips using this route
+                    })
+
+        # Create GeoDataFrame with routes
         trips_gdf = gpd.GeoDataFrame(trips, crs="EPSG:4326")
-        print(f"\nTotal number of individual trips: {len(trips_gdf)}")
+        print(f"\nTotal number of unique routes: {len(trips_gdf)}")
         
         return trips_gdf
 
