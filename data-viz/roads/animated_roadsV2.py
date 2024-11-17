@@ -3,6 +3,9 @@ import folium
 from branca.colormap import LinearColormap
 import numpy as np
 import os
+import sys
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
 from config import BASE_DIR, OUTPUT_DIR
 import logging
@@ -33,21 +36,31 @@ def create_road_heatmap(road_usage):
         tiles='CartoDB dark_matter'
     )
     
-    # Updated CSS with white animation color
+    # Updated CSS with smoother animations
     css = """
     <style>
+        /* Animation keyframes with longer distances for smoother flow */
         @keyframes flow1 {
-            0% { stroke-dashoffset: 1000; }
+            0% { stroke-dashoffset: 2000; }
             100% { stroke-dashoffset: 0; }
         }
         @keyframes flow2 {
-            0% { stroke-dashoffset: 800; }
+            0% { stroke-dashoffset: 1800; }
             100% { stroke-dashoffset: -200; }
         }
         @keyframes flow3 {
-            0% { stroke-dashoffset: 600; }
+            0% { stroke-dashoffset: 1600; }
             100% { stroke-dashoffset: -400; }
         }
+        @keyframes flow4 {
+            0% { stroke-dashoffset: 1400; }
+            100% { stroke-dashoffset: -600; }
+        }
+        @keyframes flow5 {
+            0% { stroke-dashoffset: 1200; }
+            100% { stroke-dashoffset: -800; }
+        }
+        
         .leaflet-overlay-pane svg path {
             stroke-linecap: round;
             stroke-linejoin: round;
@@ -56,16 +69,13 @@ def create_road_heatmap(road_usage):
             opacity: 0.7;
         }
         .flow-line {
-            stroke-width: 4px !important;
+            stroke-width: 3px !important;
             stroke: white !important;
+            animation-timing-function: linear;
+            will-change: stroke-dashoffset;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
         }
-        .flow-variant-1 { animation: flow1 20s linear infinite; }
-        .flow-variant-2 { animation: flow2 23s linear infinite; }
-        .flow-variant-3 { animation: flow3 26s linear infinite; }
-        
-        .flow-speed-high { stroke-dasharray: 10, 90; }
-        .flow-speed-med { stroke-dasharray: 10, 190; }
-        .flow-speed-low { stroke-dasharray: 10, 290; }
     </style>
     """
     m.get_root().header.add_child(folium.Element(css))
@@ -122,19 +132,49 @@ def create_road_heatmap(road_usage):
             return 'flow-speed-med'
         return 'flow-speed-low'
     
+    def get_animation_duration(count):
+        """Calculate animation duration based on traffic volume"""
+        min_duration = 20  # fastest animation (highest volume)
+        max_duration = 35  # even slower for low volume roads
+        scale = 1 - (np.cbrt(count - 10) / np.cbrt(max_count - 10))
+        return min_duration + (scale * (max_duration - min_duration))
+    
+    def get_dash_pattern(count):
+        """Calculate dash pattern based on traffic volume"""
+        dash_length = 30
+        min_gap = 40    # for highest volume
+        max_gap = 120   # slightly larger gaps for low volume
+        scale = 1 - (np.cbrt(count - 10) / np.cbrt(max_count - 10))
+        gap = min_gap + (scale * (max_gap - min_gap))
+        return f"{dash_length}, {int(gap)}"
+    
+    def get_dash_opacity(count):
+        """Calculate dash opacity based on traffic volume using cube root scaling"""
+        min_opacity = 0.05  # very faint for lowest volume
+        max_opacity = 1.0   # fully visible for highest volume
+        
+        # Use cube root scaling like we did for the roads
+        scale = np.cbrt(count - 10) / np.cbrt(max_count - 10)
+        opacity = min_opacity + (scale * (max_opacity - min_opacity))
+        
+        # Make high traffic roads much brighter
+        return opacity ** 0.5  # Square root to boost high values
+    
     # Add road segments with styling
     for _, row in road_usage.iterrows():
         if row.geometry is None or not row.geometry.is_valid:
             continue
             
-        opacity = get_opacity(row['count'])
+        base_opacity = get_opacity(row['count'])
+        dash_opacity = get_dash_opacity(row['count'])
         weight = get_weight(row['count'])
-        speed_class = get_speed_class(row['count'])
+        duration = get_animation_duration(row['count'])
+        dash_pattern = get_dash_pattern(row['count'])
         
         # Add base road
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, opacity=opacity, weight=weight: {
+            style_function=lambda x, opacity=base_opacity, weight=weight: {
                 'color': '#7F00FF',
                 'weight': weight,
                 'opacity': opacity,
@@ -143,13 +183,27 @@ def create_road_heatmap(road_usage):
             tooltip=f"Traffic Volume: {int(row['count']):,} trips"
         ).add_to(m)
         
-        # Add animated flow line
-        variant = np.random.randint(1, 4)  # Only 3 variants now
+        # Add animated flow line with volume-based opacity
+        variant = np.random.randint(1, 6)
+        delay = np.random.uniform(0, duration)
+        
+        style = f"""
+            <style>
+                .flow-line-{row.name} {{
+                    animation: flow{variant} {duration}s linear infinite;
+                    animation-delay: -{delay}s;
+                    stroke-dasharray: {dash_pattern};
+                    opacity: {dash_opacity} !important;
+                    stroke: rgba(255, 255, 255, {dash_opacity}) !important;
+                }}
+            </style>
+        """
+        m.get_root().header.add_child(folium.Element(style))
+        
         folium.GeoJson(
             row.geometry.__geo_interface__,
-            style_function=lambda x, speed_class=speed_class, variant=variant, opacity=opacity: {
-                'className': f'flow-line flow-variant-{variant} {speed_class}',
-                'opacity': opacity
+            style_function=lambda x: {
+                'className': f'flow-line flow-line-{row.name}'
             }
         ).add_to(m)
     

@@ -8,9 +8,14 @@ from datetime import datetime
 import time
 from tqdm import tqdm
 import os
+import sys
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
 from pyproj import Transformer
 from config import BASE_DIR, OUTPUT_DIR
+
+# Rest of the file remains the same
 
 #    Bash Commands to Launch the OTP server on my local machine:
 #    cd /Users/noamgal/Downloads/NUR/otp_project

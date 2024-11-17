@@ -3,6 +3,10 @@ import os
 import numpy as np
 import random
 
+import sys
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config import BASE_DIR, OUTPUT_DIR, DATA_DIR
 
 from data_loader import DataLoader
