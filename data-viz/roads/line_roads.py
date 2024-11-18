@@ -53,30 +53,25 @@ def interpolate_color(t, distance_ratio):
     """Color interpolation based on trip count and distance ratio
     
     Color Scheme:
-    - Base color progression from light blue -> purple-blue -> purple -> pink-red -> deep red
-    - Higher trip counts = redder colors (t is normalized trip count)
-    - Colors are cube-root scaled to better distinguish between high and low values
-    - Opacity varies with distance_ratio to create smooth blending:
-      * Higher opacity (0.8-1.0) near segment start/end points
-      * Lower opacity (0.6) in middle of segments
+    - Base colors progress from dark blue -> light blue -> purple -> pink -> bright red
+    - Brightness increases with trip count
+    - Opacity varies smoothly between segments to reduce blockiness
     
     Args:
         t (float): Normalized trip count (0-1)
         distance_ratio (float): Position along segment (0-1)
-    
-    Returns:
-        list: [r, g, b, a] color values (0-255)
     """
-    # Apply cube root scaling to trip ratio
+    # Apply cube root scaling to trip ratio for better distribution
     t = cube_root_scale(t)
     
-    # Base colors (from low to high trip counts)
+    # Base colors (from low to high trip counts, with increasing brightness)
     colors = {
-        0.0: [65, 182, 196],    # Light blue
-        0.3: [127, 132, 204],   # Purple-blue
-        0.6: [179, 77, 184],    # Purple
+        0.0: [20, 42, 120],     # Dark blue
+        0.2: [40, 80, 180],     # Medium blue
+        0.4: [65, 182, 196],    # Light blue
+        0.6: [127, 132, 204],   # Purple-blue
         0.8: [204, 55, 124],    # Pink-red
-        1.0: [240, 52, 52]      # Deep red
+        1.0: [240, 52, 52]      # Bright red
     }
     
     # Find and interpolate colors
@@ -86,49 +81,51 @@ def interpolate_color(t, distance_ratio):
     c1 = colors[lower_t]
     c2 = colors[upper_t]
     
-    if upper_t == lower_t:
-        rgb = c1
-    else:
-        ratio = (t - lower_t) / (upper_t - lower_t)
-        # Add brightness variation based on distance ratio
-        brightness = 1.0 + 0.3 * math.sin(math.pi * distance_ratio)
-        
-        rgb = [
-            min(255, int((c1[0] + (c2[0] - c1[0]) * ratio) * brightness)),
-            min(255, int((c1[1] + (c2[1] - c1[1]) * ratio) * brightness)),
-            min(255, int((c1[2] + (c2[2] - c1[2]) * ratio) * brightness))
-        ]
+    # Smooth transition between segments
+    ratio = (t - lower_t) / (upper_t - lower_t) if upper_t != lower_t else 0
     
-    # Opacity that varies with distance ratio
-    opacity = min(255, int(255 * (0.6 + 0.4 * math.sin(math.pi * distance_ratio))))
+    # Add gaussian-like falloff for smoother segment transitions
+    smoothing = math.exp(-4 * (distance_ratio - 0.5)**2)
+    brightness = 0.7 + 0.3 * smoothing
+    
+    rgb = [
+        min(255, int((c1[0] + (c2[0] - c1[0]) * ratio) * brightness)),
+        min(255, int((c1[1] + (c2[1] - c1[1]) * ratio) * brightness)),
+        min(255, int((c1[2] + (c2[2] - c1[2]) * ratio) * brightness))
+    ]
+    
+    # Smooth opacity transition between segments
+    base_opacity = 0.7 + 0.3 * smoothing
+    opacity = min(255, int(255 * base_opacity))
+    
     return rgb + [opacity]
 
 def create_line_layer(trips_data):
-    """Create a deck.gl visualization with properly blended line segments"""
+    """Create a deck.gl visualization with smooth segment transitions"""
     segments = create_segment_data(trips_data)
     line_data = []
     max_trips = max(segments.values())
     
-    # Process each segment
+    # Increase number of steps for smoother transitions
+    num_steps = 30  # increased from 20
+    
     for (start_coord, end_coord), trip_count in segments.items():
         trip_ratio = trip_count / max_trips
         
-        num_steps = 20
-        for i in range(num_steps):
+        # Create overlapping segments for smoother transitions
+        for i in range(num_steps - 1):  # overlap segments
             distance_ratio = i / (num_steps - 1)
-            
-            # Constant height of 5 meters
-            height = 5
+            next_ratio = (i + 1) / (num_steps - 1)
             
             start = [
                 start_coord[0] + (end_coord[0] - start_coord[0]) * distance_ratio,
                 start_coord[1] + (end_coord[1] - start_coord[1]) * distance_ratio,
-                height
+                5  # constant height
             ]
             end = [
-                start_coord[0] + (end_coord[0] - start_coord[0]) * ((i + 1) / (num_steps - 1)),
-                start_coord[1] + (end_coord[1] - start_coord[1]) * ((i + 1) / (num_steps - 1)),
-                height
+                start_coord[0] + (end_coord[0] - start_coord[0]) * next_ratio,
+                start_coord[1] + (end_coord[1] - start_coord[1]) * next_ratio,
+                5  # constant height
             ]
             
             color = interpolate_color(trip_ratio, distance_ratio)
@@ -137,7 +134,6 @@ def create_line_layer(trips_data):
                 "start": start,
                 "end": end,
                 "trips": int(trip_count),
-                "count": int(trip_count),
                 "color": color
             })
 
