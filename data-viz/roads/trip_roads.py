@@ -60,8 +60,33 @@ def load_trip_data():
     
     return trips_data, center_lat, center_lon
 
+def load_building_data():
+    """Load building data for 3D visualization"""
+    file_path = os.path.join(OUTPUT_DIR, "buildings.geojson")
+    logger.info(f"Loading building data from: {file_path}")
+    
+    try:
+        with open(file_path, 'r') as f:
+            geojson = json.load(f)
+        
+        # Convert to format needed for deck.gl
+        buildings_data = []
+        for feature in geojson['features']:
+            height = float(feature['properties'].get('height', 20))  # Default to 20 if height not found
+            buildings_data.append({
+                'polygon': feature['geometry']['coordinates'][0],  # First ring of coordinates
+                'height': height * 2  # Double the height to match line_roads.py
+            })
+        
+        logger.info(f"Loaded {len(buildings_data)} buildings")
+        return buildings_data
+    except Exception as e:
+        logger.error(f"Error loading building data: {str(e)}")
+        raise
+
 def create_animation():
     trips_data, center_lat, center_lon = load_trip_data()
+    buildings_data = load_building_data()
     
     html_template = """
     <!DOCTYPE html>
@@ -99,12 +124,27 @@ def create_animation():
             </div>
         </div>
         <script>
-            const DATA = %s;
+            const TRIPS_DATA = %s;
+            const BUILDINGS_DATA = %s;
+            
+            const ambientLight = new deck.AmbientLight({
+                color: [255, 255, 255],
+                intensity: 1.0
+            });
+
+            const pointLight = new deck.PointLight({
+                color: [255, 255, 255],
+                intensity: 2.0,
+                position: [34.8, 31.25, 8000]  // Adjusted for Beer Sheva coordinates
+            });
+
+            const lightingEffect = new deck.LightingEffect({ambientLight, pointLight});
+            
             const INITIAL_VIEW_STATE = {
-                longitude: %f,
-                latitude: %f,
-                zoom: 11,
-                pitch: 45,
+                longitude: 34.8113,  // Ben Gurion University
+                latitude: 31.2627,   // Ben Gurion University
+                zoom: 13,
+                pitch: 60,          // Increased pitch for better 3D view
                 bearing: 0
             };
             
@@ -119,7 +159,8 @@ def create_animation():
                 container: 'container',
                 mapStyle: MAP_STYLE,
                 initialViewState: INITIAL_VIEW_STATE,
-                controller: true
+                controller: true,
+                effects: [lightingEffect]
             });
             
             function animate() {
@@ -129,21 +170,41 @@ def create_animation():
                     duration: (loopLength * 60) / animationSpeed,
                     repeat: Infinity,
                     onUpdate: time => {
-                        const layer = new deck.TripsLayer({
-                            id: 'trips',
-                            data: DATA,
-                            getPath: d => d.path,
-                            getTimestamps: d => d.timestamps,
-                            getColor: [253, 128, 93],
-                            opacity: 0.3,
-                            widthMinPixels: 2,
-                            rounded: true,
-                            trailLength,
-                            currentTime: time
-                        });
+                        const layers = [
+                            new deck.PolygonLayer({
+                                id: 'buildings',
+                                data: BUILDINGS_DATA,
+                                extruded: true,
+                                wireframe: true,
+                                opacity: 0.8,
+                                getPolygon: d => d.polygon,
+                                getElevation: d => d.height,
+                                getFillColor: [74, 80, 87],
+                                getLineColor: [255, 255, 255, 50],
+                                lineWidthMinPixels: 1,
+                                material: {
+                                    ambient: 0.2,
+                                    diffuse: 0.8,
+                                    shininess: 32,
+                                    specularColor: [60, 64, 70]
+                                }
+                            }),
+                            new deck.TripsLayer({
+                                id: 'trips',
+                                data: TRIPS_DATA,
+                                getPath: d => d.path,
+                                getTimestamps: d => d.timestamps,
+                                getColor: [253, 128, 93],
+                                opacity: 0.3,
+                                widthMinPixels: 2,
+                                rounded: true,
+                                trailLength,
+                                currentTime: time
+                            })
+                        ];
                         
                         deckgl.setProps({
-                            layers: [layer]
+                            layers: layers
                         });
                     }
                 });
@@ -176,8 +237,7 @@ def create_animation():
         with open(output_path, 'w') as f:
             f.write(html_template % (
                 json.dumps(trips_data),
-                center_lon,
-                center_lat
+                json.dumps(buildings_data)
             ))
         logger.info(f"Animation saved to: {output_path}")
     except Exception as e:

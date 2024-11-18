@@ -23,3 +23,4 @@ Dashboard/output/*
 *# CSV files with sensitive/proprietary data*
 **/poi_with_exact_coordinates.csv
 *.env
+*json

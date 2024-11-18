@@ -197,7 +197,7 @@ def create_line_layer(trips_data, bounds):
     view_state = pdk.ViewState(
         latitude=31.2627,  # Ben Gurion University
         longitude=34.8113, # Ben Gurion University
-        zoom=15,
+        zoom=13,
         pitch=60,  # Increased pitch for better 3D view
         bearing=0
     )
