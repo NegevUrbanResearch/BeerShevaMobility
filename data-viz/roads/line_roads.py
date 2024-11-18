@@ -3,6 +3,9 @@ import geopandas as gpd
 import os
 import sys
 import math
+from collections import defaultdict
+from shapely.ops import split, linemerge
+from shapely.geometry import Point, MultiLineString
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import OUTPUT_DIR
@@ -15,41 +18,90 @@ def load_road_usage():
     print(f"Loaded {len(trips)} unique trip routes")
     return trips
 
-def create_line_layer(trips_data):
-    """Create a deck.gl visualization with lines following actual road routes"""
+def create_segment_data(trips_data):
+    """Break down routes into segments and aggregate trip counts"""
+    # Dictionary to store segment data: (start_coord, end_coord) -> trips
+    segments = defaultdict(float)
     
-    # Prepare line data using actual route geometries
-    line_data = []
-    max_trips = trips_data['num_trips'].max()
-    
-    def interpolate_color(t):
-        """Interpolate between colors based on trip count ratio (t)
-        Blue (low) -> Red (high)"""
-        return [
-            int(255 * t),        # Red increases with t
-            int(128 * (1 - t)),  # Green decreases
-            int(255 * (1 - t))   # Blue decreases with t
-        ]
-
-    # Process each route
     for _, row in trips_data.iterrows():
-        # Calculate color based on trips
-        trip_ratio = row['num_trips'] / max_trips
-        color = interpolate_color(trip_ratio)
-        
-        # Get coordinates from the LineString geometry
         coords = list(row.geometry.coords)
+        num_trips = row['num_trips']
         
-        # Create line segments with fixed low elevation
+        # Break down each route into segments
         for i in range(len(coords) - 1):
-            start = list(coords[i]) + [10]  # Fixed low elevation
-            end = list(coords[i + 1]) + [10]
+            # Sort coordinates to ensure consistent segment keys
+            segment = tuple(sorted([coords[i], coords[i + 1]]))
+            segments[segment] += num_trips
+    
+    return segments
+
+def create_line_layer(trips_data):
+    """Create a deck.gl visualization with properly blended line segments"""
+    segments = create_segment_data(trips_data)
+    line_data = []
+    max_trips = max(segments.values())
+    
+    def interpolate_color(t, distance_ratio=0.5):
+        """Enhanced color interpolation with distance-based opacity
+        t: trip count ratio (0-1)
+        distance_ratio: how far along the segment we are (0-1)"""
+        # Base colors: from light blue to deep red
+        colors = {
+            0.0: [65, 182, 196],    # Light blue
+            0.3: [127, 132, 204],   # Purple-blue
+            0.6: [179, 77, 184],    # Purple
+            0.8: [204, 55, 124],    # Pink-red
+            1.0: [240, 52, 52]      # Deep red
+        }
+        
+        # Find the two colors to interpolate between
+        lower_t = max([k for k in colors.keys() if k <= t])
+        upper_t = min([k for k in colors.keys() if k >= t])
+        
+        c1 = colors[lower_t]
+        c2 = colors[upper_t]
+        
+        # Interpolate between the two colors
+        if upper_t == lower_t:
+            rgb = c1
+        else:
+            ratio = (t - lower_t) / (upper_t - lower_t)
+            rgb = [
+                int(c1[0] + (c2[0] - c1[0]) * ratio),
+                int(c1[1] + (c2[1] - c1[1]) * ratio),
+                int(c1[2] + (c2[2] - c1[2]) * ratio)
+            ]
+        
+        # Adjust opacity based on distance from endpoints
+        opacity = min(255, int(255 * (0.4 + 0.6 * (1 - abs(2 * distance_ratio - 1)))))
+        return rgb + [opacity]  # Return [R,G,B,A]
+
+    # Process each segment
+    for (start_coord, end_coord), trip_count in segments.items():
+        trip_ratio = trip_count / max_trips
+        
+        # Create multiple points along the segment for gradient effect
+        num_steps = 10
+        for i in range(num_steps):
+            distance_ratio = i / (num_steps - 1)
+            # Interpolate position
+            start = [
+                start_coord[0] + (end_coord[0] - start_coord[0]) * distance_ratio,
+                start_coord[1] + (end_coord[1] - start_coord[1]) * distance_ratio,
+                10  # Fixed elevation
+            ]
+            end = [
+                start_coord[0] + (end_coord[0] - start_coord[0]) * ((i + 1) / (num_steps - 1)),
+                start_coord[1] + (end_coord[1] - start_coord[1]) * ((i + 1) / (num_steps - 1)),
+                10  # Fixed elevation
+            ]
+            
+            color = interpolate_color(trip_ratio, distance_ratio)
             
             line_data.append({
                 "start": start,
                 "end": end,
-                "name": f"{row['origin_zone']} to {row['destination']}",
-                "trips": float(row['num_trips']),
+                "trips": float(trip_count),
                 "color": color
             })
 
@@ -59,8 +111,8 @@ def create_line_layer(trips_data):
         get_source_position="start",
         get_target_position="end",
         get_color="color",
-        get_width="trips / 50",
-        highlight_color=[255, 255, 0],
+        get_width=5,  # Fixed width
+        highlight_color=[255, 255, 0, 128],
         picking_radius=10,
         auto_highlight=True,
         pickable=True,
