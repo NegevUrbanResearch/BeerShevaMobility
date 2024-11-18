@@ -6,6 +6,7 @@ import math
 from collections import defaultdict
 from shapely.ops import split, linemerge
 from shapely.geometry import Point, MultiLineString
+import numpy as np
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import OUTPUT_DIR
@@ -41,11 +42,17 @@ def create_line_layer(trips_data):
     line_data = []
     max_trips = max(segments.values())
     
+    def cube_root_scale(t):
+        """Apply cube root scale to compress high values"""
+        return np.cbrt(t)
+    
     def interpolate_color(t, distance_ratio=0.5):
-        """Enhanced color interpolation with distance-based opacity
+        """Enhanced color interpolation with cube root scaling
         t: trip count ratio (0-1)
         distance_ratio: how far along the segment we are (0-1)"""
-        # Base colors: from light blue to deep red
+        # Apply cube root scaling to trip ratio
+        t = cube_root_scale(t)
+        
         colors = {
             0.0: [65, 182, 196],    # Light blue
             0.3: [127, 132, 204],   # Purple-blue
@@ -80,20 +87,20 @@ def create_line_layer(trips_data):
     for (start_coord, end_coord), trip_count in segments.items():
         trip_ratio = trip_count / max_trips
         
-        # Create multiple points along the segment for gradient effect
         num_steps = 10
         for i in range(num_steps):
             distance_ratio = i / (num_steps - 1)
-            # Interpolate position
+            # Interpolate position with height variation
+            height = 10  # set height to 10 meters to ensure visibility above basemap
             start = [
                 start_coord[0] + (end_coord[0] - start_coord[0]) * distance_ratio,
                 start_coord[1] + (end_coord[1] - start_coord[1]) * distance_ratio,
-                10  # Fixed elevation
+                height  # Higher elevation
             ]
             end = [
                 start_coord[0] + (end_coord[0] - start_coord[0]) * ((i + 1) / (num_steps - 1)),
                 start_coord[1] + (end_coord[1] - start_coord[1]) * ((i + 1) / (num_steps - 1)),
-                10  # Fixed elevation
+                height  # Higher elevation
             ]
             
             color = interpolate_color(trip_ratio, distance_ratio)
@@ -101,7 +108,8 @@ def create_line_layer(trips_data):
             line_data.append({
                 "start": start,
                 "end": end,
-                "trips": float(trip_count),
+                "trips": int(trip_count),  # Convert to int for cleaner tooltip
+                "count": int(trip_count),  # Add explicit count field for tooltip
                 "color": color
             })
 
@@ -111,25 +119,34 @@ def create_line_layer(trips_data):
         get_source_position="start",
         get_target_position="end",
         get_color="color",
-        get_width=5,  # Fixed width
+        get_width=5,
         highlight_color=[255, 255, 0, 128],
         picking_radius=10,
         auto_highlight=True,
         pickable=True,
+        # Add tooltip configuration
+        tooltip={
+            "html": "<b>Trip Count:</b> {count}",
+            "style": {
+                "backgroundColor": "steelblue",
+                "color": "white"
+            }
+        }
     )
 
+    # Update view state for better 3D perspective
     view_state = pdk.ViewState(
-        latitude=31.255,
-        longitude=34.805,
+        latitude=31.25,  # Adjust to your map center
+        longitude=34.8,  # Adjust to your map center
         zoom=12,
-        pitch=50,
+        pitch=60,  # Increased pitch for better 3D view
         bearing=0
     )
 
+    # Create and return the deck
     deck = pdk.Deck(
         layers=[line_layer],
         initial_view_state=view_state,
-        tooltip={"text": "{name}: {trips} trips"},
         map_style='dark'
     )
 
