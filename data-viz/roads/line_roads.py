@@ -125,7 +125,7 @@ def get_route_distance_ratio(coord, start_coord, end_coord):
     
     return ratio
 
-def create_line_layer(trips_data):
+def create_line_layer(trips_data, bounds):
     """Create a deck.gl visualization with smooth segment transitions"""
     segments = create_segment_data(trips_data)
     line_data = []
@@ -195,16 +195,19 @@ def create_line_layer(trips_data):
 
     # Update view state for better 3D perspective
     view_state = pdk.ViewState(
-        latitude=31.25,  # Adjust to your map center
-        longitude=34.8,  # Adjust to your map center
-        zoom=12,
+        latitude=31.2627,  # Ben Gurion University
+        longitude=34.8113, # Ben Gurion University
+        zoom=15,
         pitch=60,  # Increased pitch for better 3D view
         bearing=0
     )
 
+    # Create the layers
+    building_layer = create_building_layer(bounds)
+    
     # Create and return the carto deck
     deck_carto = pdk.Deck(
-        layers=[line_layer],
+        layers=[building_layer, line_layer],  # Add building layer first
         initial_view_state=view_state,
         map_style='https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
         parameters={
@@ -218,7 +221,7 @@ def create_line_layer(trips_data):
     )
     # Create and return the mapbox deck
     deck_mapbox = pdk.Deck( 
-        layers=[line_layer],
+        layers=[building_layer, line_layer],  # Add building layer first
         initial_view_state=view_state,
         map_style="mapbox://styles/mapbox/dark-v10",
         parameters={
@@ -236,6 +239,47 @@ def create_line_layer(trips_data):
 
     return deck_carto, deck_mapbox
 
+def create_building_layer(bounds):
+    """Create a deck.gl layer for buildings"""
+    # Load building data
+    buildings_path = os.path.join(OUTPUT_DIR, "buildings.geojson")
+    buildings_gdf = gpd.read_file(buildings_path)
+    
+    # Filter to bounds
+    buildings_gdf = buildings_gdf.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]]
+    
+    building_data = []
+    for _, row in buildings_gdf.iterrows():
+        try:
+            coords = list(row.geometry.exterior.coords)
+            height = float(row.get('height', 20))  # Fix: use get() on row directly
+            building_data.append({
+                "polygon": [[float(x), float(y)] for x, y in coords],
+                "height": height * 2  # Double the height
+            })
+        except Exception as e:
+            print(f"Skipping building due to error: {e}")
+            continue
+    
+    return pdk.Layer(
+        "PolygonLayer",
+        building_data,
+        extruded=True,
+        wireframe=True,
+        opacity=0.8,
+        get_polygon="polygon",
+        get_elevation="height",
+        get_fill_color=[74, 80, 87],
+        get_line_color=[255, 255, 255, 50],
+        line_width_min_pixels=1,
+        material={
+            "ambient": 0.2,
+            "diffuse": 0.8,
+            "shininess": 32,
+            "specularColor": [60, 64, 70]
+        }
+    )
+
 def main():
     print("\nStarting trip route visualization...")
     trips_data = load_road_usage()
@@ -245,7 +289,7 @@ def main():
     trips_data = trips_data.cx[bounds[0]:bounds[2], bounds[1]:bounds[3]]
     print(f"Processing {len(trips_data)} routes after filtering")
     
-    deck_carto, deck_mapbox = create_line_layer(trips_data)
+    deck_carto, deck_mapbox = create_line_layer(trips_data, bounds)
     output_path_carto = os.path.join(OUTPUT_DIR, "trip_routes_deck_carto.html")
     deck_carto.to_html(output_path_carto)
     output_path_mapbox = os.path.join(OUTPUT_DIR, "trip_routes_deck_mapbox.html")
