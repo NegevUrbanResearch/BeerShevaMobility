@@ -18,35 +18,18 @@ def load_road_usage():
 def create_line_layer(trips_data):
     """Create a deck.gl visualization with lines following actual road routes"""
     
-    # Define central destination as a polygon
-    central_polygon = {
-        "polygon": [
-            [34.795, 31.245],  # SW
-            [34.815, 31.245],  # SE
-            [34.815, 31.265],  # NE
-            [34.795, 31.265],  # NW
-            [34.795, 31.245]   # Close the polygon
-        ],
-        "name": "Beer Sheva Center"
-    }
-    
     # Prepare line data using actual route geometries
     line_data = []
     max_trips = trips_data['num_trips'].max()
     
     def interpolate_color(t):
         """Interpolate between colors based on trip count ratio (t)
-        Blue (low) -> Yellow (medium) -> Red (high)"""
-        if t < 0.5:  # Blue to Yellow
-            r = int(255 * (2 * t))
-            g = int(255 * (2 * t))
-            b = int(255 * (1 - 2 * t))
-        else:  # Yellow to Red
-            t = t * 2 - 1
-            r = 255
-            g = int(255 * (1 - t))
-            b = 0
-        return [r, g, b]
+        Blue (low) -> Red (high)"""
+        return [
+            int(255 * t),        # Red increases with t
+            int(128 * (1 - t)),  # Green decreases
+            int(255 * (1 - t))   # Blue decreases with t
+        ]
 
     # Process each route
     for _, row in trips_data.iterrows():
@@ -57,10 +40,10 @@ def create_line_layer(trips_data):
         # Get coordinates from the LineString geometry
         coords = list(row.geometry.coords)
         
-        # Create line segments with small elevation
+        # Create line segments with fixed low elevation
         for i in range(len(coords) - 1):
-            start = list(coords[i]) + [50]  # Add small elevation
-            end = list(coords[i + 1]) + [50]
+            start = list(coords[i]) + [10]  # Fixed low elevation
+            end = list(coords[i + 1]) + [10]
             
             line_data.append({
                 "start": start,
@@ -70,31 +53,14 @@ def create_line_layer(trips_data):
                 "color": color
             })
 
-    # Create 3D polygon layer for destination
-    polygon_layer = pdk.Layer(
-        "PolygonLayer",
-        [central_polygon],
-        get_polygon="polygon",
-        get_fill_color=[255, 140, 0, 180],  # Semi-transparent orange
-        get_line_color=[255, 140, 0],
-        get_line_width=2,
-        pickable=True,
-        filled=True,
-        extruded=True,
-        get_elevation=500,  # Height of the 3D polygon
-        elevation_scale=1,
-        wireframe=True
-    )
-
     line_layer = pdk.Layer(
         "LineLayer",
         line_data,
         get_source_position="start",
         get_target_position="end",
         get_color="color",
-        get_width="trips / 50",  # Width also scales with trips
-        opacity=0.8,
-        highlight_color=[255, 255, 255],
+        get_width="trips / 50",
+        highlight_color=[255, 255, 0],
         picking_radius=10,
         auto_highlight=True,
         pickable=True,
@@ -109,7 +75,7 @@ def create_line_layer(trips_data):
     )
 
     deck = pdk.Deck(
-        layers=[line_layer, polygon_layer],  # Polygon layer on top
+        layers=[line_layer],
         initial_view_state=view_state,
         tooltip={"text": "{name}: {trips} trips"},
         map_style='dark'
