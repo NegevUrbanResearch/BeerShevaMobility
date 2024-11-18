@@ -254,7 +254,7 @@ def create_line_layer(trips_data):
     carto_deck = pdk.Deck(
         layers=[building_layer, line_layer],  # Add building_layer first so it's underneath
         initial_view_state=view_state,
-        map_style='dark',
+         map_style='https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
         parameters={
             "blendColorOperation": "add",
             "blendColorSrcFactor": "src-alpha",
