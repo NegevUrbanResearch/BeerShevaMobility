@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configuration and constants
 # File paths
@@ -20,3 +24,6 @@ COLOR_SCHEME = {
 
 # Chart colors
 CHART_COLORS = ['#007BFF', '#DC3545', '#28A745', '#FFC107', '#17A2B8', '#6C757D']
+
+# Your public Mapbox API key
+MAPBOX_API_KEY = os.getenv('MAPBOX_API_KEY', 'your_sample_api_key_here')
