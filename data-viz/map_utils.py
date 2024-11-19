@@ -78,7 +78,7 @@ class MapCreator:
                     tickvals=np.linspace(vmin, vmax, 6),  # Position of ticks
                     ticktext=[f"{int(np.expm1(val))}" for val in np.linspace(vmin, vmax, 6)],  # Text to display
                 ),
-                hovertemplate='<b>Zone:</b> %{location}<br><b>Trips:</b> %{customdata:.0f}<extra></extra>',
+                hovertemplate='<b>Area:</b> %{location}<br><b>Trips:</b> %{customdata:.0f}<extra></extra>',
                 customdata=zones_with_trips['total_trips'],
             ))
             # Add annotation for logarithmic scale

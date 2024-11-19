@@ -12,7 +12,21 @@ class DataLoader:
         self.poi_file = os.path.join(self.base_dir, "data", "poi_with_exact_coordinates.csv")
 
     def load_zones(self):
-        return gpd.read_file(self.zones_file)
+        """Load both statistical zones and cities from their respective GeoJSON files"""
+        # Load both statistical zones and city zones
+        stat_zones = gpd.read_file(os.path.join(self.output_dir, "statistical_zones.geojson"))
+        city_zones = gpd.read_file(os.path.join(self.output_dir, "city_zones.geojson"))
+        
+        # Rename city_id to YISHUV_STAT11 to match statistical zones format
+        city_zones = city_zones.rename(columns={'city_id': 'YISHUV_STAT11'})
+        
+        # Combine the datasets
+        zones = pd.concat([stat_zones, city_zones], ignore_index=True)
+        
+        # Ensure YISHUV_STAT11 is string type
+        zones['YISHUV_STAT11'] = zones['YISHUV_STAT11'].astype(str)
+        
+        return zones
 
     def load_poi_data(self):
         return pd.read_csv(self.poi_file)
