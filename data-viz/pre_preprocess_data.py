@@ -1,8 +1,12 @@
 import pandas as pd
 import geopandas as gpd
-import os
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
+from config import (
+    BASE_DIR, DATA_DIR, PROCESSED_DIR,
+    RAW_ZONES_FILE, RAW_TRIPS_FILE,
+    ZONES_WITH_CITIES_FILE, TRIPS_WITH_CITIES_FILE
+)
 
 def create_city_level_zones(zones_gdf):
     """Create city-level zones by aggregating statistical areas"""
@@ -207,16 +211,10 @@ def process_trips_data(trips_df, zones_gdf):
     return trips_df
 
 def main():
-    # File paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(base_dir, 'data')
-    processed_dir = os.path.join(data_dir, 'processed')
-    os.makedirs(processed_dir, exist_ok=True)
-    
     # Load data
     print("Loading data...")
-    zones = gpd.read_file(os.path.join(data_dir, 'statisticalareas_demography2019.gdb'))
-    trips = pd.read_excel(os.path.join(data_dir, 'All-Stages.xlsx'), sheet_name='StageB1')
+    zones = gpd.read_file(RAW_ZONES_FILE)
+    trips = pd.read_excel(RAW_TRIPS_FILE, sheet_name='StageB1')
     
     # Debug: Print initial data info
     print("\nInitial data summary:")
@@ -234,17 +232,11 @@ def main():
     
     # Save processed files
     print("\nSaving processed files...")
-    combined_zones.to_file(
-        os.path.join(processed_dir, 'zones_with_cities.geojson'),
-        driver='GeoJSON'
-    )
-    processed_trips.to_excel(
-        os.path.join(processed_dir, 'trips_with_cities.xlsx'),
-        index=False
-    )
+    combined_zones.to_file(ZONES_WITH_CITIES_FILE, driver='GeoJSON')
+    processed_trips.to_excel(TRIPS_WITH_CITIES_FILE, index=False)
     
     print("\nPre-preprocessing complete!")
-    print(f"Files saved to: {processed_dir}")
+    print(f"Files saved to: {PROCESSED_DIR}")
 
 if __name__ == "__main__":
     main() 
