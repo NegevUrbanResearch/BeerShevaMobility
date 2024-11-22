@@ -16,21 +16,6 @@ from config import (
     FINAL_TRIPS_PATTERN, TRIPS_WITH_CITIES_FILE
 )
 
-# Add this at the top with other utility functions
-def clean_poi_name(name):
-    """Clean and standardize POI names"""
-    name_corrections = {
-        'Emek Shara industrial area': 'Emek Sara Industrial Area',
-        'BGU': 'Ben-Gurion University',
-        'Soroka Hospital': 'Soroka Medical Center',
-        'Gev Yam': 'Gav-Yam High-Tech Park',
-        'K collage': 'Kaye College',
-        'Omer industrial area': 'Omer Industrial Area',
-        'Sami Shimon collage': 'SCE',
-        'Ramat Hovav Industry': 'Ramat Hovav Industrial Zone'
-    }
-    return name_corrections.get(name, name)
-
 # Replace all directory definitions with config paths
 print(f"Using paths:")
 print(f"Base directory: {BASE_DIR}")
@@ -106,7 +91,7 @@ validate_zone_types(df, zones)
 
 # Create a dictionary to map POI tracts to names (with proper formatting)
 poi_names = {
-    clean_zone_id(str(tract)): clean_poi_name(name) 
+    clean_zone_id(str(tract)): name 
     for tract, name in zip(poi_df['tract'].astype(str), poi_df['name'])
 }
 
@@ -132,156 +117,69 @@ def process_poi_trips(poi_id, poi_name, trip_type):
     poi_id_padded = clean_zone_id(str(poi_id).zfill(8))
     print(f"\nProcessing {trip_type} trips for POI: {poi_name} (ID: {poi_id_padded})")
     
-    # Debug: Show what we're looking for
-    print(f"Looking for {trip_type} trips with {'to_tract' if trip_type == 'inbound' else 'from_tract'} = {poi_id_padded}")
-    
+    # Get relevant trips
     if trip_type == 'inbound':
         poi_trips = df[df['to_tract'] == poi_id_padded].copy()
-        origin_column = 'from_tract'
+        tract_column = 'from_tract'
     else:  # outbound
         poi_trips = df[df['from_tract'] == poi_id_padded].copy()
-        origin_column = 'to_tract'
-    
-    # Debug: Show sample of data being searched
-    print("\nSample of tract values in data:")
-    print(f"from_tract: {df['from_tract'].head().tolist()}")
-    print(f"to_tract: {df['to_tract'].head().tolist()}")
+        tract_column = 'to_tract'
     
     if len(poi_trips) == 0:
         print(f"No {trip_type} trips found for this POI")
-        return pd.DataFrame(), {'total_trips': 0, 'metro_trips': 0, 'outside_trips': 0}
-    
-    num_trip_types = len(poi_trips)
-    num_unique_origins = poi_trips[origin_column].nunique()
-    print(f"Number of trips: {num_trip_types}")
-    print(f"Number of unique {'origin' if trip_type == 'inbound' else 'destination'} zones: {num_unique_origins}")
-    
-    # Debug: Show sample of data
-    print("\nSample of POI trips:")
-    print(poi_trips[['from_tract', 'to_tract', 'count']].head())
-    
-    # Convert time_bin to datetime
-    poi_trips['time_bin'] = poi_trips['time_bin'].apply(parse_time)
-    poi_trips = poi_trips.dropna(subset=['time_bin'])  # Remove rows with invalid time_bin
-    
-    # Calculate total trips and split into metro and outside
-    total_trips = poi_trips['count'].sum()
-    metro_trips = poi_trips[poi_trips['IC'] == False]
-    outside_trips = poi_trips[poi_trips['IC'] == True]
-    
-    metro_trips_total = metro_trips['count'].sum()
-    outside_trips_total = outside_trips['count'].sum()
-    
-    print(f"Total trips: {total_trips:.1f}")
-    print(f"Metro trips: {metro_trips_total:.1f}, Outside trips: {outside_trips_total:.1f}")
+        return pd.DataFrame()
 
-    # Debug: Print unique values in each column
-    for column in poi_trips.columns:
-        print(f"\nUnique values in {column}:")
-        print(poi_trips[column].unique())
+    # Convert time_bin to consistent string format HH:00
+    poi_trips['time_bin'] = poi_trips['time_bin'].apply(lambda x: 
+        f"{int(float(x) * 24):02d}:00" if isinstance(x, (float, int)) 
+        else x.split(':')[0] + ':00' if isinstance(x, str) 
+        else "00:00")
 
-    # Process metro trips
-    metro_summary = metro_trips.groupby(origin_column).agg({
+    # Process all trips together
+    trip_summary = poi_trips.groupby(tract_column).agg({
         'count': 'sum',
         'Frequency': lambda x: x.value_counts(normalize=True).to_dict(),
         'mode': lambda x: x.value_counts().to_dict(),
-        'purpose': lambda x: x.value_counts().to_dict()
+        'purpose': lambda x: x.value_counts().to_dict(),
+        'time_bin': lambda x: x.value_counts(normalize=True).to_dict()
     }).reset_index()
     
-    metro_summary.columns = ['tract', 'total_trips', 'frequency', 'mode', 'purpose']
-    
-    # Get unique frequency, mode, and purpose values
-    frequency_values = poi_trips['Frequency'].unique()
-    mode_values = poi_trips['mode'].unique()
-    purpose_values = poi_trips['purpose'].unique()
-
-    # Calculate percentages for frequency, modes, and purposes
-    for column, values in zip(['frequency', 'mode', 'purpose'], [frequency_values, mode_values, purpose_values]):
-        for value in values:
-            metro_summary[f'{column}_{value.strip()}'] = metro_summary[column].apply(lambda x: x.get(value, 0) / sum(x.values()) * 100)
-
-    # Calculate percentages for arrival times
-    time_bins = sorted(poi_trips['time_bin'].unique())
-    for time_bin in time_bins:
-        col_name = f'arrival_{time_bin.strftime("%H:%M")}'
-        time_counts = metro_trips[metro_trips['time_bin'] == time_bin].groupby(origin_column)['count'].sum()
-        metro_summary[col_name] = metro_summary['tract'].map(time_counts).fillna(0) / metro_summary['total_trips'] * 100
-
-    # Debug: Print sample of metro_summary
-    print("\nSample of metro_summary:")
-    print(metro_summary.head().to_string())
-
-    # Process outside trips
-    outside_summary = pd.DataFrame({
-        'tract': ['0'],
-        'total_trips': [outside_trips_total]
+    # Rename columns consistently
+    trip_summary = trip_summary.rename(columns={
+        tract_column: 'tract',
+        'count': 'total_trips'
     })
-
-    # Calculate percentages for frequency, modes, and purposes for outside trips
-    for column, values in zip(['Frequency', 'mode', 'purpose'], [frequency_values, mode_values, purpose_values]):
-        column_total = outside_trips[column].map(outside_trips['count']).sum()
-        for value in values:
-            count = outside_trips[outside_trips[column] == value]['count'].sum()
-            outside_summary[f'{column.lower()}_{value.strip()}'] = (count / column_total * 100).round(2)
-
-    # Calculate percentages for arrival times for outside trips
-    for time_bin in time_bins:
-        col_name = f'arrival_{time_bin.strftime("%H:%M")}'
-        count = outside_trips[outside_trips['time_bin'] == time_bin]['count'].sum()
-        outside_summary[col_name] = (count / outside_trips_total * 100).round(2)
-
-    # Combine metro and outside summaries
-    trip_summary = pd.concat([metro_summary, outside_summary], ignore_index=True)
-
-    # Sort columns
-    time_columns = [col for col in trip_summary.columns if col.startswith('arrival_')]
-    sorted_time_columns = sorted(time_columns, key=lambda x: pd.to_datetime(x.split('_')[-1], format='%H:%M').time())
-    column_order = ['tract', 'total_trips'] + \
-                   [col for col in trip_summary.columns if col.startswith(('frequency_', 'mode_', 'purpose_'))] + \
-                   sorted_time_columns
-    trip_summary = trip_summary[column_order]
-
-    # Replace NaN values with 0.0
-    trip_summary = trip_summary.fillna(0.0)
-
-    # Debug: Check for data issues
-    print("\nChecking for data issues:")
-    nan_columns = trip_summary.columns[trip_summary.isna().any()].tolist()
-    zero_columns = trip_summary.columns[(trip_summary == 0).all()].tolist()
-    hundred_columns = trip_summary.columns[(trip_summary == 100).all()].tolist()
-
-    print(f"Columns with NaN values: {nan_columns}")
-    print(f"Columns with all zero values: {zero_columns}")
-    print(f"Columns with all 100 values: {hundred_columns}")
-
-    # Print a sample of the processed data
-    print("\nSample of processed data:")
-    print(trip_summary.head().to_string())
-
-    # Save total trips information
-    trips_info = {
-        'total_trips': total_trips,
-        'metro_trips': metro_trips_total,
-        'outside_trips': outside_trips_total,
-        'num_trip_types': num_trip_types,
-        'num_unique_origins': num_unique_origins
-    }
-
-    return trip_summary, trips_info
+    
+    # Calculate percentages for each category
+    for category in ['Frequency', 'mode', 'purpose']:
+        category_values = poi_trips[category].unique()
+        for value in category_values:
+            col_name = f'{category.lower()}_{value.strip()}'
+            trip_summary[col_name] = trip_summary[category].apply(
+                lambda x: x.get(value, 0) * 100 if x else 0
+            )
+    
+    # Calculate time bin percentages with consistent naming
+    for hour in range(24):
+        time_str = f"{hour:02d}:00"
+        col_name = f'arrival_{time_str}'
+        trip_summary[col_name] = trip_summary['time_bin'].apply(
+            lambda x: x.get(time_str, 0) * 100 if x else 0
+        )
+    
+    # Drop the dictionary columns
+    trip_summary = trip_summary.drop(columns=['Frequency', 'mode', 'purpose', 'time_bin'])
+    
+    return trip_summary
 
 # Process all POIs
 processed_files = 0
 for poi_id, poi_name in poi_names.items():
     for trip_type in ['inbound', 'outbound']:
-        data, trips_info = process_poi_trips(poi_id, poi_name, trip_type)
-        if not data.empty:
-            # Use cleaned name for file names (consistent with data_loader expectations)
-            clean_name = poi_name.replace(' ', '_').replace('-', '_')
-            output_file = os.path.join(OUTPUT_DIR, f"{clean_name}_{trip_type}_trips.csv")
-            data.to_csv(output_file, index=False)
-            # Save trips info
-            trips_info_file = os.path.join(OUTPUT_DIR, f"{clean_name}_{trip_type}_trips_info.csv")
-            pd.DataFrame([trips_info]).to_csv(trips_info_file, index=False)
+        trip_summary = process_poi_trips(poi_id, poi_name, trip_type)
+        if not trip_summary.empty:
+            output_file = os.path.join(OUTPUT_DIR, f"{poi_name.replace(' ', '_')}_{trip_type}_trips.csv")
+            trip_summary.to_csv(output_file, index=False)
             processed_files += 1
             print(f"Processed {trip_type} data saved for {poi_name}")
 
@@ -322,8 +220,6 @@ print("Trip data from_tract format:", df['from_tract'].head())
 print("Trip data to_tract format:", df['to_tract'].head())
 print("Zones YISHUV_STAT11 format:", zones['YISHUV_STAT11'].head())
 
-
-
 # When saving the data
 # Save zones with proper format
 zones = standardize_zone_ids(zones, ['YISHUV_STAT11'])
@@ -331,6 +227,6 @@ zones.to_file(FINAL_ZONES_FILE, driver='GeoJSON')
 
 # Save trip data with proper format
 df = standardize_zone_ids(df, ['from_tract', 'to_tract'])
-output_file = os.path.join(PROCESSED_DIR, f'{poi_name}_{trip_type}_trips.csv')
+output_file = os.path.join(OUTPUT_DIR, f'{poi_name}_{trip_type}_trips.csv')
 df.to_csv(output_file, index=False)
 #

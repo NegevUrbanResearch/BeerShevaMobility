@@ -14,9 +14,9 @@ from utils.zone_utils import (
     ZONE_FORMATS
 )
 from config import (
-    BASE_DIR, OUTPUT_DIR, COLOR_SCHEME,
-    PROCESSED_DIR, FINAL_ZONES_FILE
+    OUTPUT_DIR
 )
+from utils.data_standards import DataStandardizer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -29,16 +29,26 @@ class MapCreator:
         logger.info(f"Creating map for POI: {selected_poi}, Trip Type: {trip_type}")
         
         try:
+            # Standardize the selected POI name
+            standard_poi = DataStandardizer.standardize_poi_name(selected_poi)
+            
+            if standard_poi not in poi_coordinates:
+                logger.error(f"POI '{standard_poi}' (standardized from '{selected_poi}') not found in coordinates.")
+                logger.error(f"Available POIs: {list(poi_coordinates.keys())}")
+                return go.Figure()
+            
+            center_lat, center_lon = poi_coordinates[standard_poi]
+            
             # Debug input data
             logger.info("\nInput data format:")
             logger.info(f"Trip data columns: {df.columns.tolist()}")
             
-            # Use correct column names
-            tract_col = 'to_tract' if trip_type == 'inbound' else 'from_tract'
+            # Use 'tract' column instead of from/to_tract
+            tract_col = 'tract'
             logger.info(f"Trip data {tract_col} samples:\n{df[tract_col].head()}")
             
-            # Aggregate trips by tract before merging
-            df_aggregated = df.groupby(tract_col)['count'].sum().reset_index()
+            # Aggregate trips by tract using total_trips column
+            df_aggregated = df.groupby(tract_col)['total_trips'].sum().reset_index()
             logger.info(f"\nAggregated trip counts:")
             logger.info(f"Original shape: {df.shape}")
             logger.info(f"Aggregated shape: {df_aggregated.shape}")
@@ -46,6 +56,9 @@ class MapCreator:
             # Ensure consistent formatting
             df_aggregated = standardize_zone_ids(df_aggregated, [tract_col])
             zones = standardize_zone_ids(zones, ['YISHUV_STAT11'])
+            
+            # Rename column to match the rest of the code
+            df_aggregated = df_aggregated.rename(columns={'total_trips': 'count'})
             
             # Filter and clip zones
             filtered_zones = self.filter_and_clip_zones(zones, df_aggregated)
@@ -192,8 +205,8 @@ class MapCreator:
     def filter_and_clip_zones(self, zones, trip_data):
         logger.info(f"Number of zones before filtering: {len(zones)}")
         
-        # Get the appropriate tract column based on trip type
-        tract_col = 'to_tract' if 'to_tract' in trip_data.columns else 'from_tract'
+        # Use 'tract' column
+        tract_col = 'tract'
         logger.info(f"Number of unique {tract_col} values in trip_data: {len(trip_data[tract_col].unique())}")
         
         # Debug zone types before filtering
@@ -233,12 +246,15 @@ def test_map_creator():
     poi_df = loader.load_poi_data()
     trip_data = loader.load_trip_data()
     
+    # Clean POI names in both POI data and trip data
+    poi_df, trip_data = loader.clean_poi_names(poi_df, trip_data)
+    
     # Debug available POIs and trip types
     print("\nAvailable POI-trip type combinations:")
     for key in trip_data.keys():
         print(f"- {key[0]} ({key[1]})")
     
-    # Use the first available POI-trip combination instead of hardcoding
+    # Use the first available POI-trip combination
     if not trip_data:
         raise ValueError("No trip data available")
     
@@ -251,9 +267,13 @@ def test_map_creator():
     # Create map
     map_creator = MapCreator(COLOR_SCHEME)
     
-    # Create a dictionary of all POI coordinates
-    all_poi_coordinates = dict(zip(poi_df['name'], zip(poi_df['lat'], poi_df['lon'])))
-    print(f"\nAvailable POI coordinates:")
+    # Create a dictionary of all POI coordinates with standardized naming
+    all_poi_coordinates = dict(zip(
+        poi_df['name'].apply(DataStandardizer.standardize_poi_name),
+        zip(poi_df['lat'], poi_df['lon'])
+    ))
+    
+    print("\nAvailable POI coordinates (standardized):")
     for poi, coords in all_poi_coordinates.items():
         print(f"- {poi}: {coords}")
     
@@ -261,7 +281,6 @@ def test_map_creator():
     fig = map_creator.create_map(test_df, test_poi, test_trip_type, zones, all_poi_coordinates)
     
     # Save the test map
-    
     output_file = os.path.join(OUTPUT_DIR, 'test_map.html')
     pio.write_html(fig, file=output_file, auto_open=True)
     print(f"\nTest map saved as: {output_file}")
