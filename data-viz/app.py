@@ -7,7 +7,7 @@ from flask_caching import Cache
 from data_loader import DataLoader
 from chart_utils import ChartCreator
 from map_utils import MapCreator
-from config import COLOR_SCHEME, CHART_COLORS, BASE_DIR, OUTPUT_DIR
+from config import COLOR_SCHEME, CHART_COLORS
 import logging
 import traceback
 import plotly.graph_objects as go
@@ -24,7 +24,9 @@ class DashboardApp:
             '<style>body { font-size: 1.5rem; } .Select-value-label { color: black !important; font-size: 1.5rem; }</style></head>'
         )
         self.cache = Cache(self.app.server, config={'CACHE_TYPE': 'SimpleCache'})
-        self.data_loader = DataLoader(BASE_DIR, OUTPUT_DIR)
+        
+        # Updated DataLoader initialization - no arguments needed
+        self.data_loader = DataLoader()
         self.chart_creator = ChartCreator(COLOR_SCHEME, CHART_COLORS)
         self.map_creator = MapCreator(COLOR_SCHEME)
         
