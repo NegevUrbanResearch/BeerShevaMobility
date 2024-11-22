@@ -299,4 +299,3 @@ def main():
     print(f"\nVisualization saved to: {output_path_mapbox}")
 if __name__ == "__main__":
     main()
-

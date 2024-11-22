@@ -113,7 +113,6 @@ def parse_time(time_str):
 
 def process_poi_trips(poi_id, poi_name, trip_type):
     """Process trips for a specific POI"""
-    # Ensure POI ID is properly formatted (8 digits)
     poi_id_padded = clean_zone_id(str(poi_id).zfill(8))
     print(f"\nProcessing {trip_type} trips for POI: {poi_name} (ID: {poi_id_padded})")
     
@@ -129,19 +128,9 @@ def process_poi_trips(poi_id, poi_name, trip_type):
         print(f"No {trip_type} trips found for this POI")
         return pd.DataFrame()
 
-    # Convert time_bin to consistent string format HH:00
-    poi_trips['time_bin'] = poi_trips['time_bin'].apply(lambda x: 
-        f"{int(float(x) * 24):02d}:00" if isinstance(x, (float, int)) 
-        else x.split(':')[0] + ':00' if isinstance(x, str) 
-        else "00:00")
-
-    # Process all trips together
+    # Group by tract and calculate total trips
     trip_summary = poi_trips.groupby(tract_column).agg({
-        'count': 'sum',
-        'Frequency': lambda x: x.value_counts(normalize=True).to_dict(),
-        'mode': lambda x: x.value_counts().to_dict(),
-        'purpose': lambda x: x.value_counts().to_dict(),
-        'time_bin': lambda x: x.value_counts(normalize=True).to_dict()
+        'count': 'sum'
     }).reset_index()
     
     # Rename columns consistently
@@ -150,25 +139,43 @@ def process_poi_trips(poi_id, poi_name, trip_type):
         'count': 'total_trips'
     })
     
-    # Calculate percentages for each category
-    for category in ['Frequency', 'mode', 'purpose']:
-        category_values = poi_trips[category].unique()
-        for value in category_values:
-            col_name = f'{category.lower()}_{value.strip()}'
-            trip_summary[col_name] = trip_summary[category].apply(
-                lambda x: x.get(value, 0) * 100 if x else 0
-            )
-    
-    # Calculate time bin percentages with consistent naming
-    for hour in range(24):
-        time_str = f"{hour:02d}:00"
-        col_name = f'arrival_{time_str}'
-        trip_summary[col_name] = trip_summary['time_bin'].apply(
-            lambda x: x.get(time_str, 0) * 100 if x else 0
+    # Calculate mode percentages correctly
+    mode_columns = ['mode']
+    for mode in poi_trips['mode'].unique():
+        mode_trips = poi_trips[poi_trips['mode'] == mode].groupby(tract_column)['count'].sum()
+        trip_summary[f'mode_{mode.strip().lower()}'] = trip_summary['tract'].map(mode_trips).fillna(0)
+        # Convert to percentage of total trips for that tract
+        trip_summary[f'mode_{mode.strip().lower()}'] = (
+            trip_summary[f'mode_{mode.strip().lower()}'] / trip_summary['total_trips'] * 100
         )
     
-    # Drop the dictionary columns
-    trip_summary = trip_summary.drop(columns=['Frequency', 'mode', 'purpose', 'time_bin'])
+    # Similarly for frequency and purpose
+    for category in ['Frequency', 'purpose']:
+        for value in poi_trips[category].unique():
+            cat_trips = poi_trips[poi_trips[category] == value].groupby(tract_column)['count'].sum()
+            col_name = f'{category.lower()}_{value.strip()}'
+            trip_summary[col_name] = trip_summary['tract'].map(cat_trips).fillna(0)
+            trip_summary[col_name] = (
+                trip_summary[col_name] / trip_summary['total_trips'] * 100
+            )
+    
+    # Handle time bins
+    for hour in range(24):
+        time_str = f"{hour:02d}:00"
+        time_trips = poi_trips[poi_trips['time_bin'] == time_str].groupby(tract_column)['count'].sum()
+        col_name = f'arrival_{time_str}'
+        trip_summary[col_name] = trip_summary['tract'].map(time_trips).fillna(0)
+        trip_summary[col_name] = (
+            trip_summary[col_name] / trip_summary['total_trips'] * 100
+        )
+    
+    # Verify that mode percentages sum to 100% for each tract
+    mode_cols = [col for col in trip_summary.columns if col.startswith('mode_')]
+    mode_sums = trip_summary[mode_cols].sum(axis=1)
+    if not all(abs(mode_sums - 100) < 0.01):
+        print(f"WARNING: Mode percentages don't sum to 100% for some tracts in {poi_name}")
+        print("Sample problematic tracts:")
+        print(trip_summary[abs(mode_sums - 100) > 0.01][['tract'] + mode_cols])
     
     return trip_summary
 
