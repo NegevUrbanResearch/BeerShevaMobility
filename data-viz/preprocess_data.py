@@ -16,6 +16,21 @@ from config import (
     FINAL_TRIPS_PATTERN, TRIPS_WITH_CITIES_FILE
 )
 
+# Add this at the top with other utility functions
+def clean_poi_name(name):
+    """Clean and standardize POI names"""
+    name_corrections = {
+        'Emek Shara industrial area': 'Emek Sara Industrial Area',
+        'BGU': 'Ben-Gurion University',
+        'Soroka Hospital': 'Soroka Medical Center',
+        'Gev Yam': 'Gav-Yam High-Tech Park',
+        'K collage': 'Kaye College',
+        'Omer industrial area': 'Omer Industrial Area',
+        'Sami Shimon collage': 'SCE',
+        'Ramat Hovav Industry': 'Ramat Hovav Industrial Zone'
+    }
+    return name_corrections.get(name, name)
+
 # Replace all directory definitions with config paths
 print(f"Using paths:")
 print(f"Base directory: {BASE_DIR}")
@@ -91,7 +106,7 @@ validate_zone_types(df, zones)
 
 # Create a dictionary to map POI tracts to names (with proper formatting)
 poi_names = {
-    clean_zone_id(str(tract)): name 
+    clean_zone_id(str(tract)): clean_poi_name(name) 
     for tract, name in zip(poi_df['tract'].astype(str), poi_df['name'])
 }
 
@@ -260,10 +275,12 @@ for poi_id, poi_name in poi_names.items():
     for trip_type in ['inbound', 'outbound']:
         data, trips_info = process_poi_trips(poi_id, poi_name, trip_type)
         if not data.empty:
-            output_file = os.path.join(OUTPUT_DIR, f"{poi_name.replace(' ', '_')}_{trip_type}_trips.csv")
+            # Use cleaned name for file names (consistent with data_loader expectations)
+            clean_name = poi_name.replace(' ', '_').replace('-', '_')
+            output_file = os.path.join(OUTPUT_DIR, f"{clean_name}_{trip_type}_trips.csv")
             data.to_csv(output_file, index=False)
             # Save trips info
-            trips_info_file = os.path.join(OUTPUT_DIR, f"{poi_name.replace(' ', '_')}_{trip_type}_trips_info.csv")
+            trips_info_file = os.path.join(OUTPUT_DIR, f"{clean_name}_{trip_type}_trips_info.csv")
             pd.DataFrame([trips_info]).to_csv(trips_info_file, index=False)
             processed_files += 1
             print(f"Processed {trip_type} data saved for {poi_name}")
@@ -304,6 +321,8 @@ print("\nVerifying data format before save:")
 print("Trip data from_tract format:", df['from_tract'].head())
 print("Trip data to_tract format:", df['to_tract'].head())
 print("Zones YISHUV_STAT11 format:", zones['YISHUV_STAT11'].head())
+
+
 
 # When saving the data
 # Save zones with proper format
