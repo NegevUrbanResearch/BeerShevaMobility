@@ -20,7 +20,7 @@ from data_loader import DataLoader
 CSS_LINK = '<link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />'
 
 # At the top with other constants
-POI_RADIUS = 0.002  # about 200 meters in decimal degrees
+POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
 
 def load_road_usage():
     """Load the trips data"""
@@ -158,7 +158,6 @@ def create_line_layer(trips_data, bounds):
         for i in range(num_segments):
             # Add small random variations
             jitter = 0.00001  # Approximately 1 meter
-            height_variation = np.random.uniform(4, 6)  # Random height between 4-6
             random_offset = [
                 (np.random.random() - 0.5) * jitter,
                 (np.random.random() - 0.5) * jitter
@@ -175,12 +174,12 @@ def create_line_layer(trips_data, bounds):
             start = [
                 start_coord[0] + (end_coord[0] - start_coord[0]) * start_pos + random_offset[0],
                 start_coord[1] + (end_coord[1] - start_coord[1]) * start_pos + random_offset[1],
-                height_variation
+                5
             ]
             end = [
                 start_coord[0] + (end_coord[0] - start_coord[0]) * end_pos + random_offset[0],
                 start_coord[1] + (end_coord[1] - start_coord[1]) * end_pos + random_offset[1],
-                height_variation
+                5
             ]
             
             mid_pos = (start_pos + end_pos) / 2
@@ -261,32 +260,68 @@ def create_line_layer(trips_data, bounds):
 def create_html_description(low_trips, med_trips, high_trips, total_trips):
     """Create HTML description to be injected into the template"""
     return f"""
-    <div style="position: fixed; bottom: 20px; right: 20px; background-color: rgb(0,0,0); background-image: none; padding: 12px; border-radius: 5px; color: rgb(255,255,255); font-family: Arial; box-shadow: 0 0 0 1000px rgb(0,0,0) inset;">
-        <h3 style="margin: 0 0 10px 0;">Trip Intensity</h3>
-        <div style="display: flex; align-items: center; margin-bottom: 5px;">
-            <div style="width: 20px; height: 4px; background: #142A78; margin-right: 8px;"></div>
-            <span>Low (1-{low_trips} trips/day)</span>
+    <style>
+        .deck-tooltip {{
+            display: none !important;
+        }}
+        .overlay-container {{
+            position: relative;
+            z-index: 99999999;
+            pointer-events: none;
+        }}
+        .overlay-container > div {{
+            pointer-events: auto;
+        }}
+        .legend-container {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #000000;
+            padding: 12px;
+            border-radius: 5px;
+            color: #FFFFFF;
+            font-family: Arial;
+        }}
+        .methodology-container {{
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #000000;
+            padding: 12px;
+            border-radius: 5px;
+            color: #FFFFFF;
+            font-family: Arial;
+            max-width: 300px;
+        }}
+    </style>
+    <div class="overlay-container">
+        <div class="legend-container">
+            <h3 style="margin: 0 0 10px 0;">Trip Intensity</h3>
+            <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                <div style="width: 20px; height: 4px; background: #142A78; margin-right: 8px;"></div>
+                <span>Low (1-{low_trips} trips/day)</span>
+            </div>
+            <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                <div style="width: 20px; height: 4px; background: #41B6C4; margin-right: 8px;"></div>
+                <span>Medium ({low_trips+1}-{med_trips} trips/day)</span>
+            </div>
+            <div style="display: flex; align-items: center;">
+                <div style="width: 20px; height: 4px; background: #F03434; margin-right: 8px;"></div>
+                <span>High ({med_trips+1}-{high_trips} trips/day)</span>
+            </div>
         </div>
-        <div style="display: flex; align-items: center; margin-bottom: 5px;">
-            <div style="width: 20px; height: 4px; background: #41B6C4; margin-right: 8px;"></div>
-            <span>Medium ({low_trips+1}-{med_trips} trips/day)</span>
+        <div class="methodology-container">
+            <h3 style="margin: 0 0 10px 0;">Methodology</h3>
+            <p style="margin: 0; font-size: 0.9em;">
+                This visualization represents aggregated trip data across Beer Sheva's road network.
+                Total Daily Trips: {total_trips:,}<br><br>
+                Colors indicate trip intensity using a cube root scale to highlight both major and minor routes.
+                Highlighted buildings indicate Points of Interest:<br>
+                • BGU (Green)<br>
+                • Gav Yam (Blue)<br>
+                • Soroka Hospital (White)
+            </p>
         </div>
-        <div style="display: flex; align-items: center;">
-            <div style="width: 20px; height: 4px; background: #F03434; margin-right: 8px;"></div>
-            <span>High ({med_trips+1}-{high_trips} trips/day)</span>
-        </div>
-    </div>
-    <div style="position: fixed; top: 20px; right: 20px; background-color: rgb(0,0,0); background-image: none; padding: 12px; border-radius: 5px; color: rgb(255,255,255); font-family: Arial; max-width: 300px; box-shadow: 0 0 0 1000px rgb(0,0,0) inset;">
-        <h3 style="margin: 0 0 10px 0;">Methodology</h3>
-        <p style="margin: 0; font-size: 0.9em;">
-            This visualization represents aggregated trip data across Beer Sheva's road network.
-            Total Daily Trips: {total_trips:,}<br><br>
-            Colors indicate trip intensity using a cube root scale to highlight both major and minor routes.
-            Highlighted buildings indicate Points of Interest:<br>
-            • BGU (Green)<br>
-            • Gav Yam (Blue)<br>
-            • Soroka Hospital (White)
-        </p>
     </div>
     """
 
@@ -294,44 +329,53 @@ def create_building_layer(bounds):
     """Create a building layer with highlighted POI buildings"""
     buildings_gdf = gpd.read_file(BUILDINGS_FILE)
     building_features = []
+    text_features = []
     
-    # Map POI names to their standardized versions
-    poi_mapping = {
-        'BGU': 'Ben-Gurion-University',
-        'Gev Yam': 'Gav-Yam-High-Tech-Park',
-        'Soroka Hospital': 'Soroka-Medical-Center'
-    }
-    
-    # Define POI colors and coordinates
+    # Define POI colors with subtle tones that match building aesthetic
     poi_info = {
-        'BGU': {'color': [0, 255, 0, 100], 'lat': 31.2614375, 'lon': 34.7995625},
-        'Gev Yam': {'color': [0, 0, 255, 100], 'lat': 31.2641875, 'lon': 34.8128125},
-        'Soroka Hospital': {'color': [255, 255, 255, 100], 'lat': 31.2579375, 'lon': 34.8003125}
+        'BGU': {'color': [40, 120, 40, 160], 'lat': 31.2614375, 'lon': 34.7995625},        # Muted green
+        'Gav Yam': {'color': [40, 100, 140, 160], 'lat': 31.2641875, 'lon': 34.8128125},   # Muted teal
+        'Soroka Hospital': {'color': [140, 140, 140, 160], 'lat': 31.2579375, 'lon': 34.8003125}  # Muted white
     }
     
-    # Create a transformer for POI coordinates if needed
+    # Create a transformer for POI coordinates
     transformer = Transformer.from_crs("EPSG:4326", buildings_gdf.crs, always_xy=True)
     
     for idx, building in buildings_gdf.iterrows():
-        building_color = [255, 255, 255, 30]  # Default color
-        building_center = building.geometry.centroid
-        
-        # Check if building is within radius of main POIs
-        for poi_name, info in poi_info.items():
-            poi_x, poi_y = transformer.transform(info['lon'], info['lat'])
-            poi_point = Point(poi_x, poi_y)
+        building_color = [74, 80, 87, 160]  # Default color matching the original style
+        try:
+            # Get actual height from building data, default to 20 if not found
+            height = float(building.get('height', 20))
+            # Scale height by 1.5 to match trip_roads.py
+            building_height = height * 1.5
             
-            if building.geometry.centroid.distance(poi_point) <= POI_RADIUS:
-                building_color = info['color']
-                break
-        
-        building_features.append({
-            "polygon": building.geometry.exterior.coords[:],
-            "height": 20,
-            "color": building_color
-        })
+            # Check if building is within radius of main POIs
+            for poi_name, info in poi_info.items():
+                poi_x, poi_y = transformer.transform(info['lon'], info['lat'])
+                poi_point = Point(poi_x, poi_y)
+                
+                if building.geometry.centroid.distance(poi_point) <= POI_RADIUS:
+                    building_height = min(40 ,height * 1000)
+                    building_color = info['color']
+                    
+                    # Add text label for POI
+                    text_features.append({
+                        "position": [poi_x, poi_y, building_height + 10],  # Position above building
+                        "text": poi_name,
+                        "color": [150, 150, 150, 255]  # Grey color
+                    })
+                    break
+            
+            building_features.append({
+                "polygon": building.geometry.exterior.coords[:],
+                "height": building_height,
+                "color": building_color
+            })
+        except Exception as e:
+            print(f"Skipping building due to error: {e}")
+            continue
     
-    return pdk.Layer(
+    building_layer = pdk.Layer(
         "PolygonLayer",
         building_features,
         get_polygon="polygon",
@@ -341,7 +385,30 @@ def create_building_layer(bounds):
         elevation_range=[0, 1000],
         pickable=True,
         extruded=True,
+        wireframe=True,
+        get_line_color=[255, 255, 255, 50],
+        line_width_min_pixels=1,
+        material={
+            "ambient": 0.2,
+            "diffuse": 0.8,
+            "shininess": 32,
+            "specularColor": [60, 64, 70]
+        }
     )
+    
+    text_layer = pdk.Layer(
+        "TextLayer",
+        text_features,
+        get_position="position",
+        get_text="text",
+        get_color="color",
+        get_size=16,
+        get_angle=0,
+        get_text_anchor="middle",
+        get_alignment_baseline="center"
+    )
+    
+    return [building_layer, text_layer]
 
 def main():
     print("\nStarting trip route visualization...")
