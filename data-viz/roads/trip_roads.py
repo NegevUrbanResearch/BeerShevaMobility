@@ -10,7 +10,7 @@ import logging
 from config import BUILDINGS_FILE
 from shapely.geometry import Point
 from pyproj import Transformer
-
+import re
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,24 +41,52 @@ def load_trip_data():
         logger.error(f"Error loading trip data: {str(e)}")
         raise
     
-    # Calculate center coordinates from the bounds of all trips
+    # Calculate center coordinates
     total_bounds = trips_gdf.total_bounds
     center_lon = (total_bounds[0] + total_bounds[2]) / 2
     center_lat = (total_bounds[1] + total_bounds[3]) / 2
     
-    # Convert to format needed for animation - keep original num_trips
+    # Convert to format needed for animation
     trips_data = []
     processed_trips = 0
+    
+    # Animation parameters
+    frames_per_second = 60
+    desired_duration_seconds = 60  # one minute
+    animation_duration = frames_per_second * desired_duration_seconds  # 3600 frames
+    route_start_offset_max = 100  # Smaller offset for more density
+    
+    logger.info(f"Animation Configuration:")
+    logger.info(f"  - Frames per second: {frames_per_second}")
+    logger.info(f"  - Desired duration: {desired_duration_seconds} seconds")
+    logger.info(f"  - Total frames: {animation_duration}")
     
     for idx, row in trips_gdf.iterrows():
         try:
             coords = list(row.geometry.coords)
-            timestamps = list(range(len(coords)))
+            trip_duration = len(coords)
             num_trips = int(row['num_trips'])
+            
+            if num_trips <= 0:
+                logger.warning(f"Skipping route {idx} with {num_trips} trips")
+                continue
+                
             processed_trips += num_trips
+            route_offset = np.random.randint(0, route_start_offset_max)
+            
+            # Ensure we can fit all trips within the animation duration
+            interval = max(1, min(20, (animation_duration - trip_duration) // num_trips))
+            
+            # Generate individual timestamps for each trip instance
+            timestamps = []
+            for i in range(trip_duration):
+                point_times = []
+                for trip_num in range(num_trips):
+                    timestamp = (trip_num * interval + i + route_offset) % animation_duration
+                    point_times.append(timestamp)
+                timestamps.append(point_times)
             
             trips_data.append({
-                'vendor': 0,
                 'path': [[float(x), float(y)] for x, y in coords],
                 'timestamps': timestamps,
                 'num_trips': num_trips
@@ -68,13 +96,12 @@ def load_trip_data():
             logger.error(f"Error processing trip {idx}: {str(e)}")
             continue
     
-    logger.info(f"Verification:")
-    logger.info(f"  - Raw trips from GeoDataFrame: {raw_trip_count:,}")
-    logger.info(f"  - Processed trips in animation: {processed_trips:,}")
-    logger.info(f"  - Number of unique routes: {len(trips_data):,}")
-    
-    if raw_trip_count != processed_trips:
-        logger.warning(f"Trip count mismatch! Some trips may have been lost in processing.")
+    # Add detailed logging
+    total_instances = sum(len(trip['timestamps'][0]) for trip in trips_data)
+    logger.info(f"Animation Statistics:")
+    logger.info(f"  - Animation duration: {animation_duration} frames")
+    logger.info(f"  - Average interval between trips: {sum(trip['num_trips'] for trip in trips_data) / len(trips_data):.1f}")
+    logger.info(f"  - Total trip instances being animated: {total_instances:,}")
     
     return trips_data, center_lat, center_lon, processed_trips
 
@@ -188,7 +215,7 @@ def create_animation():
             <h3 style="margin: 0 0 10px 0;">Methodology</h3>
             <p style="margin: 0; font-size: 0.9em;">
                 This visualization represents individual trips across Beer Sheva's road network.
-                Total Daily Trips: %d<br><br>
+                Total Daily Trips: %(total_trips)d<br><br>
                 Colors indicate destinations:<br>
                 • BGU (Green)<br>
                 • Gav Yam (Blue)<br>
@@ -196,8 +223,14 @@ def create_animation():
             </p>
         </div>
         <script>
-            const TRIPS_DATA = %s;
-            const BUILDINGS_DATA = %s;
+            const TRIPS_DATA = %(trips_data)s;
+            const BUILDINGS_DATA = %(buildings_data)s;
+            const POI_RADIUS = %(poi_radius)f;
+            const BGU_INFO = %(bgu_info)s;
+            const GAV_YAM_INFO = %(gav_yam_info)s;
+            const SOROKA_INFO = %(soroka_info)s;
+            const ANIMATION_DURATION = %(animation_duration)d;
+            const LOOP_LENGTH = %(loopLength)d;
             
             const ambientLight = new deck.AmbientLight({
                 color: [255, 255, 255],
@@ -224,7 +257,6 @@ def create_animation():
             
             let trailLength = 5;
             let animationSpeed = 2.5;
-            const loopLength = 1800;
             let animation;
             
             const deckgl = new deck.DeckGL({
@@ -240,23 +272,54 @@ def create_animation():
                 const isNearPOI = (point, poi) => {
                     const dx = point[0] - poi.lon;
                     const dy = point[1] - poi.lat;
-                    return Math.sqrt(dx*dx + dy*dy) <= %f;
+                    return Math.sqrt(dx*dx + dy*dy) <= POI_RADIUS;
                 };
                 
-                if (isNearPOI(endPoint, %s)) return [80, 240, 80];  // Bright green for BGU
-                if (isNearPOI(endPoint, %s)) return [80, 200, 255]; // Bright blue for Gav Yam
-                if (isNearPOI(endPoint, %s)) return [220, 220, 220]; // Bright white for Soroka
+                if (isNearPOI(endPoint, BGU_INFO)) return [80, 240, 80];  // Bright green for BGU
+                if (isNearPOI(endPoint, GAV_YAM_INFO)) return [80, 200, 255]; // Bright blue for Gav Yam
+                if (isNearPOI(endPoint, SOROKA_INFO)) return [220, 220, 220]; // Bright white for Soroka
                 
                 return [253, 128, 93];  // Default color
             }
             
             function animate() {
+                // Log initial statistics
+                console.log('Animation Configuration:', {
+                    totalFrames: LOOP_LENGTH,
+                    baseSpeed: animationSpeed,
+                    actualDurationSeconds: (LOOP_LENGTH * 60) / animationSpeed / 60,
+                    trailLength
+                });
+
+                let lastTime = 0;
+                let activeTripsCount = 0;
+                
                 animation = popmotion.animate({
                     from: 0,
-                    to: loopLength,
-                    duration: (loopLength * 60) / animationSpeed,
+                    to: LOOP_LENGTH,
+                    duration: (LOOP_LENGTH * 60) / animationSpeed,  // 60fps
                     repeat: Infinity,
                     onUpdate: time => {
+                        // Log statistics every second (roughly)
+                        if (Math.floor(time) %% 60 === 0 && lastTime !== Math.floor(time)) {
+                            lastTime = Math.floor(time);
+                            
+                            // Count active trips
+                            activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
+                                const activeTimestamps = route.timestamps[0].filter(t => 
+                                    t <= time && t > time - trailLength
+                                );
+                                return sum + activeTimestamps.length;
+                            }, 0);
+                            
+                            console.log('Animation Status:', {
+                                frame: Math.floor(time),
+                                activeTrips: activeTripsCount,
+                                currentTrailLength: trailLength,
+                                currentSpeed: animationSpeed
+                            });
+                        }
+                        
                         const layers = [
                             new deck.PolygonLayer({
                                 id: 'buildings',
@@ -280,25 +343,27 @@ def create_animation():
                                 id: 'trips',
                                 data: TRIPS_DATA,
                                 getPath: d => d.path,
-                                getTimestamps: d => d.timestamps,
+                                getTimestamps: d => {
+                                    return d.timestamps.map(times => {
+                                        const activeTimestamps = times.filter(t => 
+                                            t <= time && t > time - trailLength
+                                        );
+                                        return activeTimestamps.length > 0 ? activeTimestamps[0] : times[0];
+                                    });
+                                },
                                 getColor: d => getPathColor(d.path),
                                 opacity: 0.8,
                                 widthMinPixels: 2,
                                 rounded: true,
                                 trailLength,
-                                currentTime: time,
-                                getWidth: d => Math.sqrt(d.num_trips),
-                                parameters: {
-                                    depthTest: true,
-                                    blend: false  // Disable blending
-                                }
+                                currentTime: time %% ANIMATION_DURATION
                             })
                         ];
                         
                         deckgl.setProps({
                             layers,
                             parameters: {
-                                blend: false  // Disable blending at deck.gl level
+                                blend: false
                             }
                         });
                     }
@@ -326,27 +391,61 @@ def create_animation():
     </html>
     """
     
-    # Generate the HTML file
-    output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
+    # Create a dictionary of all the values we need to format
+    format_values = {
+        'total_trips': total_trips,
+        'trips_data': json.dumps(trips_data),
+        'buildings_data': json.dumps(buildings_data),
+        'poi_radius': POI_RADIUS,
+        'bgu_info': json.dumps(POI_INFO['BGU']),
+        'gav_yam_info': json.dumps(POI_INFO['Gav Yam']),
+        'soroka_info': json.dumps(POI_INFO['Soroka Hospital']),
+        'animation_duration': 3600,
+        'loopLength': 3600
+    }
+    
     try:
+        # Log all format keys we're providing
+        logger.info("Format keys provided: " + ", ".join(format_values.keys()))
+        
+        # Find all format specifiers in the template
+        format_specs = re.findall(r'%\(([^)]+)\)[sdfg]', html_template)
+        logger.info("Format specifiers found in template: " + ", ".join(format_specs))
+        
+        # Check for any mismatches
+        missing_keys = set(format_specs) - set(format_values.keys())
+        extra_keys = set(format_values.keys()) - set(format_specs)
+        
+        if missing_keys:
+            logger.error(f"Missing format values for: {missing_keys}")
+        if extra_keys:
+            logger.error(f"Extra format values not in template: {extra_keys}")
+            
+        # Look for any % signs that might be causing issues
+        all_percent_signs = re.findall(r'%[^(]', html_template)
+        if all_percent_signs:
+            logger.error(f"Found potentially problematic % signs: {all_percent_signs}")
+        
+        # Format the HTML
+        formatted_html = html_template % format_values
+        
+        # Write to file
+        output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
         with open(output_path, 'w') as f:
-            formatted_html = html_template % (
-                total_trips,                             # Total trips count
-                json.dumps(trips_data),                  # Trips data with num_trips
-                json.dumps(buildings_data),              # Buildings data
-                POI_RADIUS,                              # %f - POI radius as float
-                json.dumps(POI_INFO['BGU']),             # %s - BGU POI info
-                json.dumps(POI_INFO['Gav Yam']),         # %s - Gav Yam POI info
-                json.dumps(POI_INFO['Soroka Hospital'])   # %s - Soroka POI info
-            )
             f.write(formatted_html)
+            
         logger.info(f"Animation saved to: {output_path}")
+        return output_path
+        
     except Exception as e:
         logger.error(f"Error writing HTML file: {str(e)}")
+        # Show a small section of the template around each format specifier
+        for match in re.finditer(r'%\([^)]+\)[sdfg]', html_template):
+            start = max(0, match.start() - 20)
+            end = min(len(html_template), match.end() + 20)
+            logger.error(f"Context around format specifier: ...{html_template[start:end]}...")
         raise
-    
-    return output_path
-
+        
 if __name__ == "__main__":
     try:
         output_file = create_animation()
