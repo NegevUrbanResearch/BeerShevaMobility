@@ -76,13 +76,13 @@ def interpolate_color(t, distance_ratio):
     
     # Base colors (from low to high trip counts, with increasing brightness)
     colors = {
-        0.0: [20, 42, 120],     # Dark blue
-        0.2: [40, 80, 180],     # Medium blue
-        0.4: [65, 182, 196],    # Light blue
-        0.6: [127, 132, 204],   # Purple-blue
-        0.8: [204, 55, 124],    # Pink-red
-        1.0: [240, 52, 52]      # Bright red
-    }
+    0.0: [20, 42, 120],     # Dark blue
+    0.2: [40, 80, 180],     # Medium blue
+    0.4: [65, 182, 196],    # Light blue
+    0.6: [120, 200, 150],   # Blue-green
+    0.8: [200, 220, 100],   # Yellow-green
+    1.0: [255, 255, 0]      # Bright yellow
+        }
     
     # Find and interpolate colors
     lower_t = max([k for k in colors.keys() if k <= t])
@@ -306,7 +306,7 @@ def create_html_description(low_trips, med_trips, high_trips, total_trips):
                 <span>Medium ({low_trips+1}-{med_trips} trips/day)</span>
             </div>
             <div style="display: flex; align-items: center;">
-                <div style="width: 20px; height: 4px; background: #F03434; margin-right: 8px;"></div>
+                <div style="width: 20px; height: 4px; background: #FFFF00; margin-right: 8px;"></div>
                 <span>High ({med_trips+1}-{high_trips} trips/day)</span>
             </div>
         </div>
