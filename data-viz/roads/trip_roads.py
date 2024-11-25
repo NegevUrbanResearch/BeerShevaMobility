@@ -54,7 +54,6 @@ def load_trip_data():
     frames_per_second = 60
     desired_duration_seconds = 60  # one minute
     animation_duration = frames_per_second * desired_duration_seconds  # 3600 frames
-    route_start_offset_max = 100  # Smaller offset for more density
     
     logger.info(f"Animation Configuration:")
     logger.info(f"  - Frames per second: {frames_per_second}")
@@ -72,18 +71,23 @@ def load_trip_data():
                 continue
                 
             processed_trips += num_trips
-            route_offset = np.random.randint(0, route_start_offset_max)
             
-            # Ensure we can fit all trips within the animation duration
-            interval = max(1, min(20, (animation_duration - trip_duration) // num_trips))
-            
-            # Generate individual timestamps for each trip instance
+            # New approach: Evenly distribute trips across the entire animation
             timestamps = []
             for i in range(trip_duration):
                 point_times = []
-                for trip_num in range(num_trips):
-                    timestamp = (trip_num * interval + i + route_offset) % animation_duration
+                
+                # Calculate even spacing between trips
+                base_interval = animation_duration / num_trips
+                
+                for trip in range(num_trips):
+                    # Distribute start times evenly with small random offset
+                    base_time = trip * base_interval
+                    # Add small random offset (±10% of interval) to prevent perfect alignment
+                    random_offset = np.random.uniform(-0.1 * base_interval, 0.1 * base_interval)
+                    timestamp = int((base_time + random_offset + i) % animation_duration)
                     point_times.append(timestamp)
+                
                 timestamps.append(point_times)
             
             trips_data.append({
@@ -203,23 +207,23 @@ def create_animation():
         <div id="container"></div>
         <div class="control-panel">
             <div>
-                <label>Trail Length: <span id="trail-value">5</span></label>
-                <input type="range" min="1" max="100" value="5" id="trail-length" style="width: 200px">
+                <label>Trail Length: <span id="trail-value">2</span></label>
+                <input type="range" min="1" max="100" value="2" id="trail-length" style="width: 200px">
             </div>
             <div>
-                <label>Animation Speed: <span id="speed-value">2.5</span></label>
-                <input type="range" min="0.1" max="5" step="0.1" value="2.5" id="animation-speed" style="width: 200px">
+                <label>Animation Speed: <span id="speed-value">4</span></label>
+                <input type="range" min="0.1" max="5" step="0.1" value="4" id="animation-speed" style="width: 200px">
             </div>
         </div>
         <div class="methodology-container">
             <h3 style="margin: 0 0 10px 0;">Methodology</h3>
             <p style="margin: 0; font-size: 0.9em;">
-                This visualization represents individual trips across Beer Sheva's road network.
-                Total Daily Trips: %(total_trips)d<br><br>
+                Represents individual trips across Beer Sheva's road network to POI in the Innovation District using approximate origin locations.<br>
+                Total Daily Trips Visualized: %(total_trips)d<br><br>
                 Colors indicate destinations:<br>
-                • BGU (Green)<br>
-                • Gav Yam (Blue)<br>
-                • Soroka Hospital (White)
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 240, 80); vertical-align: middle;"></span> BGU <br>
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 200, 255); vertical-align: middle;"></span> Gav Yam <br>
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(220, 220, 220); vertical-align: middle;"></span> Soroka Hospital
             </p>
         </div>
         <script>
@@ -255,8 +259,8 @@ def create_animation():
             
             const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
             
-            let trailLength = 5;
-            let animationSpeed = 2.5;
+            let trailLength = 2;
+            let animationSpeed = 4;
             let animation;
             
             const deckgl = new deck.DeckGL({
@@ -348,7 +352,7 @@ def create_animation():
                                         const activeTimestamps = times.filter(t => 
                                             t <= time && t > time - trailLength
                                         );
-                                        return activeTimestamps.length > 0 ? activeTimestamps[0] : times[0];
+                                        return activeTimestamps.length > 0 ? activeTimestamps : [times[0]];
                                     });
                                 },
                                 getColor: d => getPathColor(d.path),

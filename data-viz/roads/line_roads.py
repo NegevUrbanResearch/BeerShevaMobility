@@ -313,8 +313,8 @@ def create_html_description(low_trips, med_trips, high_trips, total_trips):
         <div class="methodology-container">
             <h3 style="margin: 0 0 10px 0;">Methodology</h3>
             <p style="margin: 0; font-size: 0.9em;">
-                This visualization represents aggregated trip data across Beer Sheva's road network.
-                Total Daily Trips: {total_trips:,}<br><br>
+                This visualization represents aggregated automobile trips to the Innovation District across routes in the road network.<br>
+                Total Daily Trips Represented: {total_trips:,}<br><br>
                 Colors indicate trip intensity using a cube root scale to highlight both major and minor routes.
                 Highlighted buildings indicate Points of Interest:<br>
                 • BGU (Green)<br>
