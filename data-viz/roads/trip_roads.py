@@ -66,28 +66,33 @@ def load_trip_data():
             trip_duration = len(coords)
             num_trips = int(row['num_trips'])
             
-            if num_trips <= 0:
-                logger.warning(f"Skipping route {idx} with {num_trips} trips")
+            if num_trips <= 0 or trip_duration < 2:
+                logger.warning(f"Skipping route {idx} with {num_trips} trips and {trip_duration} points")
                 continue
                 
             processed_trips += num_trips
             
-            # New approach: Evenly distribute trips across the entire animation
+            # Calculate time needed for one trip to complete the path
+            path_duration = trip_duration * 2  # Allow 2 frames per coordinate for smooth animation
+            
+            # Generate start times for each trip instance
+            trip_starts = []
+            base_interval = animation_duration / num_trips
+            
+            for trip in range(num_trips):
+                # Distribute start times evenly with small random offset
+                base_time = trip * base_interval
+                random_offset = np.random.uniform(-0.05 * base_interval, 0.05 * base_interval)
+                trip_starts.append(int(base_time + random_offset))
+            
+            # Generate timestamps for each point in the path
             timestamps = []
             for i in range(trip_duration):
                 point_times = []
-                
-                # Calculate even spacing between trips
-                base_interval = animation_duration / num_trips
-                
-                for trip in range(num_trips):
-                    # Distribute start times evenly with small random offset
-                    base_time = trip * base_interval
-                    # Add small random offset (±10% of interval) to prevent perfect alignment
-                    random_offset = np.random.uniform(-0.1 * base_interval, 0.1 * base_interval)
-                    timestamp = int((base_time + random_offset + i) % animation_duration)
-                    point_times.append(timestamp)
-                
+                for start_time in trip_starts:
+                    # Calculate timestamp for this point based on its position in the path
+                    point_time = start_time + (i * 2)  # 2 frames per coordinate
+                    point_times.append(point_time % animation_duration)
                 timestamps.append(point_times)
             
             trips_data.append({
@@ -304,23 +309,28 @@ def create_animation():
                     duration: (LOOP_LENGTH * 60) / animationSpeed,  // 60fps
                     repeat: Infinity,
                     onUpdate: time => {
-                        // Log statistics every second (roughly)
-                        if (Math.floor(time) %% 60 === 0 && lastTime !== Math.floor(time)) {
-                            lastTime = Math.floor(time);
-                            
-                            // Count active trips
-                            activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
-                                const activeTimestamps = route.timestamps[0].filter(t => 
-                                    t <= time && t > time - trailLength
-                                );
-                                return sum + activeTimestamps.length;
+                        // Count active trips more accurately
+                        activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
+                            return sum + route.timestamps.reduce((pathSum, times) => {
+                                return pathSum + times.filter(t => {
+                                    const normalizedTime = time % ANIMATION_DURATION;
+                                    const normalizedT = t % ANIMATION_DURATION;
+                                    return (normalizedTime >= normalizedT && 
+                                           normalizedTime <= normalizedT + trailLength) ||
+                                           (normalizedTime + ANIMATION_DURATION <= normalizedT + trailLength);
+                                }).length;
                             }, 0);
-                            
+                        }, 0);
+
+                        // Log more detailed statistics
+                        if (Math.floor(time) % 60 === 0 && lastTime !== Math.floor(time)) {
+                            lastTime = Math.floor(time);
                             console.log('Animation Status:', {
                                 frame: Math.floor(time),
                                 activeTrips: activeTripsCount,
                                 currentTrailLength: trailLength,
-                                currentSpeed: animationSpeed
+                                currentSpeed: animationSpeed,
+                                totalTripsLoaded: TRIPS_DATA.reduce((sum, route) => sum + route.timestamps[0].length, 0)
                             });
                         }
                         
@@ -395,6 +405,13 @@ def create_animation():
     </html>
     """
     
+    # First, let's fix the JavaScript modulo operations by replacing % with %%
+    html_template = re.sub(
+        r'(?<![%])%(?![(%sd])',  # Match single % not followed by formatting specifiers
+        '%%',                     # Replace with %%
+        html_template
+    )
+    
     # Create a dictionary of all the values we need to format
     format_values = {
         'total_trips': total_trips,
@@ -409,27 +426,6 @@ def create_animation():
     }
     
     try:
-        # Log all format keys we're providing
-        logger.info("Format keys provided: " + ", ".join(format_values.keys()))
-        
-        # Find all format specifiers in the template
-        format_specs = re.findall(r'%\(([^)]+)\)[sdfg]', html_template)
-        logger.info("Format specifiers found in template: " + ", ".join(format_specs))
-        
-        # Check for any mismatches
-        missing_keys = set(format_specs) - set(format_values.keys())
-        extra_keys = set(format_values.keys()) - set(format_specs)
-        
-        if missing_keys:
-            logger.error(f"Missing format values for: {missing_keys}")
-        if extra_keys:
-            logger.error(f"Extra format values not in template: {extra_keys}")
-            
-        # Look for any % signs that might be causing issues
-        all_percent_signs = re.findall(r'%[^(]', html_template)
-        if all_percent_signs:
-            logger.error(f"Found potentially problematic % signs: {all_percent_signs}")
-        
         # Format the HTML
         formatted_html = html_template % format_values
         
