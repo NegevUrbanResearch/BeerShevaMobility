@@ -21,11 +21,11 @@ from config import MAPBOX_API_KEY, OUTPUT_DIR
 
 POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
 
-# Update POI_INFO to match line_roads.py colors with higher brightness
+# Update POI_INFO with even more contrasting colors and darker base buildings
 POI_INFO = {
-    'BGU': {'color': [80, 240, 80, 200], 'lat': 31.2614375, 'lon': 34.7995625},        # Bright green
-    'Gav Yam': {'color': [80, 200, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},   # Bright blue
-    'Soroka Hospital': {'color': [220, 220, 220, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Bright white
+    'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},         # Brighter neon green
+    'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},    # Deep sky blue
+    'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Deep purple
 }
 
 def load_trip_data():
@@ -54,6 +54,7 @@ def load_trip_data():
     frames_per_second = 60
     desired_duration_seconds = 60  # one minute
     animation_duration = frames_per_second * desired_duration_seconds  # 3600 frames
+    route_start_offset_max = 100  # Smaller offset for more density
     
     logger.info(f"Animation Configuration:")
     logger.info(f"  - Frames per second: {frames_per_second}")
@@ -71,28 +72,19 @@ def load_trip_data():
                 continue
                 
             processed_trips += num_trips
+            route_offset = np.random.randint(0, route_start_offset_max)
             
-            # Calculate time needed for one trip to complete the path
-            path_duration = trip_duration * 2  # Allow 2 frames per coordinate for smooth animation
+            # Ensure we can fit all trips within the animation duration
+            interval = max(1, min(20, (animation_duration - trip_duration) // max(num_trips, 1)))
             
-            # Generate start times for each trip instance
-            trip_starts = []
-            base_interval = animation_duration / num_trips
-            
-            for trip in range(num_trips):
-                # Distribute start times evenly with small random offset
-                base_time = trip * base_interval
-                random_offset = np.random.uniform(-0.05 * base_interval, 0.05 * base_interval)
-                trip_starts.append(int(base_time + random_offset))
-            
-            # Generate timestamps for each point in the path
+            # Generate individual timestamps for each trip instance
             timestamps = []
             for i in range(trip_duration):
                 point_times = []
-                for start_time in trip_starts:
-                    # Calculate timestamp for this point based on its position in the path
-                    point_time = start_time + (i * 2)  # 2 frames per coordinate
-                    point_times.append(point_time % animation_duration)
+                for trip_num in range(num_trips):
+                    # Calculate base timestamp for this point in this trip instance
+                    timestamp = (trip_num * interval + i + route_offset) % animation_duration
+                    point_times.append(timestamp)
                 timestamps.append(point_times)
             
             trips_data.append({
@@ -109,7 +101,7 @@ def load_trip_data():
     total_instances = sum(len(trip['timestamps'][0]) for trip in trips_data)
     logger.info(f"Animation Statistics:")
     logger.info(f"  - Animation duration: {animation_duration} frames")
-    logger.info(f"  - Average interval between trips: {sum(trip['num_trips'] for trip in trips_data) / len(trips_data):.1f}")
+    logger.info(f"  - Average interval between trips: {animation_duration / max(total_instances, 1):.1f}")
     logger.info(f"  - Total trip instances being animated: {total_instances:,}")
     
     return trips_data, center_lat, center_lon, processed_trips
@@ -130,7 +122,7 @@ def load_building_data():
         transformer = Transformer.from_crs("EPSG:4326", buildings_gdf.crs, always_xy=True)
         
         for idx, building in buildings_gdf.iterrows():
-            building_color = [74, 80, 87, 160]  # Default color
+            building_color = [80, 90, 100, 160]  # Default color
             try:
                 # Get actual height from building data, default to 20 if not found
                 height = float(building.get('height', 20))
@@ -226,12 +218,19 @@ def create_animation():
                 Represents individual trips across Beer Sheva's road network to POI in the Innovation District using approximate origin locations.<br>
                 Total Daily Trips Visualized: %(total_trips)d<br><br>
                 Colors indicate destinations:<br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 240, 80); vertical-align: middle;"></span> BGU <br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 200, 255); vertical-align: middle;"></span> Gav Yam <br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(220, 220, 220); vertical-align: middle;"></span> Soroka Hospital
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span> BGU <br>
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span> Gav Yam <br>
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span> Soroka Hospital
             </p>
         </div>
         <script>
+            // Define WebGL constants
+            const GL = {
+                SRC_ALPHA: 0x0302,
+                ONE_MINUS_SRC_ALPHA: 0x0303,
+                FUNC_ADD: 0x8006
+            };
+            
             const TRIPS_DATA = %(trips_data)s;
             const BUILDINGS_DATA = %(buildings_data)s;
             const POI_RADIUS = %(poi_radius)f;
@@ -262,6 +261,7 @@ def create_animation():
                 bearing: 0
             };
             
+            // Update map style to CARTO dark matter (no labels)
             const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
             
             let trailLength = 2;
@@ -273,26 +273,42 @@ def create_animation():
                 mapStyle: MAP_STYLE,
                 initialViewState: INITIAL_VIEW_STATE,
                 controller: true,
-                effects: [lightingEffect]
+                effects: [lightingEffect],
+                parameters: {
+                    clearColor: [0, 0, 0, 1]  // Black background
+                }
             });
             
-            function getPathColor(path) {
-                const endPoint = path[path.length - 1];
-                const isNearPOI = (point, poi) => {
-                    const dx = point[0] - poi.lon;
-                    const dy = point[1] - poi.lat;
-                    return Math.sqrt(dx*dx + dy*dy) <= POI_RADIUS;
-                };
+            // Update color function for higher contrast
+            const getPathColor = (path) => {
+                const destination = path[path.length - 1];
+                const [destLon, destLat] = destination;
                 
-                if (isNearPOI(endPoint, BGU_INFO)) return [80, 240, 80];  // Bright green for BGU
-                if (isNearPOI(endPoint, GAV_YAM_INFO)) return [80, 200, 255]; // Bright blue for Gav Yam
-                if (isNearPOI(endPoint, SOROKA_INFO)) return [220, 220, 220]; // Bright white for Soroka
+                const distToBGU = Math.hypot(destLon - BGU_INFO.lon, destLat - BGU_INFO.lat);
+                const distToGavYam = Math.hypot(destLon - GAV_YAM_INFO.lon, destLat - GAV_YAM_INFO.lat);
+                const distToSoroka = Math.hypot(destLon - SOROKA_INFO.lon, destLat - SOROKA_INFO.lat);
+                
+                if (distToBGU < POI_RADIUS) return [0, 255, 90];      // Brighter neon green
+                if (distToGavYam < POI_RADIUS) return [0, 191, 255];  // Deep sky blue
+                if (distToSoroka < POI_RADIUS) return [170, 0, 255];  // Deep purple
                 
                 return [253, 128, 93];  // Default color
-            }
+            };
             
+            // Update TripsLayer configuration
+            const tripsLayer = new deck.TripsLayer({
+                id: 'trips',
+                data: TRIPS_DATA,
+                getPath: d => d.path,
+                getTimestamps: d => d.timestamps.flat(),
+                getColor: getPathColor,
+                opacity: 0.8,
+                widthMinPixels: 2,
+                rounded: true,
+                trailLength,
+                currentTime: 0
+            });
             function animate() {
-                // Log initial statistics
                 console.log('Animation Configuration:', {
                     totalFrames: LOOP_LENGTH,
                     baseSpeed: animationSpeed,
@@ -306,31 +322,24 @@ def create_animation():
                 animation = popmotion.animate({
                     from: 0,
                     to: LOOP_LENGTH,
-                    duration: (LOOP_LENGTH * 60) / animationSpeed,  // 60fps
+                    duration: (LOOP_LENGTH * 60) / animationSpeed,
                     repeat: Infinity,
                     onUpdate: time => {
-                        // Count active trips more accurately
-                        activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
-                            return sum + route.timestamps.reduce((pathSum, times) => {
-                                return pathSum + times.filter(t => {
-                                    const normalizedTime = time % ANIMATION_DURATION;
-                                    const normalizedT = t % ANIMATION_DURATION;
-                                    return (normalizedTime >= normalizedT && 
-                                           normalizedTime <= normalizedT + trailLength) ||
-                                           (normalizedTime + ANIMATION_DURATION <= normalizedT + trailLength);
-                                }).length;
-                            }, 0);
-                        }, 0);
-
-                        // Log more detailed statistics
                         if (Math.floor(time) % 60 === 0 && lastTime !== Math.floor(time)) {
                             lastTime = Math.floor(time);
+                            activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
+                                return sum + route.timestamps[0].filter(t => 
+                                    t <= time % ANIMATION_DURATION && 
+                                    t > (time % ANIMATION_DURATION) - trailLength
+                                ).length;
+                            }, 0);
+                            
                             console.log('Animation Status:', {
                                 frame: Math.floor(time),
                                 activeTrips: activeTripsCount,
                                 currentTrailLength: trailLength,
                                 currentSpeed: animationSpeed,
-                                totalTripsLoaded: TRIPS_DATA.reduce((sum, route) => sum + route.timestamps[0].length, 0)
+                                totalTripsLoaded: TRIPS_DATA.reduce((sum, route) => sum + route.num_trips, 0)
                             });
                         }
                         
@@ -343,8 +352,8 @@ def create_animation():
                                 opacity: 0.8,
                                 getPolygon: d => d.polygon,
                                 getElevation: d => d.height,
-                                getFillColor: d => d.color,
-                                getLineColor: [255, 255, 255, 50],
+                                getFillColor: d => d.color[3] === 200 ? d.color : [20, 20, 25, 160],  // Much darker for non-POI buildings
+                                getLineColor: [255, 255, 255, 30],  // Dimmer wireframe
                                 lineWidthMinPixels: 1,
                                 material: {
                                     ambient: 0.2,
@@ -358,27 +367,30 @@ def create_animation():
                                 data: TRIPS_DATA,
                                 getPath: d => d.path,
                                 getTimestamps: d => {
+                                    const currentTime = time % ANIMATION_DURATION;
                                     return d.timestamps.map(times => {
-                                        const activeTimestamps = times.filter(t => 
-                                            t <= time && t > time - trailLength
+                                        const validTimes = times.filter(t => 
+                                            t <= currentTime && 
+                                            t > currentTime - trailLength
                                         );
-                                        return activeTimestamps.length > 0 ? activeTimestamps : [times[0]];
+                                        return validTimes.length > 0 ? validTimes[0] : null;
                                     });
                                 },
                                 getColor: d => getPathColor(d.path),
                                 opacity: 0.8,
                                 widthMinPixels: 2,
-                                rounded: true,
+                                jointRounded: true,
+                                capRounded: true,
                                 trailLength,
-                                currentTime: time %% ANIMATION_DURATION
+                                currentTime: time % ANIMATION_DURATION,
+                                updateTriggers: {
+                                    getTimestamps: [time, trailLength]
+                                }
                             })
                         ];
                         
                         deckgl.setProps({
-                            layers,
-                            parameters: {
-                                blend: false
-                            }
+                            layers
                         });
                     }
                 });
@@ -422,7 +434,8 @@ def create_animation():
         'gav_yam_info': json.dumps(POI_INFO['Gav Yam']),
         'soroka_info': json.dumps(POI_INFO['Soroka Hospital']),
         'animation_duration': 3600,
-        'loopLength': 3600
+        'loopLength': 3600,
+        'mapbox_api_key': MAPBOX_API_KEY
     }
     
     try:
