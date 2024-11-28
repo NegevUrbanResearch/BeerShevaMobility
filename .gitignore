@@ -25,4 +25,4 @@ Dashboard/output/*
 *.env
 *json
 *maps*
-*data*
+*data/*
