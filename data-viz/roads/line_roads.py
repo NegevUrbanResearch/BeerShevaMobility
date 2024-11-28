@@ -242,7 +242,7 @@ def create_line_layer(trips_data, bounds):
     deck_mapbox = pdk.Deck(
         layers=[building_layer, line_layer],
         initial_view_state=view_state,
-        map_style="mapbox://styles/mapbox/dark-v10",
+        map_style="mapbox://styles/mapbox/dark-v11",
         map_provider="mapbox",
         api_keys={"mapbox": MAPBOX_API_KEY},
         parameters={

@@ -26,6 +26,32 @@ FINAL_TRIPS_PATTERN = os.path.join(OUTPUT_DIR, '*_trips.csv')
 
 BUILDINGS_FILE = os.path.join(OUTPUT_DIR, 'buildings.geojson')
 
+# Add temporal data paths
+ROAD_USAGE_PATH = os.path.join(OUTPUT_DIR, 'road_usage_trips.geojson')
+
+# Temporal distribution files
+TEMPORAL_FILES = {
+    'BGU': {
+        'inbound': os.path.join(OUTPUT_DIR, 'ben_gurion_university_inbound_temporal.csv'),
+        'outbound': os.path.join(OUTPUT_DIR, 'ben_gurion_university_outbound_temporal.csv')
+    },
+    'Gav Yam': {
+        'inbound': os.path.join(OUTPUT_DIR, 'gav_yam_high_tech_park_inbound_temporal.csv'),
+        'outbound': os.path.join(OUTPUT_DIR, 'gav_yam_high_tech_park_outbound_temporal.csv')
+    },
+    'Soroka Hospital': {
+        'inbound': os.path.join(OUTPUT_DIR, 'soroka_medical_center_inbound_temporal.csv'),
+        'outbound': os.path.join(OUTPUT_DIR, 'soroka_medical_center_outbound_temporal.csv')
+    }
+}
+
+# POI name standardization
+POI_NAME_MAPPING = {
+    'BGU': ['BGU', 'Ben-Gurion-University', 'ben_gurion_university'],
+    'Gav Yam': ['Gav Yam', 'Gev Yam', 'Gav-Yam-High-Tech-Park', 'gav_yam_high_tech_park'],
+    'Soroka Hospital': ['Soroka Hospital', 'Soroka-Medical-Center', 'soroka_medical_center']
+}
+
 # Create directories if they don't exist
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(PROCESSED_DIR, exist_ok=True)

@@ -220,7 +220,8 @@ def create_animation():
                 Colors indicate destinations:<br>
                 <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span> BGU <br>
                 <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span> Gav Yam <br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span> Soroka Hospital
+                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span> Soroka Hospital<br><br>
+                Note: The base map darkness can be adjusted by modifying the OVERLAY_OPACITY constant in the code.
             </p>
         </div>
         <script>
@@ -267,6 +268,9 @@ def create_animation():
             let trailLength = 2;
             let animationSpeed = 4;
             let animation;
+            
+            // Add a new constant for the overlay opacity
+            const OVERLAY_OPACITY = 0.5; // Adjust this value to control darkness (0 to 1)
             
             const deckgl = new deck.DeckGL({
                 container: 'container',
@@ -344,6 +348,25 @@ def create_animation():
                         }
                         
                         const layers = [
+                            // Add a new PolygonLayer for the dark overlay
+                            new deck.PolygonLayer({
+                                id: 'dark-overlay',
+                                data: [{
+                                    contour: [
+                                        [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude - 1],
+                                        [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude - 1],
+                                        [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude + 1],
+                                        [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude + 1]
+                                    ]
+                                }],
+                                getPolygon: d => d.contour,
+                                getFillColor: [0, 0, 0, 255 * OVERLAY_OPACITY],
+                                getLineColor: [0, 0, 0, 0],
+                                extruded: false,
+                                pickable: false,
+                                opacity: 1,
+                                zIndex: 0 // Ensure this layer is below others
+                            }),
                             new deck.PolygonLayer({
                                 id: 'buildings',
                                 data: BUILDINGS_DATA,
