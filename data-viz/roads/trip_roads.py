@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import MAPBOX_API_KEY, OUTPUT_DIR
-
+attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]  # POI polygons
+poi_polygons_json = poi_polygons.to_json()
 POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
 
 # Update POI_INFO with even more contrasting colors and darker base buildings
@@ -26,6 +28,13 @@ POI_INFO = {
     'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},         # Brighter neon green
     'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},    # Deep sky blue
     'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Deep purple
+}
+
+# Define the mapping between shapefile IDs and POI names
+POI_ID_MAP = {
+    7: 'BGU',
+    12: 'Gav Yam',
+    11: 'Soroka Hospital'
 }
 
 def load_trip_data():
@@ -118,8 +127,8 @@ def load_building_data():
         buildings_data = []
         text_features = []
         
-        # Create a transformer for POI coordinates
-        transformer = Transformer.from_crs("EPSG:4326", buildings_gdf.crs, always_xy=True)
+        # Debug logging for POI polygons
+        logger.info(f"POI polygons IDs: {[p['ID'] for idx, p in poi_polygons.iterrows()]}")
         
         for idx, building in buildings_gdf.iterrows():
             building_color = [80, 90, 100, 160]  # Default color
@@ -128,22 +137,24 @@ def load_building_data():
                 height = float(building.get('height', 20))
                 building_height = height * 1.5  # Scale height to match line_roads.py
                 
-                # Check if building is within radius of main POIs
-                for poi_name, info in POI_INFO.items():
-                    poi_x, poi_y = transformer.transform(info['lon'], info['lat'])
-                    poi_point = Point(poi_x, poi_y)
-                    
-                    if building.geometry.centroid.distance(poi_point) <= POI_RADIUS:
-                        building_height = min(40, height * 1000)  # Match line_roads.py height scaling
-                        building_color = info['color']
+                # Check if building intersects with any POI polygon
+                for poi_idx, poi_polygon in poi_polygons.iterrows():
+                    if building.geometry.intersects(poi_polygon.geometry):
+                        numeric_id = int(poi_polygon['ID'])  # Ensure numeric ID is int
+                        poi_name = POI_ID_MAP.get(numeric_id)
                         
-                        # Add text label for POI
-                        text_features.append({
-                            "position": [poi_x, poi_y, building_height + 10],
-                            "text": poi_name,
-                            "color": [255, 255, 255, 255]  # Bright white text
-                        })
-                        break
+                        if poi_name:
+                            logger.debug(f"Building intersects with POI {numeric_id} ({poi_name})")
+                            building_height = min(40, height * 1000)
+                            building_color = POI_INFO[poi_name]['color']
+                            
+                            # Add text label for POI
+                            text_features.append({
+                                "position": list(building.geometry.centroid.coords)[0] + (building_height + 10,),
+                                "text": poi_name,
+                                "color": [255, 255, 255, 255]
+                            })
+                            break
                 
                 buildings_data.append({
                     "polygon": list(building.geometry.exterior.coords),
@@ -154,15 +165,40 @@ def load_building_data():
                 logger.error(f"Skipping building due to error: {e}")
                 continue
         
+        # Prepare POI polygon borders and fills
+        poi_borders = []
+        poi_fills = []
+        
+        for poi_idx, poi_polygon in poi_polygons.iterrows():
+            numeric_id = int(poi_polygon['ID'])  # Ensure numeric ID is int
+            poi_name = POI_ID_MAP.get(numeric_id)
+            
+            if poi_name:
+                logger.info(f"Processing POI polygon: ID={numeric_id}, Name={poi_name}")
+                color = POI_INFO[poi_name]['color'][:3]  # Get RGB values
+                
+                poi_borders.append({
+                    "polygon": list(poi_polygon.geometry.exterior.coords),
+                    "color": color + [255]  # Full opacity for borders
+                })
+                
+                poi_fills.append({
+                    "polygon": list(poi_polygon.geometry.exterior.coords),
+                    "color": color + [100]  # Medium opacity for fills
+                })
+            else:
+                logger.warning(f"Unknown POI ID: {numeric_id}")
+        
         logger.info(f"Loaded {len(buildings_data)} buildings")
-        return buildings_data, text_features
+        logger.info(f"Created {len(poi_fills)} POI fill areas")
+        return buildings_data, text_features, poi_borders, poi_fills
     except Exception as e:
         logger.error(f"Error loading building data: {str(e)}")
         raise
 
 def create_animation():
     trips_data, center_lat, center_lon, total_trips = load_trip_data()
-    buildings_data, text_features = load_building_data()
+    buildings_data, text_features, poi_borders, poi_fills = load_building_data()
     
     html_template = """
     <!DOCTYPE html>
@@ -234,6 +270,8 @@ def create_animation():
             
             const TRIPS_DATA = %(trips_data)s;
             const BUILDINGS_DATA = %(buildings_data)s;
+            const POI_BORDERS = %(poi_borders)s;
+            const POI_FILLS = %(poi_fills)s;
             const POI_RADIUS = %(poi_radius)f;
             const BGU_INFO = %(bgu_info)s;
             const GAV_YAM_INFO = %(gav_yam_info)s;
@@ -308,10 +346,57 @@ def create_animation():
                 getColor: getPathColor,
                 opacity: 0.8,
                 widthMinPixels: 2,
-                rounded: true,
+                jointRounded: true,
+                capRounded: true,
                 trailLength,
                 currentTime: 0
             });
+
+            // Add a new PolygonLayer for POI borders
+            const poiBordersLayer = new deck.PolygonLayer({
+                id: 'poi-borders',
+                data: POI_BORDERS,
+                getPolygon: d => d.polygon,
+                getLineColor: d => d.color,
+                lineWidthMinPixels: 2,
+                extruded: false,
+                pickable: false,
+                opacity: 1,
+                zIndex: 1 // Ensure this layer is above others
+            });
+
+            // Add a new PolygonLayer for POI fills
+            const poiFillsLayer = new deck.PolygonLayer({
+                id: 'poi-fills',
+                data: POI_FILLS,
+                getPolygon: d => d.polygon,
+                getFillColor: d => d.color,
+                extruded: false,
+                pickable: false,
+                opacity: 0.5,
+                zIndex: 0 // Ensure this layer is below others
+            });
+
+            // Update the buildings layer for better visibility of POI buildings
+            new deck.PolygonLayer({
+                id: 'buildings',
+                data: BUILDINGS_DATA,
+                extruded: true,
+                wireframe: true,
+                opacity: 0.9,  // Increased opacity for better visibility
+                getPolygon: d => d.polygon,
+                getElevation: d => d.height,
+                getFillColor: d => d.color[3] === 200 ? d.color : [20, 20, 25, 160],
+                getLineColor: [255, 255, 255, 30],
+                lineWidthMinPixels: 1,
+                material: {
+                    ambient: 0.2,
+                    diffuse: 0.8,
+                    shininess: 32,
+                    specularColor: [60, 64, 70]
+                }
+            })
+
             function animate() {
                 console.log('Animation Configuration:', {
                     totalFrames: LOOP_LENGTH,
@@ -348,7 +433,7 @@ def create_animation():
                         }
                         
                         const layers = [
-                            // Add a new PolygonLayer for the dark overlay
+                            // Base dark overlay (should not cover POI areas)
                             new deck.PolygonLayer({
                                 id: 'dark-overlay',
                                 data: [{
@@ -365,18 +450,33 @@ def create_animation():
                                 extruded: false,
                                 pickable: false,
                                 opacity: 1,
-                                zIndex: 0 // Ensure this layer is below others
+                                zIndex: 0
                             }),
+                            
+                            // POI area fills
+                            new deck.PolygonLayer({
+                                id: 'poi-fills',
+                                data: POI_FILLS,
+                                getPolygon: d => d.polygon,
+                                getFillColor: d => d.color,
+                                getLineColor: [0, 0, 0, 0],
+                                extruded: false,
+                                pickable: false,
+                                opacity: 0.3,
+                                zIndex: 1
+                            }),
+                            
+                            // Buildings
                             new deck.PolygonLayer({
                                 id: 'buildings',
                                 data: BUILDINGS_DATA,
                                 extruded: true,
                                 wireframe: true,
-                                opacity: 0.8,
+                                opacity: 0.9,
                                 getPolygon: d => d.polygon,
                                 getElevation: d => d.height,
-                                getFillColor: d => d.color[3] === 200 ? d.color : [20, 20, 25, 160],  // Much darker for non-POI buildings
-                                getLineColor: [255, 255, 255, 30],  // Dimmer wireframe
+                                getFillColor: d => d.color,
+                                getLineColor: [255, 255, 255, 30],
                                 lineWidthMinPixels: 1,
                                 material: {
                                     ambient: 0.2,
@@ -409,11 +509,17 @@ def create_animation():
                                 updateTriggers: {
                                     getTimestamps: [time, trailLength]
                                 }
-                            })
+                            }),
+                            poiBordersLayer 
                         ];
                         
                         deckgl.setProps({
-                            layers
+                            layers,
+                            parameters: {
+                                blend: true,
+                                blendFunc: [GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA],
+                                blendEquation: GL.FUNC_ADD
+                            }
                         });
                     }
                 });
@@ -452,6 +558,8 @@ def create_animation():
         'total_trips': total_trips,
         'trips_data': json.dumps(trips_data),
         'buildings_data': json.dumps(buildings_data),
+        'poi_borders': json.dumps(poi_borders),
+        'poi_fills': json.dumps(poi_fills),
         'poi_radius': POI_RADIUS,
         'bgu_info': json.dumps(POI_INFO['BGU']),
         'gav_yam_info': json.dumps(POI_INFO['Gav Yam']),
@@ -488,4 +596,11 @@ if __name__ == "__main__":
         print(f"Animation saved to: {output_file}")
     except Exception as e:
         logger.error(f"Failed to create animation: {str(e)}")
+        sys.exit(1) 
+    try:
+        output_file = create_animation()
+        print(f"Animation saved to: {output_file}")
+    except Exception as e:
+        logger.error(f"Failed to create animation: {str(e)}")
+        sys.exit(1) 
         sys.exit(1) 
