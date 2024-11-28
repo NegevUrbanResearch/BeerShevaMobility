@@ -15,6 +15,23 @@ from shapely.geometry import Polygon
 from geopy.distance import geodesic
 from data_loader import DataLoader
 
+# Add at the top with other imports
+attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]  # POI polygons
+
+# Update POI_INFO with matching colors from trip_roads.py
+POI_INFO = {
+    'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},         # Brighter neon green
+    'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},    # Deep sky blue
+    'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Deep purple
+}
+
+# Add POI_ID_MAP constant
+POI_ID_MAP = {
+    7: 'BGU',
+    12: 'Gav Yam',
+    11: 'Soroka Hospital'
+}
 
 # Style link
 CSS_LINK = '<link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet" />'
@@ -330,41 +347,54 @@ def create_building_layer(bounds):
     buildings_gdf = gpd.read_file(BUILDINGS_FILE)
     building_features = []
     text_features = []
+    poi_borders = []
+    poi_fills = []
     
-    # Define POI colors with subtle tones that match building aesthetic
-    poi_info = {
-        'BGU': {'color': [40, 120, 40, 160], 'lat': 31.2614375, 'lon': 34.7995625},        # Muted green
-        'Gav Yam': {'color': [40, 100, 140, 160], 'lat': 31.2641875, 'lon': 34.8128125},   # Muted teal
-        'Soroka Hospital': {'color': [140, 140, 140, 160], 'lat': 31.2579375, 'lon': 34.8003125}  # Muted white
-    }
-    
-    # Create a transformer for POI coordinates
+    # Create a transformer for coordinate systems if needed
     transformer = Transformer.from_crs("EPSG:4326", buildings_gdf.crs, always_xy=True)
     
+    # Process POI polygons first
+    for poi_idx, poi_polygon in poi_polygons.iterrows():
+        numeric_id = int(poi_polygon['ID'])
+        poi_name = POI_ID_MAP.get(numeric_id)
+        
+        if poi_name:
+            color = POI_INFO[poi_name]['color'][:3]  # Get RGB values
+            
+            poi_borders.append({
+                "polygon": list(poi_polygon.geometry.exterior.coords),
+                "color": color + [255]  # Full opacity for borders
+            })
+            
+            poi_fills.append({
+                "polygon": list(poi_polygon.geometry.exterior.coords),
+                "color": color + [100]  # Medium opacity for fills
+            })
+    
+    # Process buildings
     for idx, building in buildings_gdf.iterrows():
-        building_color = [74, 80, 87, 160]  # Default color matching the original style
+        building_color = [74, 80, 87, 160]  # Default color
         try:
-            # Get actual height from building data, default to 20 if not found
             height = float(building.get('height', 20))
-            # Scale height by 1.5 to match trip_roads.py
             building_height = height * 1.5
             
-            # Check if building is within radius of main POIs
-            for poi_name, info in poi_info.items():
-                poi_x, poi_y = transformer.transform(info['lon'], info['lat'])
-                poi_point = Point(poi_x, poi_y)
-                
-                if building.geometry.centroid.distance(poi_point) <= POI_RADIUS:
-                    building_height = min(40 ,height * 1000)
-                    building_color = info['color']
+            # Check if building intersects with any POI polygon
+            for poi_idx, poi_polygon in poi_polygons.iterrows():
+                if building.geometry.intersects(poi_polygon.geometry):
+                    numeric_id = int(poi_polygon['ID'])
+                    poi_name = POI_ID_MAP.get(numeric_id)
                     
-                    # Add text label for POI
-                    text_features.append({
-                        "position": [poi_x, poi_y, building_height + 10],  # Position above building
-                        "text": poi_name,
-                        "color": [150, 150, 150, 255]  # Grey color
-                    })
-                    break
+                    if poi_name:
+                        building_height = min(40, height * 1000)
+                        building_color = POI_INFO[poi_name]['color']
+                        
+                        # Add text label for POI
+                        text_features.append({
+                            "position": [*building.geometry.centroid.coords[0], building_height + 10],
+                            "text": poi_name,
+                            "color": [150, 150, 150, 255]
+                        })
+                        break
             
             building_features.append({
                 "polygon": building.geometry.exterior.coords[:],
@@ -375,6 +405,7 @@ def create_building_layer(bounds):
             print(f"Skipping building due to error: {e}")
             continue
     
+    # Create layers
     building_layer = pdk.Layer(
         "PolygonLayer",
         building_features,
@@ -408,7 +439,28 @@ def create_building_layer(bounds):
         get_alignment_baseline="center"
     )
     
-    return [building_layer, text_layer]
+    poi_borders_layer = pdk.Layer(
+        "PolygonLayer",
+        poi_borders,
+        get_polygon="polygon",
+        get_line_color="color",
+        line_width_min_pixels=2,
+        extruded=False,
+        pickable=False,
+        opacity=1
+    )
+    
+    poi_fills_layer = pdk.Layer(
+        "PolygonLayer",
+        poi_fills,
+        get_polygon="polygon",
+        get_fill_color="color",
+        extruded=False,
+        pickable=False,
+        opacity=0.5
+    )
+    
+    return [poi_fills_layer, building_layer, text_layer, poi_borders_layer]
 
 def main():
     print("\nStarting trip route visualization...")
