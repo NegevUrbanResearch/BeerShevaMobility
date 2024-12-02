@@ -7,17 +7,19 @@ import sys
 import json
 import logging
 from pathlib import Path
+import re
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import MAPBOX_API_KEY, OUTPUT_DIR, BUILDINGS_FILE
 from animation_components.animation_helpers import (
     validate_animation_data, 
     load_temporal_distributions,
     apply_temporal_distribution,
-    debug_file_paths
+    debug_file_paths,
+    validate_js_template
 )
 from animation_components.js_modules import get_base_layers_js, get_animation_js
 from trip_roads import load_trip_data, load_building_data
-
+POI_RADIUS = 0.0018
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -86,28 +88,33 @@ def create_time_based_animation():
                     position: absolute;
                     top: 20px;
                     left: 20px;
-                    background: #000000;
+                    background: rgba(0, 0, 0, 0.8);
                     padding: 12px;
                     border-radius: 5px;
                     color: #FFFFFF;
                     font-family: Arial;
                 }
-                .time-control {
+                .time-display {
                     position: absolute;
                     bottom: 20px;
                     left: 50%%;
                     transform: translateX(-50%%);
-                    background: #000000;
+                    background: rgba(0, 0, 0, 0.8);
                     padding: 12px;
                     border-radius: 5px;
                     color: #FFFFFF;
                     font-family: Arial;
-                    text-align: center;
                 }
-                #time-display {
-                    display: block;
-                    font-size: 1.2em;
-                    margin-top: 5px;
+                .methodology-container {
+                    position: absolute;
+                    bottom: 20px;
+                    right: 20px;
+                    background: rgba(0, 0, 0, 0.8);
+                    padding: 12px;
+                    border-radius: 5px;
+                    color: #FFFFFF;
+                    font-family: Arial;
+                    max-width: 300px;
                 }
             </style>
         </head>
@@ -123,38 +130,16 @@ def create_time_based_animation():
                     <input type="range" min="0.1" max="5" step="0.1" value="4" id="animation-speed" style="width: 200px">
                 </div>
             </div>
-            <div class="time-control">
-                <input type="range" min="0" max="23" value="0" id="time-slider" style="width: 300px">
+            <div class="time-display">
                 <span id="time-display">00:00</span>
             </div>
+            <div class="methodology-container">
+                <h3>Methodology</h3>
+                <p>Represents individual trips across Beer Sheva's road network to POIs in the Innovation District.<br>
+                Total Daily Trips: %(total_trips)d</p>
+            </div>
             <script>
-                // Initialize global variables
-                let animation;
-                let animationSpeed = 4;
-                let trailLength = 2;
-                let deckgl;
-
-                // Initialize deck.gl
-                deckgl = new deck.DeckGL({
-                    container: 'container',
-                    initialViewState: {
-                        longitude: %(center_lon)f,
-                        latitude: %(center_lat)f,
-                        zoom: 13,
-                        pitch: 45,
-                        bearing: 0
-                    },
-                    controller: true,
-                    getTooltip: ({object}) => object && {
-                        html: `<div>Trips: ${object.num_trips}</div>`,
-                        style: {
-                            backgroundColor: '#000',
-                            color: '#fff'
-                        }
-                    },
-                    layers: []
-                });
-
+                // Constants and Data
                 const TRIPS_DATA = %(trips_data)s;
                 const BUILDINGS_DATA = %(buildings_data)s;
                 const POI_BORDERS = %(poi_borders)s;
@@ -163,50 +148,120 @@ def create_time_based_animation():
                 const BGU_INFO = %(bgu_info)s;
                 const GAV_YAM_INFO = %(gav_yam_info)s;
                 const SOROKA_INFO = %(soroka_info)s;
-                
+                const ANIMATION_DURATION = %(animation_duration)d;
+                const FRAMES_PER_HOUR = %(frames_per_hour)d;
+                const TOTAL_FRAMES = %(loopLength)d;
+
+                // Base layers and animation setup
                 %(base_layers_js)s
                 %(animation_js)s
-                
-                // Time control logic
-                const FRAMES_PER_HOUR = 150;
-                const TOTAL_FRAMES = FRAMES_PER_HOUR * 24;
-                
-                document.getElementById('time-slider').oninput = function() {
-                    const hour = parseInt(this.value);
-                    document.getElementById('time-display').textContent = 
-                        `${hour.toString().padStart(2, '0')}:00`;
-                        
-                    // Update animation frame
-                    const frameStart = hour * FRAMES_PER_HOUR;
+
+                // Initialize variables
+                let animation;
+                let animationSpeed = 4;
+                let trailLength = 2;
+                let deckgl;
+
+                // Initialize deck.gl
+                deckgl = new deck.DeckGL({
+                    container: 'container',
+                    mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+                    initialViewState: {
+                        longitude: %(center_lon)f,
+                        latitude: %(center_lat)f,
+                        zoom: 13,
+                        pitch: 45,
+                        bearing: 0
+                    },
+                    controller: true
+                });
+
+                function createLayers(currentTime) {
+                    return [
+                        // Buildings layer
+                        new deck.PolygonLayer({
+                            id: 'buildings',
+                            data: BUILDINGS_DATA,
+                            extruded: true,
+                            wireframe: true,
+                            opacity: 0.9,
+                            getPolygon: d => d.polygon,
+                            getElevation: d => d.height,
+                            getFillColor: d => d.color,
+                            getLineColor: [255, 255, 255, 30],
+                            lineWidthMinPixels: 1,
+                            material: {
+                                ambient: 0.2,
+                                diffuse: 0.8,
+                                shininess: 32,
+                                specularColor: [60, 64, 70]
+                            }
+                        }),
+
+                        // POI fills
+                        new deck.PolygonLayer({
+                            id: 'poi-fills',
+                            data: POI_FILLS,
+                            getPolygon: d => d.polygon,
+                            getFillColor: d => d.color,
+                            extruded: false,
+                            pickable: false,
+                            opacity: 0.3
+                        }),
+
+                        // POI borders
+                        new deck.PolygonLayer({
+                            id: 'poi-borders',
+                            data: POI_BORDERS,
+                            getPolygon: d => d.polygon,
+                            getLineColor: d => d.color,
+                            lineWidthMinPixels: 2,
+                            extruded: false,
+                            pickable: false,
+                            opacity: 1
+                        }),
+
+                        // Trips layer
+                        new deck.TripsLayer({
+                            id: 'trips',
+                            data: TRIPS_DATA,
+                            getPath: d => d.path,
+                            getTimestamps: d => d.timestamps.flat(),
+                            getColor: d => getPathColor(d.path),
+                            opacity: 0.8,
+                            widthMinPixels: 2,
+                            jointRounded: true,
+                            capRounded: true,
+                            trailLength,
+                            currentTime
+                        })
+                    ];
+                }
+                function animate() {
                     if (animation) {
                         animation.stop();
                     }
-                    animate(frameStart);
-                };
-                
-                function animate(startFrame = 0) {
-                    if (animation) {
-                        animation.stop();
-                    }
-                    
                     animation = popmotion.animate({
-                        from: startFrame,
-                        to: startFrame + FRAMES_PER_HOUR,
-                        duration: FRAMES_PER_HOUR / animationSpeed * 1000,
+                        from: 0,
+                        to: TOTAL_FRAMES,
+                        duration: TOTAL_FRAMES * 1000 / animationSpeed,
                         repeat: Infinity,
                         onUpdate: time => {
-                            const layers = [
-                                createBuildingsLayer(),
-                                ...createPOILayers(),
-                                createTripsLayer(time, trailLength)
-                            ];
+                            const hour = Math.floor((time %% TOTAL_FRAMES) / FRAMES_PER_HOUR);
+                            const minute = Math.floor(((time %% TOTAL_FRAMES) %% FRAMES_PER_HOUR) / (FRAMES_PER_HOUR/60));
+                            document.getElementById('time-display').textContent = 
+                                `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
                             
-                            deckgl.setProps({ layers });
+                            deckgl.setProps({
+                                layers: createLayers(time)
+                            });
                         }
                     });
+
+                    return animation;
                 }
 
-                // Event handlers for controls
+                // Event handlers
                 document.getElementById('trail-length').oninput = function() {
                     trailLength = Number(this.value);
                     document.getElementById('trail-value').textContent = this.value;
@@ -218,47 +273,86 @@ def create_time_based_animation():
                     if (animation) {
                         animation.stop();
                     }
-                    animate();
+                    animation = animate();
                 };
-                
-                // Initialize animation
-                animate();
+
+                // Start animation
+                animation = animate();
             </script>
         </body>
         </html>
         """
         
-        # Format template with data
+        # Calculate animation parameters
+        frames_per_hour = 150
+        total_frames = frames_per_hour * 24
+        animation_duration = total_frames  # 3600 frames total
+        
+        # Format values for the template
         format_values = {
             'trips_data': json.dumps(trips_data),
             'buildings_data': json.dumps(buildings_data),
             'poi_borders': json.dumps(poi_borders),
             'poi_fills': json.dumps(poi_fills),
-            'poi_radius': 0.0018,
+            'poi_radius': POI_RADIUS,
             'bgu_info': json.dumps(POI_INFO['BGU']),
             'gav_yam_info': json.dumps(POI_INFO['Gav Yam']),
             'soroka_info': json.dumps(POI_INFO['Soroka Hospital']),
+            'animation_duration': animation_duration,
+            'loopLength': total_frames,
+            'center_lon': center_lon,
+            'center_lat': center_lat,
             'base_layers_js': base_layers_js,
             'animation_js': animation_js,
-            'center_lat': center_lat,
-            'center_lon': center_lon
+            'frames_per_hour': frames_per_hour,
+            'total_trips': total_trips
         }
-        
+
+        # Validate template and format values
+        logger.info("Validating JavaScript template...")
+        if not validate_js_template(html_template, format_values):
+            raise ValueError("Template validation failed")
+
         try:
-            # Format the HTML
-            formatted_html = html_template % format_values
-            
+            # Debug format values
+            logger.debug("\nFormat Values:")
+            for key, value in format_values.items():
+                if isinstance(value, str) and len(value) > 100:
+                    logger.debug(f"{key}: <large string, length {len(value)}>")
+                else:
+                    logger.debug(f"{key}: {value}")
+
+            # Format the HTML with error handling
+            try:
+                formatted_html = html_template % format_values
+            except KeyError as e:
+                logger.error(f"Missing format key: {e}")
+                raise
+            except ValueError as e:
+                logger.error(f"Format value error: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected formatting error: {e}")
+                raise
+
             # Write to file
-            output_path = Path(OUTPUT_DIR) / "trip_animation_time.html"
+            output_path = os.path.join(OUTPUT_DIR, "trip_animation_time.html")
             with open(output_path, 'w') as f:
                 f.write(formatted_html)
-                
-            logger.info(f"Time-based animation saved to: {output_path}")
+            
+            # Validate output file
+            if os.path.exists(output_path):
+                file_size = os.path.getsize(output_path)
+                logger.info(f"Animation file created: {output_path} ({file_size/1024:.1f} KB)")
+            else:
+                raise FileNotFoundError("Output file was not created")
+
             return output_path
             
         except Exception as e:
             logger.error(f"Error writing HTML file: {str(e)}")
             raise
+
     except Exception as e:
         logger.error(f"Error creating time-based animation: {str(e)}")
         raise
