@@ -597,10 +597,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Failed to create animation: {str(e)}")
         sys.exit(1) 
-    try:
-        output_file = create_animation()
-        print(f"Animation saved to: {output_file}")
-    except Exception as e:
-        logger.error(f"Failed to create animation: {str(e)}")
-        sys.exit(1) 
-        sys.exit(1) 
