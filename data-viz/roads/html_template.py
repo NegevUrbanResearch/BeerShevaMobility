@@ -47,6 +47,16 @@ HTML_TEMPLATE = """
                 font-size: 24px;
                 z-index: 1000;
             }
+            .trip-counters {
+                margin-top: 10px;
+                font-family: monospace;
+            }
+            .counter-row {
+                margin: 5px 0;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
         </style>
     </head>
     <body>
@@ -57,8 +67,8 @@ HTML_TEMPLATE = """
                 <input type="range" min="1" max="100" value="4" id="trail-length" style="width: 200px">
             </div>
             <div>
-                <label>Animation Speed: <span id="speed-value">2</span></label>
-                <input type="range" min="0.5" max="10" step="0.5" value="2" id="animation-speed" style="width: 200px">
+                <label>Animation Speed: <span id="speed-value">4</span></label>
+                <input type="range" min="0.5" max="10" step="0.5" value="4" id="animation-speed" style="width: 200px">
             </div>
         </div>
         <div class="time-display">06:00</div>
@@ -67,16 +77,26 @@ HTML_TEMPLATE = """
             <p style="margin: 0; font-size: 0.9em;">
                 Represents daily trips (6:00-22:00) across Beer Sheva's road network using temporal distributions.<br>
                 Total Daily Trips: %(total_trips)d<br>
-                Current simulation time: <span id="current-time">06:00</span><br><br>
-                Colors indicate destinations:<br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span> BGU <br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span> Gav Yam <br>
-                <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span> Soroka Hospital<br><br>
-                Note: The base map darkness can be adjusted by modifying the OVERLAY_OPACITY constant in the code.
+                Current simulation time: <span id="current-time">06:00</span><br>
+                <div class="trip-counters">
+                    Cumulative Trips:<br>
+                    <div class="counter-row">
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
+                        BGU: <span id="bgu-counter">0</span>
+                    </div>
+                    <div class="counter-row">
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span>
+                        Gav Yam: <span id="gav-yam-counter">0</span>
+                    </div>
+                    <div class="counter-row">
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
+                        Soroka: <span id="soroka-counter">0</span>
+                    </div>
+                </div>
             </p>
         </div>
         <script>
-            // Define WebGL constants
+            // Global constants
             const GL = {
                 SRC_ALPHA: 0x0302,
                 ONE_MINUS_SRC_ALPHA: 0x0303,
@@ -94,51 +114,49 @@ HTML_TEMPLATE = """
             const ANIMATION_DURATION = %(animation_duration)d;
             const LOOP_LENGTH = %(loopLength)d;
             
+            // Animation constants
+            const HOURS_PER_DAY = 17;
+            const START_HOUR = 6;
+            const END_HOUR = 22;
+            const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
+            const OVERLAY_OPACITY = 0.5;
+            
+            // Animation state
+            let trailLength = 4;
+            let animationSpeed = 4;
+            let animation;
+            let cumulativeTrips = {
+                'BGU': 0,
+                'Gav Yam': 0,
+                'Soroka Hospital': 0
+            };
+            
+            // Lighting setup
             const ambientLight = new deck.AmbientLight({
                 color: [255, 255, 255],
                 intensity: 1.0
             });
-
+            
             const pointLight = new deck.PointLight({
                 color: [255, 255, 255],
                 intensity: 2.0,
-                position: [34.8, 31.25, 8000]  // Adjusted for Beer Sheva coordinates
+                position: [34.8, 31.25, 8000]
             });
-
+            
             const lightingEffect = new deck.LightingEffect({ambientLight, pointLight});
             
+            // Initial view setup
             const INITIAL_VIEW_STATE = {
-                longitude: 34.8113,  // Ben Gurion University
-                latitude: 31.2627,   // Ben Gurion University
+                longitude: 34.8113,
+                latitude: 31.2627,
                 zoom: 13,
-                pitch: 60,          // Increased pitch for better 3D view
+                pitch: 60,
                 bearing: 0
             };
             
-            // Update map style to CARTO dark matter (no labels)
             const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
             
-            let trailLength = 4;
-            let animationSpeed = 2;
-            let animation;
-            
-            // Add a new constant for the overlay opacity
-            const OVERLAY_OPACITY = 0.5; // Adjust this value to control darkness (0 to 1)
-            
-            // Add new constants for time simulation
-            const HOURS_PER_DAY = 17; // 6:00-22:00
-            const START_HOUR = 6;
-            const END_HOUR = 22;
-            const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
-            
-            // Add time formatting function
-            function formatTimeString(frame) {
-                const hoursElapsed = frame / FRAMES_PER_HOUR;
-                const currentHour = Math.floor(START_HOUR + hoursElapsed);
-                const minutes = Math.floor((hoursElapsed % 1) * 60);
-                return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-            }
-            
+            // Initialize deck.gl
             const deckgl = new deck.DeckGL({
                 container: 'container',
                 mapStyle: MAP_STYLE,
@@ -146,12 +164,19 @@ HTML_TEMPLATE = """
                 controller: true,
                 effects: [lightingEffect],
                 parameters: {
-                    clearColor: [0, 0, 0, 1]  // Black background
+                    clearColor: [0, 0, 0, 1]
                 }
             });
             
-            // Update color function for higher contrast
-            const getPathColor = (path) => {
+            // Utility functions
+            function formatTimeString(frame) {
+                const hoursElapsed = frame / FRAMES_PER_HOUR;
+                const currentHour = Math.floor(START_HOUR + hoursElapsed);
+                const minutes = Math.floor((hoursElapsed % 1) * 60);
+                return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+            }
+            
+            function getPathColor(path) {
                 const destination = path[path.length - 1];
                 const [destLon, destLat] = destination;
                 
@@ -159,79 +184,24 @@ HTML_TEMPLATE = """
                 const distToGavYam = Math.hypot(destLon - GAV_YAM_INFO.lon, destLat - GAV_YAM_INFO.lat);
                 const distToSoroka = Math.hypot(destLon - SOROKA_INFO.lon, destLat - SOROKA_INFO.lat);
                 
-                if (distToBGU < POI_RADIUS) return [0, 255, 90];      // Brighter neon green
-                if (distToGavYam < POI_RADIUS) return [0, 191, 255];  // Deep sky blue
-                if (distToSoroka < POI_RADIUS) return [170, 0, 255];  // Deep purple
+                if (distToBGU < POI_RADIUS) return [0, 255, 90];
+                if (distToGavYam < POI_RADIUS) return [0, 191, 255];
+                if (distToSoroka < POI_RADIUS) return [170, 0, 255];
                 
-                return [253, 128, 93];  // Default color
-            };
+                return [253, 128, 93];
+            }
             
-            // Update TripsLayer configuration
-            const tripsLayer = new deck.TripsLayer({
-                id: 'trips',
-                data: TRIPS_DATA,
-                getPath: d => d.path,
-                getTimestamps: d => d.timestamps.flat(),
-                getColor: getPathColor,
-                opacity: 0.8,
-                widthMinPixels: 2,
-                jointRounded: true,
-                capRounded: true,
-                trailLength,
-                currentTime: 0
-            });
-
-            // Add a new PolygonLayer for POI borders
-            const poiBordersLayer = new deck.PolygonLayer({
-                id: 'poi-borders',
-                data: POI_BORDERS,
-                getPolygon: d => d.polygon,
-                getLineColor: d => d.color,
-                lineWidthMinPixels: 2,
-                extruded: false,
-                pickable: false,
-                opacity: 1,
-                zIndex: 1 // Ensure this layer is above others
-            });
-
-            // Add a new PolygonLayer for POI fills
-            const poiFillsLayer = new deck.PolygonLayer({
-                id: 'poi-fills',
-                data: POI_FILLS,
-                getPolygon: d => d.polygon,
-                getFillColor: d => d.color,
-                extruded: false,
-                pickable: false,
-                opacity: 0.5,
-                zIndex: 0 // Ensure this layer is below others
-            });
-
-            // Update the buildings layer for better visibility of POI buildings
-            new deck.PolygonLayer({
-                id: 'buildings',
-                data: BUILDINGS_DATA,
-                extruded: true,
-                wireframe: true,
-                opacity: 0.9,  // Increased opacity for better visibility
-                getPolygon: d => d.polygon,
-                getElevation: d => d.height,
-                getFillColor: d => d.color[3] === 200 ? d.color : [20, 20, 25, 160],
-                getLineColor: [255, 255, 255, 30],
-                lineWidthMinPixels: 1,
-                material: {
-                    ambient: 0.2,
-                    diffuse: 0.8,
-                    shininess: 32,
-                    specularColor: [60, 64, 70]
-                }
-            })
-
-            // Update the animation function
             function animate() {
+                cumulativeTrips = {
+                    'BGU': 0,
+                    'Gav Yam': 0,
+                    'Soroka Hospital': 0
+                };
+
                 console.log('Animation Configuration:', {
                     totalFrames: LOOP_LENGTH,
                     baseSpeed: animationSpeed,
-                    actualDurationSeconds: (LOOP_LENGTH * 60) / animationSpeed / 60,
+                    actualDurationSeconds: LOOP_LENGTH / animationSpeed,
                     trailLength,
                     hoursSimulated: HOURS_PER_DAY,
                     framesPerHour: FRAMES_PER_HOUR
@@ -239,7 +209,6 @@ HTML_TEMPLATE = """
 
                 let lastTime = 0;
                 let lastHour = -1;
-                let hourlyStats = {};
                 
                 animation = popmotion.animate({
                     from: 0,
@@ -248,141 +217,148 @@ HTML_TEMPLATE = """
                     repeat: Infinity,
                     onUpdate: time => {
                         const currentFrame = time % ANIMATION_DURATION;
+                        const hoursElapsed = currentFrame / FRAMES_PER_HOUR;
                         const currentTime = formatTimeString(currentFrame);
-                        const currentHour = Math.floor(START_HOUR + (currentFrame / FRAMES_PER_HOUR));
+                        const currentHour = Math.floor(START_HOUR + hoursElapsed);
                         
-                        // Update time display
+                        // Update displays
                         document.querySelector('.time-display').textContent = currentTime;
                         document.getElementById('current-time').textContent = currentTime;
-                        
-                        // Log stats when hour changes
+
+                        // Hour change logging
                         if (currentHour !== lastHour) {
                             console.log('Hour Change:', {
                                 hour: currentHour,
                                 time: currentTime,
-                                stats: hourlyStats[lastHour] || {}
+                                cumulativeTrips: {...cumulativeTrips}
                             });
-                            
-                            // Reset hourly stats
-                            hourlyStats[currentHour] = {
-                                totalTrips: 0,
-                                activeTrips: 0
-                            };
-                            
                             lastHour = currentHour;
                         }
-                        
+
+                        // Reset and update trip counts
+                        if (currentFrame === 0) {
+                            cumulativeTrips = {
+                                'BGU': 0,
+                                'Gav Yam': 0,
+                                'Soroka Hospital': 0
+                            };
+                        }
+
                         if (Math.floor(time) % 60 === 0 && lastTime !== Math.floor(time)) {
                             lastTime = Math.floor(time);
                             
-                            // Count active trips for this time period
-                            const activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
-                                const validTimestamps = route.timestamps[0].filter(t => 
-                                    t <= currentFrame && 
-                                    t > currentFrame - trailLength
-                                );
-                                return sum + validTimestamps.length;
-                            }, 0);
-                            
-                            // Update hourly stats
-                            if (hourlyStats[currentHour]) {
-                                hourlyStats[currentHour].totalTrips += activeTripsCount;
-                                hourlyStats[currentHour].activeTrips = activeTripsCount;
-                            }
+                            TRIPS_DATA.forEach(route => {
+                                const poi = route.poi;
+                                if (poi) {
+                                    const newTrips = Math.max(...route.timestamps.map(times => 
+                                        times.filter(t => t <= currentFrame && t > currentFrame - 1).length
+                                    ));
+                                    cumulativeTrips[poi] += newTrips;
+                                }
+                            });
+
+                            // Update counter displays
+                            document.getElementById('bgu-counter').textContent = 
+                                cumulativeTrips['BGU'].toLocaleString();
+                            document.getElementById('gav-yam-counter').textContent = 
+                                cumulativeTrips['Gav Yam'].toLocaleString();
+                            document.getElementById('soroka-counter').textContent = 
+                                cumulativeTrips['Soroka Hospital'].toLocaleString();
                             
                             console.log('Animation Status:', {
                                 frame: Math.floor(currentFrame),
                                 time: currentTime,
                                 hour: currentHour,
-                                activeTrips: activeTripsCount,
-                                currentTrailLength: trailLength,
-                                currentSpeed: animationSpeed
+                                cumulativeTrips: {...cumulativeTrips},
+                                speed: animationSpeed
                             });
                         }
                         
-                        // Update layers with current frame...
-                        const layers = [
-                            // Base dark overlay (should not cover POI areas)
-                            new deck.PolygonLayer({
-                                id: 'dark-overlay',
-                                data: [{
-                                    contour: [
-                                        [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude - 1],
-                                        [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude - 1],
-                                        [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude + 1],
-                                        [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude + 1]
-                                    ]
-                                }],
-                                getPolygon: d => d.contour,
-                                getFillColor: [0, 0, 0, 255 * OVERLAY_OPACITY],
-                                getLineColor: [0, 0, 0, 0],
-                                extruded: false,
-                                pickable: false,
-                                opacity: 1,
-                                zIndex: 0
-                            }),
-                            
-                            // POI area fills
-                            new deck.PolygonLayer({
-                                id: 'poi-fills',
-                                data: POI_FILLS,
-                                getPolygon: d => d.polygon,
-                                getFillColor: d => d.color,
-                                getLineColor: [0, 0, 0, 0],
-                                extruded: false,
-                                pickable: false,
-                                opacity: 0.3,
-                                zIndex: 1
-                            }),
-                            
-                            // Buildings
-                            new deck.PolygonLayer({
-                                id: 'buildings',
-                                data: BUILDINGS_DATA,
-                                extruded: true,
-                                wireframe: true,
-                                opacity: 0.9,
-                                getPolygon: d => d.polygon,
-                                getElevation: d => d.height,
-                                getFillColor: d => d.color,
-                                getLineColor: [255, 255, 255, 30],
-                                lineWidthMinPixels: 1,
-                                material: {
-                                    ambient: 0.2,
-                                    diffuse: 0.8,
-                                    shininess: 32,
-                                    specularColor: [60, 64, 70]
-                                }
-                            }),
-                            new deck.TripsLayer({
-                                id: 'trips',
-                                data: TRIPS_DATA,
-                                getPath: d => d.path,
-                                getTimestamps: d => {
-                                    return d.timestamps.map(times => {
-                                        const validTimes = times.filter(t => 
-                                            t <= currentFrame && 
-                                            t > currentFrame - trailLength
-                                        );
-                                        return validTimes.length > 0 ? validTimes[0] : null;
-                                    });
-                                },
-                                getColor: d => getPathColor(d.path),
-                                opacity: 0.8,
-                                widthMinPixels: 2,
-                                jointRounded: true,
-                                capRounded: true,
-                                trailLength,
-                                currentTime: currentFrame,
-                                updateTriggers: {
-                                    getTimestamps: [currentFrame, trailLength]
-                                }
-                            }),
-                            poiBordersLayer 
-                        ];
-                        
                         deckgl.setProps({
-                            layers,
+                            layers: [
+                                new deck.PolygonLayer({
+                                    id: 'dark-overlay',
+                                    data: [{
+                                        contour: [
+                                            [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude - 1],
+                                            [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude - 1],
+                                            [INITIAL_VIEW_STATE.longitude + 1, INITIAL_VIEW_STATE.latitude + 1],
+                                            [INITIAL_VIEW_STATE.longitude - 1, INITIAL_VIEW_STATE.latitude + 1]
+                                        ]
+                                    }],
+                                    getPolygon: d => d.contour,
+                                    getFillColor: [0, 0, 0, 255 * OVERLAY_OPACITY],
+                                    getLineColor: [0, 0, 0, 0],
+                                    extruded: false,
+                                    pickable: false,
+                                    opacity: 1,
+                                    zIndex: 0
+                                }),
+                                new deck.PolygonLayer({
+                                    id: 'poi-fills',
+                                    data: POI_FILLS,
+                                    getPolygon: d => d.polygon,
+                                    getFillColor: d => d.color,
+                                    getLineColor: [0, 0, 0, 0],
+                                    extruded: false,
+                                    pickable: false,
+                                    opacity: 0.3,
+                                    zIndex: 1
+                                }),
+                                new deck.PolygonLayer({
+                                    id: 'buildings',
+                                    data: BUILDINGS_DATA,
+                                    extruded: true,
+                                    wireframe: true,
+                                    opacity: 0.9,
+                                    getPolygon: d => d.polygon,
+                                    getElevation: d => d.height,
+                                    getFillColor: d => d.color,
+                                    getLineColor: [255, 255, 255, 30],
+                                    lineWidthMinPixels: 1,
+                                    material: {
+                                        ambient: 0.2,
+                                        diffuse: 0.8,
+                                        shininess: 32,
+                                        specularColor: [60, 64, 70]
+                                    }
+                                }),
+                                new deck.TripsLayer({
+                                    id: 'trips',
+                                    data: TRIPS_DATA,
+                                    getPath: d => d.path,
+                                    getTimestamps: d => {
+                                        return d.timestamps.map(times => {
+                                            const validTimes = times.filter(t => 
+                                                t <= currentFrame && 
+                                                t > currentFrame - trailLength
+                                            );
+                                            return validTimes.length > 0 ? validTimes[0] : null;
+                                        });
+                                    },
+                                    getColor: d => getPathColor(d.path),
+                                    opacity: 0.8,
+                                    widthMinPixels: 2,
+                                    jointRounded: true,
+                                    capRounded: true,
+                                    trailLength,
+                                    currentTime: currentFrame,
+                                    updateTriggers: {
+                                        getTimestamps: [currentFrame, trailLength]
+                                    }
+                                }),
+                                new deck.PolygonLayer({
+                                    id: 'poi-borders',
+                                    data: POI_BORDERS,
+                                    getPolygon: d => d.polygon,
+                                    getLineColor: d => d.color,
+                                    lineWidthMinPixels: 2,
+                                    extruded: false,
+                                    pickable: false,
+                                    opacity: 1,
+                                    zIndex: 2
+                                })
+                            ],
                             parameters: {
                                 blend: true,
                                 blendFunc: [GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA],
@@ -413,8 +389,8 @@ HTML_TEMPLATE = """
     </body>
     </html>
     """
-    
-# First, let's fix the JavaScript modulo operations by replacing % with %%
+
+# Fix JavaScript modulo operations
 HTML_TEMPLATE = re.sub(
     r'(?<![%])%(?![(%sd])',  # Match single % not followed by formatting specifiers
     '%%',                     # Replace with %%

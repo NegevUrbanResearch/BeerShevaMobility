@@ -83,7 +83,7 @@ def load_trip_data():
         center_lon = (total_bounds[0] + total_bounds[2]) / 2
         center_lat = (total_bounds[1] + total_bounds[3]) / 2
         
-        # Animation parameters for 18-hour day (6:00-22:00)
+        # Animation parameters
         frames_per_second = 60
         hours_per_day = 17  # 6:00-22:00
         minutes_per_simulated_hour = 10  # Each hour takes 10 seconds to simulate
@@ -99,6 +99,7 @@ def load_trip_data():
         
         trips_data = []
         processed_trips = 0
+        hourly_trip_counts = {i: 0 for i in range(6, 23)}  # Track trips per hour (6:00-22:00)
         
         for idx, row in trips_gdf.iterrows():
             try:
@@ -108,7 +109,7 @@ def load_trip_data():
                 
                 if num_trips <= 0 or trip_duration < 2:
                     continue
-                
+                    
                 # Determine POI for this route
                 dest_point = Point(coords[-1])
                 poi_name = None
@@ -116,7 +117,7 @@ def load_trip_data():
                     if dest_point.distance(poi_polygon.geometry) < POI_RADIUS:
                         poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
                         break
-                
+                    
                 if not poi_name:
                     continue
                     
@@ -126,18 +127,32 @@ def load_trip_data():
                 timestamps = []
                 for i in range(trip_duration):
                     point_times = []
-                    
+                    # In load_trip_data(), update the timestamp generation:
                     for hour_idx, dist_value in enumerate(temporal_dist[poi_name]):
-                        # Calculate number of trips for this hour based on distribution
-                        hour_trips = int(num_trips * dist_value)
+                        current_hour = hour_idx + 6  # Convert to actual hour (6:00-22:00)
+                        
+                        # Calculate exact number of trips for this hour based on distribution
+                        hour_trips = int(round(num_trips * dist_value))
+                        
                         if hour_trips > 0:
                             hour_start = hour_idx * frames_per_hour
-                            # Spread trips evenly within the hour
-                            interval = frames_per_hour // hour_trips
+                            # Spread trips more evenly across the hour
+                            interval = frames_per_hour / hour_trips
+                            
                             for trip_num in range(hour_trips):
-                                timestamp = hour_start + (trip_num * interval + i) % frames_per_hour
+                                # Base time at even intervals
+                                base_time = hour_start + (trip_num * interval)
+                                # Add small random offset for more natural look
+                                jitter = np.random.randint(-30, 30)  # Half-second jitter
+                                timestamp = int(base_time + jitter)
+                                # Ensure timestamp stays within current hour
+                                timestamp = max(hour_start, min(hour_start + frames_per_hour - 1, timestamp))
                                 point_times.append(timestamp)
-                    
+                                
+                                # Only count trips at their starting point
+                                if i == 0:
+                                    hourly_trip_counts[current_hour] += 1
+                                    
                     timestamps.append(point_times)
                 
                 trips_data.append({
@@ -151,10 +166,19 @@ def load_trip_data():
                 logger.error(f"Error processing trip {idx}: {str(e)}")
                 continue
         
-        total_instances = sum(len(trip['timestamps'][0]) for trip in trips_data)
-        logger.info(f"Animation Statistics:")
-        logger.info(f"  - Animation duration: {animation_duration} frames")
-        logger.info(f"  - Total trip instances: {total_instances:,}")
+        # Log hourly trip statistics
+        logger.info("\nHourly Trip Distribution:")
+        logger.info("-" * 40)
+        total_instances = 0
+        for hour in range(6, 23):
+            count = hourly_trip_counts[hour]
+            total_instances += count
+            percentage = (count / sum(hourly_trip_counts.values()) * 100) if count > 0 else 0
+            logger.info(f"{hour:02d}:00 - {count:5d} trips ({percentage:5.1f}%)")
+        logger.info("-" * 40)
+        logger.info(f"Total trip instances: {total_instances:,}")
+        logger.info(f"Original trips processed: {processed_trips:,}")
+        logger.info(f"Average instances per original trip: {total_instances/processed_trips:.1f}")
         
         return trips_data, center_lat, center_lon, processed_trips, animation_duration
         
