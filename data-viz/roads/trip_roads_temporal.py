@@ -16,6 +16,7 @@ import html_template
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import MAPBOX_API_KEY, OUTPUT_DIR
@@ -53,8 +54,8 @@ def load_temporal_distributions():
         file_path = os.path.join(OUTPUT_DIR, filename)
         try:
             df = pd.read_csv(file_path)
-            # Extract car distribution for business hours (6-22)
-            dist = df[(df['hour'] >= 6) & (df['hour'] <= 22)]['car_dist'].values
+            # Extract car distribution for business hours (6-23)
+            dist = df[(df['hour'] >= 6) & (df['hour'] <= 23)]['car_dist'].values
             # Normalize to ensure sum is 1.0
             dist = dist / dist.sum()
             distributions[poi_name] = dist
@@ -85,21 +86,21 @@ def load_trip_data():
         
         # Animation parameters
         frames_per_second = 60
-        hours_per_day = 17  # 6:00-22:00
+        hours_per_day = 18  # Updated to 18 hours (6:00-23:00)
         minutes_per_simulated_hour = 10  # Each hour takes 10 seconds to simulate
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
         route_start_offset_max = 20  # Reduced for denser traffic
         
         logger.info(f"Animation Configuration:")
-        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-22:00)")
+        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-23:00)")
         logger.info(f"  - Seconds per hour: {minutes_per_simulated_hour}")
         logger.info(f"  - Frames per hour: {frames_per_hour}")
         logger.info(f"  - Total frames: {animation_duration}")
         
         trips_data = []
         processed_trips = 0
-        hourly_trip_counts = {i: 0 for i in range(6, 23)}  # Track trips per hour (6:00-22:00)
+        hourly_trip_counts = {i: 0 for i in range(6, 24)}  # Track trips per hour (6:00-23:00)
         
         for idx, row in trips_gdf.iterrows():
             try:
@@ -129,7 +130,7 @@ def load_trip_data():
                     point_times = []
                     # In load_trip_data(), update the timestamp generation:
                     for hour_idx, dist_value in enumerate(temporal_dist[poi_name]):
-                        current_hour = hour_idx + 6  # Convert to actual hour (6:00-22:00)
+                        current_hour = hour_idx + 6  # Convert to actual hour (6:00-23:00)
                         
                         # Calculate exact number of trips for this hour based on distribution
                         hour_trips = int(round(num_trips * dist_value))
@@ -170,7 +171,7 @@ def load_trip_data():
         logger.info("\nHourly Trip Distribution:")
         logger.info("-" * 40)
         total_instances = 0
-        for hour in range(6, 23):
+        for hour in range(6, 24):
             count = hourly_trip_counts[hour]
             total_instances += count
             percentage = (count / sum(hourly_trip_counts.values()) * 100) if count > 0 else 0
@@ -287,8 +288,8 @@ def create_animation(html_template):
         'loopLength': animation_duration,
         'mapbox_api_key': MAPBOX_API_KEY,
         'start_hour': 6,
-        'end_hour': 22,
-        'frames_per_hour': int(animation_duration / 17)  # 17 hours from 6:00-22:00
+        'end_hour': 23,  # Updated end hour to 23
+        'frames_per_hour': int(animation_duration / 18)  # 18 hours from 6:00-23:00
     }
     
     try:
@@ -296,7 +297,7 @@ def create_animation(html_template):
         formatted_html = html_template % format_values
         
         # Write to file
-        output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
+        output_path = os.path.join(OUTPUT_DIR, "trip_line_animation.html")
         with open(output_path, 'w') as f:
             f.write(formatted_html)
             

@@ -225,39 +225,46 @@ HTML_TEMPLATE = """
                         document.querySelector('.time-display').textContent = currentTime;
                         document.getElementById('current-time').textContent = currentTime;
 
-                        // Hour change logging
-                        if (currentHour !== lastHour) {
-                            console.log('Hour Change:', {
-                                hour: currentHour,
-                                time: currentTime,
-                                cumulativeTrips: {...cumulativeTrips}
-                            });
-                            lastHour = currentHour;
-                        }
+                        // Process trips and update counters every frame
+                        if (Math.floor(time) !== lastTime) {
+                            lastTime = Math.floor(time);
+                            
+                            // Reset counts at the start of each loop
+                            if (currentFrame === 0) {
+                                cumulativeTrips = {
+                                    'BGU': 0,
+                                    'Gav Yam': 0,
+                                    'Soroka Hospital': 0
+                                };
+                            }
 
-                        // Reset and update trip counts
-                        if (currentFrame === 0) {
-                            cumulativeTrips = {
+                            // Count both active and new trips
+                            let activeTrips = {
                                 'BGU': 0,
                                 'Gav Yam': 0,
                                 'Soroka Hospital': 0
                             };
-                        }
-
-                        if (Math.floor(time) % 60 === 0 && lastTime !== Math.floor(time)) {
-                            lastTime = Math.floor(time);
                             
                             TRIPS_DATA.forEach(route => {
                                 const poi = route.poi;
                                 if (poi) {
-                                    const newTrips = Math.max(...route.timestamps.map(times => 
-                                        times.filter(t => t <= currentFrame && t > currentFrame - 1).length
-                                    ));
+                                    // Count new trips for cumulative total
+                                    const newTrips = route.timestamps[0].filter(t => 
+                                        t <= currentFrame && 
+                                        t > currentFrame - 1
+                                    ).length;
                                     cumulativeTrips[poi] += newTrips;
+                                    
+                                    // Count currently active trips
+                                    const currentlyActive = route.timestamps[0].filter(t => 
+                                        t <= currentFrame && 
+                                        t > currentFrame - trailLength
+                                    ).length;
+                                    activeTrips[poi] += currentlyActive;
                                 }
                             });
 
-                            // Update counter displays
+                            // Update counter displays every frame
                             document.getElementById('bgu-counter').textContent = 
                                 cumulativeTrips['BGU'].toLocaleString();
                             document.getElementById('gav-yam-counter').textContent = 
@@ -265,15 +272,20 @@ HTML_TEMPLATE = """
                             document.getElementById('soroka-counter').textContent = 
                                 cumulativeTrips['Soroka Hospital'].toLocaleString();
                             
-                            console.log('Animation Status:', {
-                                frame: Math.floor(currentFrame),
-                                time: currentTime,
-                                hour: currentHour,
-                                cumulativeTrips: {...cumulativeTrips},
-                                speed: animationSpeed
-                            });
+                            // Log detailed stats every second
+                            if (Math.floor(time) % 60 === 0) {
+                                console.log('Animation Status:', {
+                                    frame: Math.floor(currentFrame),
+                                    time: currentTime,
+                                    hour: currentHour,
+                                    cumulativeTrips: {...cumulativeTrips},
+                                    activeTrips: {...activeTrips},
+                                    speed: animationSpeed
+                                });
+                            }
                         }
                         
+                        // Update layers with optimized timestamp handling
                         deckgl.setProps({
                             layers: [
                                 new deck.PolygonLayer({
@@ -328,13 +340,11 @@ HTML_TEMPLATE = """
                                     data: TRIPS_DATA,
                                     getPath: d => d.path,
                                     getTimestamps: d => {
-                                        return d.timestamps.map(times => {
-                                            const validTimes = times.filter(t => 
-                                                t <= currentFrame && 
-                                                t > currentFrame - trailLength
-                                            );
-                                            return validTimes.length > 0 ? validTimes[0] : null;
-                                        });
+                                        const validTimes = d.timestamps[0].filter(t => 
+                                            t <= currentFrame && 
+                                            t > currentFrame - trailLength
+                                        );
+                                        return validTimes.length > 0 ? [validTimes[0]] : [null];
                                     },
                                     getColor: d => getPathColor(d.path),
                                     opacity: 0.8,
