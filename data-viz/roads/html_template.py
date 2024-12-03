@@ -1,207 +1,6 @@
-import pydeck as pdk
-import pandas as pd
-import geopandas as gpd
-import numpy as np
-import os
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import json
-import logging
-from config import BUILDINGS_FILE
-from shapely.geometry import Point
-from pyproj import Transformer
 import re
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Add parent directory to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import MAPBOX_API_KEY, OUTPUT_DIR
-attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]  # POI polygons
-poi_polygons_json = poi_polygons.to_json()
-POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
-
-# Update POI_INFO with even more contrasting colors and darker base buildings
-POI_INFO = {
-    'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},         # Brighter neon green
-    'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},    # Deep sky blue
-    'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Deep purple
-}
-
-# Define the mapping between shapefile IDs and POI names
-POI_ID_MAP = {
-    7: 'BGU',
-    12: 'Gav Yam',
-    11: 'Soroka Hospital'
-}
-
-def load_trip_data():
-    """Load and process trip data for animation"""
-    file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
-    logger.info(f"Loading trip data from: {file_path}")
-    
-    try:
-        trips_gdf = gpd.read_file(file_path)
-        raw_trip_count = trips_gdf['num_trips'].sum()
-        logger.info(f"Loaded {len(trips_gdf)} routes representing {raw_trip_count:,} total trips")
-    except Exception as e:
-        logger.error(f"Error loading trip data: {str(e)}")
-        raise
-    
-    # Calculate center coordinates
-    total_bounds = trips_gdf.total_bounds
-    center_lon = (total_bounds[0] + total_bounds[2]) / 2
-    center_lat = (total_bounds[1] + total_bounds[3]) / 2
-    
-    # Convert to format needed for animation
-    trips_data = []
-    processed_trips = 0
-    
-    # Animation parameters
-    frames_per_second = 60
-    desired_duration_seconds = 60  # one minute
-    animation_duration = frames_per_second * desired_duration_seconds  # 3600 frames
-    route_start_offset_max = 100  # Smaller offset for more density
-    
-    logger.info(f"Animation Configuration:")
-    logger.info(f"  - Frames per second: {frames_per_second}")
-    logger.info(f"  - Desired duration: {desired_duration_seconds} seconds")
-    logger.info(f"  - Total frames: {animation_duration}")
-    
-    for idx, row in trips_gdf.iterrows():
-        try:
-            coords = list(row.geometry.coords)
-            trip_duration = len(coords)
-            num_trips = int(row['num_trips'])
-            
-            if num_trips <= 0 or trip_duration < 2:
-                logger.warning(f"Skipping route {idx} with {num_trips} trips and {trip_duration} points")
-                continue
-                
-            processed_trips += num_trips
-            route_offset = np.random.randint(0, route_start_offset_max)
-            
-            # Ensure we can fit all trips within the animation duration
-            interval = max(1, min(20, (animation_duration - trip_duration) // max(num_trips, 1)))
-            
-            # Generate individual timestamps for each trip instance
-            timestamps = []
-            for i in range(trip_duration):
-                point_times = []
-                for trip_num in range(num_trips):
-                    # Calculate base timestamp for this point in this trip instance
-                    timestamp = (trip_num * interval + i + route_offset) % animation_duration
-                    point_times.append(timestamp)
-                timestamps.append(point_times)
-            
-            trips_data.append({
-                'path': [[float(x), float(y)] for x, y in coords],
-                'timestamps': timestamps,
-                'num_trips': num_trips
-            })
-            
-        except Exception as e:
-            logger.error(f"Error processing trip {idx}: {str(e)}")
-            continue
-    
-    # Add detailed logging
-    total_instances = sum(len(trip['timestamps'][0]) for trip in trips_data)
-    logger.info(f"Animation Statistics:")
-    logger.info(f"  - Animation duration: {animation_duration} frames")
-    logger.info(f"  - Average interval between trips: {animation_duration / max(total_instances, 1):.1f}")
-    logger.info(f"  - Total trip instances being animated: {total_instances:,}")
-    
-    return trips_data, center_lat, center_lon, processed_trips
-
-def load_building_data():
-    """Load building data for 3D visualization"""
-    file_path = os.path.join(OUTPUT_DIR, "buildings.geojson")
-    logger.info(f"Loading building data from: {file_path}")
-    
-    try:
-        buildings_gdf = gpd.read_file(BUILDINGS_FILE)
-        
-        # Convert to format needed for deck.gl
-        buildings_data = []
-        text_features = []
-        
-        # Debug logging for POI polygons
-        logger.info(f"POI polygons IDs: {[p['ID'] for idx, p in poi_polygons.iterrows()]}")
-        
-        for idx, building in buildings_gdf.iterrows():
-            building_color = [80, 90, 100, 160]  # Default color
-            try:
-                # Get actual height from building data, default to 20 if not found
-                height = float(building.get('height', 20))
-                building_height = height * 1.5  # Scale height to match line_roads.py
-                
-                # Check if building intersects with any POI polygon
-                for poi_idx, poi_polygon in poi_polygons.iterrows():
-                    if building.geometry.intersects(poi_polygon.geometry):
-                        numeric_id = int(poi_polygon['ID'])  # Ensure numeric ID is int
-                        poi_name = POI_ID_MAP.get(numeric_id)
-                        
-                        if poi_name:
-                            logger.debug(f"Building intersects with POI {numeric_id} ({poi_name})")
-                            building_height = min(40, height * 1000)
-                            building_color = POI_INFO[poi_name]['color']
-                            
-                            # Add text label for POI
-                            text_features.append({
-                                "position": list(building.geometry.centroid.coords)[0] + (building_height + 10,),
-                                "text": poi_name,
-                                "color": [255, 255, 255, 255]
-                            })
-                            break
-                
-                buildings_data.append({
-                    "polygon": list(building.geometry.exterior.coords),
-                    "height": building_height,
-                    "color": building_color
-                })
-            except Exception as e:
-                logger.error(f"Skipping building due to error: {e}")
-                continue
-        
-        # Prepare POI polygon borders and fills
-        poi_borders = []
-        poi_fills = []
-        
-        for poi_idx, poi_polygon in poi_polygons.iterrows():
-            numeric_id = int(poi_polygon['ID'])  # Ensure numeric ID is int
-            poi_name = POI_ID_MAP.get(numeric_id)
-            
-            if poi_name:
-                logger.info(f"Processing POI polygon: ID={numeric_id}, Name={poi_name}")
-                color = POI_INFO[poi_name]['color'][:3]  # Get RGB values
-                
-                poi_borders.append({
-                    "polygon": list(poi_polygon.geometry.exterior.coords),
-                    "color": color + [255]  # Full opacity for borders
-                })
-                
-                poi_fills.append({
-                    "polygon": list(poi_polygon.geometry.exterior.coords),
-                    "color": color + [100]  # Medium opacity for fills
-                })
-            else:
-                logger.warning(f"Unknown POI ID: {numeric_id}")
-        
-        logger.info(f"Loaded {len(buildings_data)} buildings")
-        logger.info(f"Created {len(poi_fills)} POI fill areas")
-        return buildings_data, text_features, poi_borders, poi_fills
-    except Exception as e:
-        logger.error(f"Error loading building data: {str(e)}")
-        raise
-
-def create_animation():
-    trips_data, center_lat, center_lon, total_trips = load_trip_data()
-    buildings_data, text_features, poi_borders, poi_fills = load_building_data()
-    
-    html_template = """
+HTML_TEMPLATE = """
     <!DOCTYPE html>
     <html>
     <head>
@@ -235,25 +34,40 @@ def create_animation():
                 font-family: Arial;
                 max-width: 300px;
             }
+            .time-display {
+                position: absolute;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 12px 24px;
+                border-radius: 5px;
+                font-family: monospace;
+                font-size: 24px;
+                z-index: 1000;
+            }
         </style>
     </head>
     <body>
         <div id="container"></div>
         <div class="control-panel">
             <div>
-                <label>Trail Length: <span id="trail-value">2</span></label>
-                <input type="range" min="1" max="100" value="2" id="trail-length" style="width: 200px">
+                <label>Trail Length: <span id="trail-value">4</span></label>
+                <input type="range" min="1" max="100" value="4" id="trail-length" style="width: 200px">
             </div>
             <div>
-                <label>Animation Speed: <span id="speed-value">4</span></label>
-                <input type="range" min="0.1" max="5" step="0.1" value="4" id="animation-speed" style="width: 200px">
+                <label>Animation Speed: <span id="speed-value">2</span></label>
+                <input type="range" min="0.5" max="10" step="0.5" value="2" id="animation-speed" style="width: 200px">
             </div>
         </div>
+        <div class="time-display">06:00</div>
         <div class="methodology-container">
             <h3 style="margin: 0 0 10px 0;">Methodology</h3>
             <p style="margin: 0; font-size: 0.9em;">
-                Represents individual trips across Beer Sheva's road network to POI in the Innovation District using approximate origin locations.<br>
-                Total Daily Trips Visualized: %(total_trips)d<br><br>
+                Represents daily trips (6:00-22:00) across Beer Sheva's road network using temporal distributions.<br>
+                Total Daily Trips: %(total_trips)d<br>
+                Current simulation time: <span id="current-time">06:00</span><br><br>
                 Colors indicate destinations:<br>
                 <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span> BGU <br>
                 <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span> Gav Yam <br>
@@ -304,12 +118,26 @@ def create_animation():
             // Update map style to CARTO dark matter (no labels)
             const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
             
-            let trailLength = 2;
-            let animationSpeed = 4;
+            let trailLength = 4;
+            let animationSpeed = 2;
             let animation;
             
             // Add a new constant for the overlay opacity
             const OVERLAY_OPACITY = 0.5; // Adjust this value to control darkness (0 to 1)
+            
+            // Add new constants for time simulation
+            const HOURS_PER_DAY = 17; // 6:00-22:00
+            const START_HOUR = 6;
+            const END_HOUR = 22;
+            const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
+            
+            // Add time formatting function
+            function formatTimeString(frame) {
+                const hoursElapsed = frame / FRAMES_PER_HOUR;
+                const currentHour = Math.floor(START_HOUR + hoursElapsed);
+                const minutes = Math.floor((hoursElapsed % 1) * 60);
+                return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+            }
             
             const deckgl = new deck.DeckGL({
                 container: 'container',
@@ -398,16 +226,20 @@ def create_animation():
                 }
             })
 
+            // Update the animation function
             function animate() {
                 console.log('Animation Configuration:', {
                     totalFrames: LOOP_LENGTH,
                     baseSpeed: animationSpeed,
                     actualDurationSeconds: (LOOP_LENGTH * 60) / animationSpeed / 60,
-                    trailLength
+                    trailLength,
+                    hoursSimulated: HOURS_PER_DAY,
+                    framesPerHour: FRAMES_PER_HOUR
                 });
 
                 let lastTime = 0;
-                let activeTripsCount = 0;
+                let lastHour = -1;
+                let hourlyStats = {};
                 
                 animation = popmotion.animate({
                     from: 0,
@@ -415,24 +247,60 @@ def create_animation():
                     duration: (LOOP_LENGTH * 60) / animationSpeed,
                     repeat: Infinity,
                     onUpdate: time => {
+                        const currentFrame = time % ANIMATION_DURATION;
+                        const currentTime = formatTimeString(currentFrame);
+                        const currentHour = Math.floor(START_HOUR + (currentFrame / FRAMES_PER_HOUR));
+                        
+                        // Update time display
+                        document.querySelector('.time-display').textContent = currentTime;
+                        document.getElementById('current-time').textContent = currentTime;
+                        
+                        // Log stats when hour changes
+                        if (currentHour !== lastHour) {
+                            console.log('Hour Change:', {
+                                hour: currentHour,
+                                time: currentTime,
+                                stats: hourlyStats[lastHour] || {}
+                            });
+                            
+                            // Reset hourly stats
+                            hourlyStats[currentHour] = {
+                                totalTrips: 0,
+                                activeTrips: 0
+                            };
+                            
+                            lastHour = currentHour;
+                        }
+                        
                         if (Math.floor(time) % 60 === 0 && lastTime !== Math.floor(time)) {
                             lastTime = Math.floor(time);
-                            activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
-                                return sum + route.timestamps[0].filter(t => 
-                                    t <= time % ANIMATION_DURATION && 
-                                    t > (time % ANIMATION_DURATION) - trailLength
-                                ).length;
+                            
+                            // Count active trips for this time period
+                            const activeTripsCount = TRIPS_DATA.reduce((sum, route) => {
+                                const validTimestamps = route.timestamps[0].filter(t => 
+                                    t <= currentFrame && 
+                                    t > currentFrame - trailLength
+                                );
+                                return sum + validTimestamps.length;
                             }, 0);
                             
+                            // Update hourly stats
+                            if (hourlyStats[currentHour]) {
+                                hourlyStats[currentHour].totalTrips += activeTripsCount;
+                                hourlyStats[currentHour].activeTrips = activeTripsCount;
+                            }
+                            
                             console.log('Animation Status:', {
-                                frame: Math.floor(time),
+                                frame: Math.floor(currentFrame),
+                                time: currentTime,
+                                hour: currentHour,
                                 activeTrips: activeTripsCount,
                                 currentTrailLength: trailLength,
-                                currentSpeed: animationSpeed,
-                                totalTripsLoaded: TRIPS_DATA.reduce((sum, route) => sum + route.num_trips, 0)
+                                currentSpeed: animationSpeed
                             });
                         }
                         
+                        // Update layers with current frame...
                         const layers = [
                             // Base dark overlay (should not cover POI areas)
                             new deck.PolygonLayer({
@@ -491,11 +359,10 @@ def create_animation():
                                 data: TRIPS_DATA,
                                 getPath: d => d.path,
                                 getTimestamps: d => {
-                                    const currentTime = time % ANIMATION_DURATION;
                                     return d.timestamps.map(times => {
                                         const validTimes = times.filter(t => 
-                                            t <= currentTime && 
-                                            t > currentTime - trailLength
+                                            t <= currentFrame && 
+                                            t > currentFrame - trailLength
                                         );
                                         return validTimes.length > 0 ? validTimes[0] : null;
                                     });
@@ -506,9 +373,9 @@ def create_animation():
                                 jointRounded: true,
                                 capRounded: true,
                                 trailLength,
-                                currentTime: time % ANIMATION_DURATION,
+                                currentTime: currentFrame,
                                 updateTriggers: {
-                                    getTimestamps: [time, trailLength]
+                                    getTimestamps: [currentFrame, trailLength]
                                 }
                             }),
                             poiBordersLayer 
@@ -547,54 +414,9 @@ def create_animation():
     </html>
     """
     
-    # First, let's fix the JavaScript modulo operations by replacing % with %%
-    html_template = re.sub(
-        r'(?<![%])%(?![(%sd])',  # Match single % not followed by formatting specifiers
-        '%%',                     # Replace with %%
-        html_template
-    )
-    
-    # Create a dictionary of all the values we need to format
-    format_values = {
-        'total_trips': total_trips,
-        'trips_data': json.dumps(trips_data),
-        'buildings_data': json.dumps(buildings_data),
-        'poi_borders': json.dumps(poi_borders),
-        'poi_fills': json.dumps(poi_fills),
-        'poi_radius': POI_RADIUS,
-        'bgu_info': json.dumps(POI_INFO['BGU']),
-        'gav_yam_info': json.dumps(POI_INFO['Gav Yam']),
-        'soroka_info': json.dumps(POI_INFO['Soroka Hospital']),
-        'animation_duration': 3600,
-        'loopLength': 3600,
-        'mapbox_api_key': MAPBOX_API_KEY
-    }
-    
-    try:
-        # Format the HTML
-        formatted_html = html_template % format_values
-        
-        # Write to file
-        output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
-        with open(output_path, 'w') as f:
-            f.write(formatted_html)
-            
-        logger.info(f"Animation saved to: {output_path}")
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"Error writing HTML file: {str(e)}")
-        # Show a small section of the template around each format specifier
-        for match in re.finditer(r'%\([^)]+\)[sdfg]', html_template):
-            start = max(0, match.start() - 20)
-            end = min(len(html_template), match.end() + 20)
-            logger.error(f"Context around format specifier: ...{html_template[start:end]}...")
-        raise
-        
-if __name__ == "__main__":
-    try:
-        output_file = create_animation()
-        print(f"Animation saved to: {output_file}")
-    except Exception as e:
-        logger.error(f"Failed to create animation: {str(e)}")
-        sys.exit(1) 
+# First, let's fix the JavaScript modulo operations by replacing % with %%
+HTML_TEMPLATE = re.sub(
+    r'(?<![%])%(?![(%sd])',  # Match single % not followed by formatting specifiers
+    '%%',                     # Replace with %%
+    HTML_TEMPLATE
+)
