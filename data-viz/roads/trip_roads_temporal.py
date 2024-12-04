@@ -86,7 +86,7 @@ def load_trip_data():
         
         # Animation parameters
         frames_per_second = 60
-        minutes_per_simulated_hour = 30
+        minutes_per_simulated_hour = 10
         hours_per_day = 16  # 6:00-22:00
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
@@ -123,37 +123,44 @@ def load_trip_data():
                 
                 processed_trips += num_trips
                 
-                # New approach: Create continuous flows of trips
+                # Calculate exact number of trips for each hour - DO THIS ONLY ONCE PER TRIP
+                hour_trips = {}
+                for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
+                    # Round to nearest integer while preserving total
+                    hour_trips[hour_idx] = round(num_trips * hour_fraction)
+                
+                # Ensure the sum matches the original number of trips
+                total_distributed = sum(hour_trips.values())
+                if total_distributed != num_trips:
+                    max_hour = max(hour_trips.items(), key=lambda x: x[1])[0]
+                    hour_trips[max_hour] += (num_trips - total_distributed)
+                
+                # Create timestamps array for each point in the path
                 timestamps = []
                 for i in range(trip_duration):
                     point_times = []
-                    progress = i / (trip_duration - 1)  # Progress along route (0 to 1)
+                    progress = i / (trip_duration - 1)
                     
-                    # For each hour in the distribution
-                    for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
-                        if hour_fraction > 0:
-                            hour_trips = int(round(num_trips * hour_fraction))
+                    # Create timestamps for each hour's trips
+                    for hour_idx, hour_count in hour_trips.items():
+                        if hour_count > 0:
                             hour_start = hour_idx * frames_per_hour
                             
-                            # Create a continuous stream of trips throughout the hour
-                            for trip_idx in range(hour_trips):
+                            for trip_idx in range(hour_count):
                                 # Spread trips evenly across the hour
-                                phase_shift = (trip_idx * frames_per_hour) / hour_trips
-                                # Add some randomness to prevent all trips starting at exactly the same time
-                                jitter = np.random.randint(-30, 30)
+                                phase_shift = (trip_idx * frames_per_hour) / hour_count
+                                jitter = np.random.randint(-15, 15)
                                 
-                                # Base timestamp for this trip
                                 base_time = hour_start + phase_shift + jitter
-                                
-                                # Calculate timestamp for this point along the route
-                                # Make sure trips take consistent time to complete
-                                trip_duration_frames = frames_per_hour / 4  # Each trip takes 15 minutes
+                                trip_duration_frames = frames_per_hour / 8
                                 timestamp = int(base_time + (progress * trip_duration_frames))
                                 
                                 if timestamp >= 0 and timestamp < animation_duration:
                                     point_times.append(timestamp)
-                                    hourly_trip_counts[hour_idx + 6] += 1
-                    
+                                    # Only count each trip once, at its starting point
+                                    if i == 0:  # Only count at the first point of the path
+                                        hourly_trip_counts[hour_idx + 6] += 1
+                
                     timestamps.append(sorted(point_times))
                 
                 trips_data.append({
