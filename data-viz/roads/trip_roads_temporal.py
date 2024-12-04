@@ -280,6 +280,10 @@ def create_animation(html_template):
     trips_data, center_lat, center_lon, total_trips, animation_duration = load_trip_data()
     buildings_data, text_features, poi_borders, poi_fills = load_building_data()
     
+    # Calculate frames per hour based on animation duration and time range
+    hours_simulated = 16  # 6:00-22:00
+    frames_per_hour = animation_duration // hours_simulated
+    
     format_values = {
         'total_trips': total_trips,
         'trips_data': json.dumps(trips_data),
@@ -294,8 +298,8 @@ def create_animation(html_template):
         'loopLength': animation_duration,
         'mapbox_api_key': MAPBOX_API_KEY,
         'start_hour': 6,
-        'end_hour': 22,  # Updated end hour to 22
-        'frames_per_hour': int(animation_duration / 18)  # 18 hours from 6:00-22:00
+        'end_hour': 22,
+        'frames_per_hour': frames_per_hour
     }
     
     try:

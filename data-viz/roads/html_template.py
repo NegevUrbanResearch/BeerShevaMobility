@@ -114,6 +114,28 @@ HTML_TEMPLATE = """
             const ANIMATION_DURATION = %(animation_duration)d;
             const LOOP_LENGTH = %(loopLength)d;
             
+            // Add this after TRIPS_DATA is defined
+            console.log('Trip Data Summary:', {
+                totalRoutes: TRIPS_DATA.length,
+                totalTrips: TRIPS_DATA.reduce((sum, route) => sum + route.num_trips, 0),
+                tripsByPOI: TRIPS_DATA.reduce((acc, route) => {
+                    if (route.poi) {
+                        acc[route.poi] = (acc[route.poi] || 0) + route.num_trips;
+                    }
+                    return acc;
+                }, {})
+            });
+
+            // Optional: Validate timestamps
+            console.log('Timestamp Distribution:', TRIPS_DATA.reduce((acc, route) => {
+                if (route.timestamps && route.timestamps[0]) {
+                    acc.minTime = Math.min(acc.minTime, Math.min(...route.timestamps[0]));
+                    acc.maxTime = Math.max(acc.maxTime, Math.max(...route.timestamps[0]));
+                    acc.totalTimestamps += route.timestamps[0].length;
+                }
+                return acc;
+            }, { minTime: Infinity, maxTime: -Infinity, totalTimestamps: 0 }));
+
             // Animation constants
             const HOURS_PER_DAY = 17;
             const START_HOUR = 6;
@@ -190,102 +212,88 @@ HTML_TEMPLATE = """
                 
                 return [253, 128, 93];
             }
-            
+                
             function animate() {
-                cumulativeTrips = {
+                // Persistent trip counters
+                let poiTripCounts = {
                     'BGU': 0,
                     'Gav Yam': 0,
                     'Soroka Hospital': 0
                 };
 
-                console.log('Animation Configuration:', {
-                    totalFrames: LOOP_LENGTH,
-                    baseSpeed: animationSpeed,
-                    actualDurationSeconds: LOOP_LENGTH / animationSpeed,
-                    trailLength,
-                    hoursSimulated: HOURS_PER_DAY,
-                    framesPerHour: FRAMES_PER_HOUR
+                // Calculate hourly trip distributions directly from TRIPS_DATA
+                const hourlyDistribution = {};
+                for (let hour = START_HOUR; hour < END_HOUR; hour++) {
+                    hourlyDistribution[hour] = {
+                        'BGU': 0,
+                        'Gav Yam': 0,
+                        'Soroka Hospital': 0
+                    };
+                }
+
+                // Count trips using the pre-calculated timestamps
+                TRIPS_DATA.forEach(route => {
+                    if (!route.poi) return;
+                    
+                    // Look at first point's timestamps (starting points)
+                    route.timestamps[0].forEach(timestamp => {
+                        const hour = Math.floor(timestamp / FRAMES_PER_HOUR) + START_HOUR;
+                        if (hour >= START_HOUR && hour < END_HOUR) {
+                            // Each timestamp represents one trip instance
+                            hourlyDistribution[hour][route.poi]++;
+                        }
+                    });
                 });
 
-                let lastTime = 0;
-                let lastHour = -1;
-                
+                let lastProcessedTime = '';
+
                 animation = popmotion.animate({
                     from: 0,
                     to: LOOP_LENGTH,
                     duration: (LOOP_LENGTH * 60) / animationSpeed,
                     repeat: Infinity,
                     onUpdate: time => {
-                        const currentFrame = time % ANIMATION_DURATION;
-                        const hoursElapsed = currentFrame / FRAMES_PER_HOUR;
+                        const currentFrame = Math.floor(time % ANIMATION_DURATION);
                         const currentTime = formatTimeString(currentFrame);
-                        const currentHour = Math.floor(START_HOUR + hoursElapsed);
+                        const [currentHour, currentMinute] = currentTime.split(':').map(Number);
                         
-                        // Update displays
+                        // Update time displays
                         document.querySelector('.time-display').textContent = currentTime;
                         document.getElementById('current-time').textContent = currentTime;
 
-                        // Process trips and update counters every frame
-                        if (Math.floor(time) !== lastTime) {
-                            lastTime = Math.floor(time);
+                        // Update counters every 6 minutes of simulation time
+                        if (currentMinute % 6 === 0 && currentTime !== lastProcessedTime) {
+                            lastProcessedTime = currentTime;
                             
-                            // Reset counts at the start of each loop
-                            if (currentFrame === 0) {
-                                cumulativeTrips = {
+                            // Reset counts at 6:00
+                            if (currentHour === 6 && currentMinute === 0) {
+                                poiTripCounts = {
                                     'BGU': 0,
                                     'Gav Yam': 0,
                                     'Soroka Hospital': 0
                                 };
+                                console.log('Starting new day at 06:00');
                             }
 
-                            // Count both active and new trips
-                            let activeTrips = {
-                                'BGU': 0,
-                                'Gav Yam': 0,
-                                'Soroka Hospital': 0
-                            };
-                            
-                            TRIPS_DATA.forEach(route => {
-                                const poi = route.poi;
-                                if (poi) {
-                                    // Count new trips for cumulative total
-                                    const newTrips = route.timestamps[0].filter(t => 
-                                        t <= currentFrame && 
-                                        t > currentFrame - 1
-                                    ).length;
-                                    cumulativeTrips[poi] += newTrips;
-                                    
-                                    // Count currently active trips
-                                    const currentlyActive = route.timestamps[0].filter(t => 
-                                        t <= currentFrame && 
-                                        t > currentFrame - trailLength
-                                    ).length;
-                                    activeTrips[poi] += currentlyActive;
-                                }
-                            });
-
-                            // Update counter displays every frame
-                            document.getElementById('bgu-counter').textContent = 
-                                cumulativeTrips['BGU'].toLocaleString();
-                            document.getElementById('gav-yam-counter').textContent = 
-                                cumulativeTrips['Gav Yam'].toLocaleString();
-                            document.getElementById('soroka-counter').textContent = 
-                                cumulativeTrips['Soroka Hospital'].toLocaleString();
-                            
-                            // Log detailed stats every second
-                            if (Math.floor(time) % 60 === 0) {
-                                console.log('Animation Status:', {
-                                    frame: Math.floor(currentFrame),
-                                    time: currentTime,
-                                    hour: currentHour,
-                                    cumulativeTrips: {...cumulativeTrips},
-                                    activeTrips: {...activeTrips},
-                                    speed: animationSpeed
+                            // Add proportional trips for this time interval
+                            if (hourlyDistribution[currentHour]) {
+                                Object.entries(hourlyDistribution[currentHour]).forEach(([poi, hourlyTrips]) => {
+                                    // Add 1/10th of the hourly trips (6-minute increment)
+                                    poiTripCounts[poi] += Math.round(hourlyTrips / 10);
                                 });
                             }
+
+                            // Update counter displays
+                            document.getElementById('bgu-counter').textContent = 
+                                Math.round(poiTripCounts['BGU']).toLocaleString();
+                            document.getElementById('gav-yam-counter').textContent = 
+                                Math.round(poiTripCounts['Gav Yam']).toLocaleString();
+                            document.getElementById('soroka-counter').textContent = 
+                                Math.round(poiTripCounts['Soroka Hospital']).toLocaleString();
                         }
-                        
-                        // Update layers with optimized timestamp handling
+
+
+                        // Update deck.gl layers
                         deckgl.setProps({
                             layers: [
                                 new deck.PolygonLayer({
@@ -340,11 +348,10 @@ HTML_TEMPLATE = """
                                     data: TRIPS_DATA,
                                     getPath: d => d.path,
                                     getTimestamps: d => {
-                                        const currentTime = time % ANIMATION_DURATION;
                                         return d.timestamps.map((pointTimes, i) => {
                                             const validTimes = pointTimes.filter(t => 
-                                                t <= currentTime && 
-                                                t > currentTime - trailLength * 30  // Reduced from 60 for shorter trails
+                                                t <= currentFrame && 
+                                                t > currentFrame - trailLength * 4  // Shorter trail length
                                             );
                                             return validTimes.length > 0 ? Math.max(...validTimes) : null;
                                         });
@@ -354,11 +361,11 @@ HTML_TEMPLATE = """
                                     widthMinPixels: 2,
                                     jointRounded: true,
                                     capRounded: true,
-                                    trailLength: trailLength * 20,  // Reduced from 60
+                                    trailLength: trailLength * 2,  // Shorter trail for clearer visualization
                                     fadeTrail: true,
-                                    currentTime: time % ANIMATION_DURATION,
+                                    currentTime: currentFrame,
                                     updateTriggers: {
-                                        getTimestamps: [time, trailLength]
+                                        getTimestamps: [currentFrame, trailLength]
                                     }
                                 }),
                                 new deck.PolygonLayer({
@@ -382,13 +389,28 @@ HTML_TEMPLATE = """
                     }
                 });
             }
-            
-            // Control panel handlers
+
+            // Initial settings
+            const INITIAL_SETTINGS = {
+                trailLength: 1,
+                animationSpeed: 3
+            };
+
+            // Control panel handlers with updated ranges
+            document.getElementById('trail-length').min = 0.5;
+            document.getElementById('trail-length').max = 4;
+            document.getElementById('trail-length').step = 0.5;
+            document.getElementById('trail-length').value = INITIAL_SETTINGS.trailLength;
+            document.getElementById('trail-value').textContent = INITIAL_SETTINGS.trailLength;
+
             document.getElementById('trail-length').oninput = function() {
                 trailLength = Number(this.value);
                 document.getElementById('trail-value').textContent = this.value;
             };
-            
+
+            document.getElementById('animation-speed').value = INITIAL_SETTINGS.animationSpeed;
+            document.getElementById('speed-value').textContent = INITIAL_SETTINGS.animationSpeed;
+
             document.getElementById('animation-speed').oninput = function() {
                 animationSpeed = Number(this.value);
                 document.getElementById('speed-value').textContent = this.value;
@@ -397,12 +419,13 @@ HTML_TEMPLATE = """
                 }
                 animate();
             };
-            
+
+            // Initialize animation
             animate();
-        </script>
-    </body>
-    </html>
-    """
+            </script>
+            </body>
+            </html>
+"""
 
 # Fix JavaScript modulo operations
 HTML_TEMPLATE = re.sub(
