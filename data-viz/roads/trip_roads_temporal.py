@@ -54,8 +54,8 @@ def load_temporal_distributions():
         file_path = os.path.join(OUTPUT_DIR, filename)
         try:
             df = pd.read_csv(file_path)
-            # Extract car distribution for business hours (6-23)
-            dist = df[(df['hour'] >= 6) & (df['hour'] <= 23)]['car_dist'].values
+            # Extract car distribution for business hours (6-22)
+            dist = df[(df['hour'] >= 6) & (df['hour'] <= 22)]['car_dist'].values
             # Normalize to ensure sum is 1.0
             dist = dist / dist.sum()
             distributions[poi_name] = dist
@@ -86,21 +86,20 @@ def load_trip_data():
         
         # Animation parameters
         frames_per_second = 60
-        hours_per_day = 18  # Updated to 18 hours (6:00-23:00)
-        minutes_per_simulated_hour = 10  # Each hour takes 10 seconds to simulate
+        minutes_per_simulated_hour = 30
+        hours_per_day = 16  # 6:00-22:00
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
-        route_start_offset_max = 20  # Reduced for denser traffic
         
         logger.info(f"Animation Configuration:")
-        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-23:00)")
+        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-22:00)")
         logger.info(f"  - Seconds per hour: {minutes_per_simulated_hour}")
         logger.info(f"  - Frames per hour: {frames_per_hour}")
         logger.info(f"  - Total frames: {animation_duration}")
         
         trips_data = []
         processed_trips = 0
-        hourly_trip_counts = {i: 0 for i in range(6, 24)}  # Track trips per hour (6:00-23:00)
+        hourly_trip_counts = {i: 0 for i in range(6, 23)}  # Track trips per hour (6:00-22:00)
         
         for idx, row in trips_gdf.iterrows():
             try:
@@ -110,7 +109,7 @@ def load_trip_data():
                 
                 if num_trips <= 0 or trip_duration < 2:
                     continue
-                    
+                
                 # Determine POI for this route
                 dest_point = Point(coords[-1])
                 poi_name = None
@@ -118,43 +117,38 @@ def load_trip_data():
                     if dest_point.distance(poi_polygon.geometry) < POI_RADIUS:
                         poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
                         break
-                    
+                
                 if not poi_name:
                     continue
-                    
+                
                 processed_trips += num_trips
                 
-                # Generate timestamps with temporal distribution
+                # Generate timestamps for each point in the path
                 timestamps = []
                 for i in range(trip_duration):
                     point_times = []
-                    # In load_trip_data(), update the timestamp generation:
-                    for hour_idx, dist_value in enumerate(temporal_dist[poi_name]):
-                        current_hour = hour_idx + 6  # Convert to actual hour (6:00-23:00)
-                        
-                        # Calculate exact number of trips for this hour based on distribution
-                        hour_trips = int(round(num_trips * dist_value))
-                        
-                        if hour_trips > 0:
-                            hour_start = hour_idx * frames_per_hour
-                            # Spread trips more evenly across the hour
-                            interval = frames_per_hour / hour_trips
+                    
+                    # Calculate progress through the route (0 to 1)
+                    progress = i / (trip_duration - 1)
+                    
+                    # Distribute trips across hours based on temporal distribution
+                    for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
+                        if hour_fraction > 0:
+                            hour_trips = int(round(num_trips * hour_fraction))
+                            hour_start_frame = hour_idx * frames_per_hour
                             
-                            for trip_num in range(hour_trips):
-                                # Base time at even intervals
-                                base_time = hour_start + (trip_num * interval)
-                                # Add small random offset for more natural look
-                                jitter = np.random.randint(-30, 30)  # Half-second jitter
-                                timestamp = int(base_time + jitter)
-                                # Ensure timestamp stays within current hour
-                                timestamp = max(hour_start, min(hour_start + frames_per_hour - 1, timestamp))
-                                point_times.append(timestamp)
+                            # Distribute trips evenly within the hour
+                            for trip_idx in range(hour_trips):
+                                # Calculate base time for this trip
+                                trip_start = hour_start_frame + (trip_idx * frames_per_hour / hour_trips)
+                                # Add progress through the route
+                                timestamp = int(trip_start + (progress * frames_per_hour / 2))  # /2 for faster trips
                                 
-                                # Only count trips at their starting point
-                                if i == 0:
-                                    hourly_trip_counts[current_hour] += 1
-                                    
-                    timestamps.append(point_times)
+                                if timestamp >= 0 and timestamp < animation_duration:
+                                    point_times.append(timestamp)
+                                    hourly_trip_counts[hour_idx + 6] += 1  # +6 to offset to start at 6:00
+                    
+                    timestamps.append(sorted(point_times))
                 
                 trips_data.append({
                     'path': [[float(x), float(y)] for x, y in coords],
@@ -170,11 +164,10 @@ def load_trip_data():
         # Log hourly trip statistics
         logger.info("\nHourly Trip Distribution:")
         logger.info("-" * 40)
-        total_instances = 0
-        for hour in range(6, 24):
+        total_instances = sum(hourly_trip_counts.values())
+        for hour in range(6, 23):
             count = hourly_trip_counts[hour]
-            total_instances += count
-            percentage = (count / sum(hourly_trip_counts.values()) * 100) if count > 0 else 0
+            percentage = (count / total_instances * 100) if total_instances > 0 else 0
             logger.info(f"{hour:02d}:00 - {count:5d} trips ({percentage:5.1f}%)")
         logger.info("-" * 40)
         logger.info(f"Total trip instances: {total_instances:,}")
@@ -288,8 +281,8 @@ def create_animation(html_template):
         'loopLength': animation_duration,
         'mapbox_api_key': MAPBOX_API_KEY,
         'start_hour': 6,
-        'end_hour': 23,  # Updated end hour to 23
-        'frames_per_hour': int(animation_duration / 18)  # 18 hours from 6:00-23:00
+        'end_hour': 22,  # Updated end hour to 22
+        'frames_per_hour': int(animation_duration / 18)  # 18 hours from 6:00-22:00
     }
     
     try:
@@ -297,7 +290,7 @@ def create_animation(html_template):
         formatted_html = html_template % format_values
         
         # Write to file
-        output_path = os.path.join(OUTPUT_DIR, "trip_line_animation.html")
+        output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
         with open(output_path, 'w') as f:
             f.write(formatted_html)
             

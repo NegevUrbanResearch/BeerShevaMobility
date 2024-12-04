@@ -340,11 +340,16 @@ HTML_TEMPLATE = """
                                     data: TRIPS_DATA,
                                     getPath: d => d.path,
                                     getTimestamps: d => {
-                                        const validTimes = d.timestamps[0].filter(t => 
-                                            t <= currentFrame && 
-                                            t > currentFrame - trailLength
-                                        );
-                                        return validTimes.length > 0 ? [validTimes[0]] : [null];
+                                        const currentFrame = time % ANIMATION_DURATION;
+                                        // Ensure smooth transition between points
+                                        return d.timestamps.map((pointTimes, i) => {
+                                            const validTimes = pointTimes.filter(t => 
+                                                t <= currentFrame && 
+                                                t > currentFrame - trailLength
+                                            );
+                                            // Use the most recent valid timestamp
+                                            return validTimes.length > 0 ? Math.max(...validTimes) : null;
+                                        });
                                     },
                                     getColor: d => getPathColor(d.path),
                                     opacity: 0.8,
@@ -352,9 +357,10 @@ HTML_TEMPLATE = """
                                     jointRounded: true,
                                     capRounded: true,
                                     trailLength,
-                                    currentTime: currentFrame,
+                                    fadeTrail: true,  // Add smooth fade effect
+                                    currentTime: time % ANIMATION_DURATION,
                                     updateTriggers: {
-                                        getTimestamps: [currentFrame, trailLength]
+                                        getTimestamps: [time, trailLength]
                                     }
                                 }),
                                 new deck.PolygonLayer({
