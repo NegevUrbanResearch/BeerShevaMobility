@@ -123,30 +123,36 @@ def load_trip_data():
                 
                 processed_trips += num_trips
                 
-                # Generate timestamps for each point in the path
+                # New approach: Create continuous flows of trips
                 timestamps = []
                 for i in range(trip_duration):
                     point_times = []
+                    progress = i / (trip_duration - 1)  # Progress along route (0 to 1)
                     
-                    # Calculate progress through the route (0 to 1)
-                    progress = i / (trip_duration - 1)
-                    
-                    # Distribute trips across hours based on temporal distribution
+                    # For each hour in the distribution
                     for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
                         if hour_fraction > 0:
                             hour_trips = int(round(num_trips * hour_fraction))
-                            hour_start_frame = hour_idx * frames_per_hour
+                            hour_start = hour_idx * frames_per_hour
                             
-                            # Distribute trips evenly within the hour
+                            # Create a continuous stream of trips throughout the hour
                             for trip_idx in range(hour_trips):
-                                # Calculate base time for this trip
-                                trip_start = hour_start_frame + (trip_idx * frames_per_hour / hour_trips)
-                                # Add progress through the route
-                                timestamp = int(trip_start + (progress * frames_per_hour / 2))  # /2 for faster trips
+                                # Spread trips evenly across the hour
+                                phase_shift = (trip_idx * frames_per_hour) / hour_trips
+                                # Add some randomness to prevent all trips starting at exactly the same time
+                                jitter = np.random.randint(-30, 30)
+                                
+                                # Base timestamp for this trip
+                                base_time = hour_start + phase_shift + jitter
+                                
+                                # Calculate timestamp for this point along the route
+                                # Make sure trips take consistent time to complete
+                                trip_duration_frames = frames_per_hour / 4  # Each trip takes 15 minutes
+                                timestamp = int(base_time + (progress * trip_duration_frames))
                                 
                                 if timestamp >= 0 and timestamp < animation_duration:
                                     point_times.append(timestamp)
-                                    hourly_trip_counts[hour_idx + 6] += 1  # +6 to offset to start at 6:00
+                                    hourly_trip_counts[hour_idx + 6] += 1
                     
                     timestamps.append(sorted(point_times))
                 

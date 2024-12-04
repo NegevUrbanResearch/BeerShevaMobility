@@ -340,14 +340,14 @@ HTML_TEMPLATE = """
                                     data: TRIPS_DATA,
                                     getPath: d => d.path,
                                     getTimestamps: d => {
-                                        const currentFrame = time % ANIMATION_DURATION;
-                                        // Ensure smooth transition between points
+                                        const currentTime = time % ANIMATION_DURATION;
                                         return d.timestamps.map((pointTimes, i) => {
+                                            // Find all valid timestamps for this point
                                             const validTimes = pointTimes.filter(t => 
-                                                t <= currentFrame && 
-                                                t > currentFrame - trailLength
+                                                t <= currentTime && 
+                                                t > currentTime - trailLength * 60  // Longer trail for smoother animation
                                             );
-                                            // Use the most recent valid timestamp
+                                            // Return the most recent valid timestamp
                                             return validTimes.length > 0 ? Math.max(...validTimes) : null;
                                         });
                                     },
@@ -356,8 +356,8 @@ HTML_TEMPLATE = """
                                     widthMinPixels: 2,
                                     jointRounded: true,
                                     capRounded: true,
-                                    trailLength,
-                                    fadeTrail: true,  // Add smooth fade effect
+                                    trailLength: trailLength * 60,  // Increase trail length for smoother animation
+                                    fadeTrail: true,
                                     currentTime: time % ANIMATION_DURATION,
                                     updateTriggers: {
                                         getTimestamps: [time, trailLength]
