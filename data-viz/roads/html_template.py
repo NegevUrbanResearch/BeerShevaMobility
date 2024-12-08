@@ -79,7 +79,7 @@ HTML_TEMPLATE = """
                 Total Daily Trips: %(total_trips)d<br>
                 Current simulation time: <span id="current-time">06:00</span><br>
                 <div class="trip-counters">
-                    Cumulative Trips:<br>
+                    Cumulative Trips (Updated Hourly):<br>
                     <div class="counter-row">
                         <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
                         BGU: <span id="bgu-counter">0</span>
@@ -96,9 +96,8 @@ HTML_TEMPLATE = """
             </p>
         </div>
         <script>
-            // Wait for DOM to be fully loaded
             document.addEventListener('DOMContentLoaded', function() {
-                // Constants (remain the same)
+                // Constants
                 const TRIPS_DATA = %(trips_data)s;
                 const BUILDINGS_DATA = %(buildings_data)s;
                 const POI_BORDERS = %(poi_borders)s;
@@ -117,13 +116,13 @@ HTML_TEMPLATE = """
                     'Soroka Hospital': [170, 0, 255]
                 };
                 
-                // Animation constants (remain the same)
+                // Animation constants
                 const START_HOUR = 6;
                 const END_HOUR = 22;
                 const HOURS_PER_DAY = END_HOUR - START_HOUR;
                 const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
                 
-                // Lighting setup (remains the same)
+                // Lighting setup
                 const ambientLight = new deck.AmbientLight({
                     color: [255, 255, 255],
                     intensity: 1.0
@@ -142,9 +141,32 @@ HTML_TEMPLATE = """
                 let animationSpeed = 2.5;
                 let animation;
                 let cachedActiveTrips = null;
-                let lastProcessedFrame = -1;
+                let lastHour = -1;
                 
-                // Initial view setup (remains the same)
+                // Counter state
+                let cumulativeCounts = {
+                    'BGU': 0,
+                    'Gav Yam': 0,
+                    'Soroka Hospital': 0
+                };
+
+                // Pre-calculate hourly trip totals
+                let hourlyTripTotals = Array(HOURS_PER_DAY).fill(null).map(() => ({
+                    'BGU': 0,
+                    'Gav Yam': 0,
+                    'Soroka Hospital': 0
+                }));
+
+                TRIPS_DATA.forEach(trip => {
+                    if (trip.poi) {
+                        const hour = Math.floor(trip.startTime / FRAMES_PER_HOUR);
+                        if (hour >= 0 && hour < HOURS_PER_DAY) {
+                            hourlyTripTotals[hour][trip.poi] += trip.numTrips;
+                        }
+                    }
+                });
+                
+                // Initial view setup
                 const INITIAL_VIEW_STATE = {
                     longitude: 34.8113,
                     latitude: 31.2627,
@@ -155,17 +177,12 @@ HTML_TEMPLATE = """
                 
                 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
                 
-                // Initialize deck.gl (remains the same)
                 const deckgl = new deck.DeckGL({
                     container: 'container',
                     mapStyle: MAP_STYLE,
                     initialViewState: INITIAL_VIEW_STATE,
                     controller: true,
-                    effects: [lightingEffect],
-                    parameters: {
-                        premultipliedAlpha: false,
-                        blend: true
-                    }
+                    effects: [lightingEffect]
                 });
                 
                 function formatTimeString(frame) {
@@ -179,10 +196,33 @@ HTML_TEMPLATE = """
                     if (poi && POI_COLORS[poi]) {
                         return POI_COLORS[poi];
                     }
-                    return [253, 128, 93]; // Default color for undefined destinations
+                    return [253, 128, 93];
                 }
 
                 function processTrips(currentFrame) {
+                    // Calculate current hour
+                    const currentHour = Math.floor(currentFrame / FRAMES_PER_HOUR);
+                    
+                    // Reset counters if we've gone back to the start
+                    if (currentHour < lastHour) {
+                        console.log('Day reset detected - Resetting counters');
+                        cumulativeCounts = {
+                            'BGU': 0,
+                            'Gav Yam': 0,
+                            'Soroka Hospital': 0
+                        };
+                    } else if (currentHour > lastHour) {
+                        // Add hourly totals to cumulative counts
+                        Object.keys(cumulativeCounts).forEach(poi => {
+                            if (lastHour >= 0 && lastHour < hourlyTripTotals.length) {
+                                cumulativeCounts[poi] += hourlyTripTotals[lastHour][poi];
+                                console.log(`Hour ${lastHour + START_HOUR}: Added ${hourlyTripTotals[lastHour][poi]} trips to ${poi}`);
+                            }
+                        });
+                    }
+                    lastHour = currentHour;
+
+                    // Process active trips
                     return TRIPS_DATA.map(route => {
                         const elapsedTime = (currentFrame - route.startTime) % ANIMATION_DURATION;
                         if (elapsedTime < 0 || elapsedTime > route.duration) {
@@ -202,13 +242,21 @@ HTML_TEMPLATE = """
                     }).filter(Boolean);
                 }
 
+                function updateCounters() {
+                    // Update counter displays
+                    Object.entries(cumulativeCounts).forEach(([poi, count]) => {
+                        const id = poi.toLowerCase()
+                                    .replace(/\\s+/g, '-')
+                                    .replace(/[^a-z0-9-]/g, '')
+                                    + '-counter';
+                        const element = document.getElementById(id);
+                        if (element) {
+                            element.textContent = Math.round(count).toLocaleString();
+                        }
+                    });
+                }
+
                 function animate() {
-                    let currentTripCounts = {
-                        'BGU': 0,
-                        'Gav Yam': 0,
-                        'Soroka Hospital': 0
-                    };
-                    
                     animation = popmotion.animate({
                         from: 0,
                         to: LOOP_LENGTH,
@@ -228,32 +276,9 @@ HTML_TEMPLATE = """
                                 : cachedActiveTrips;
                             cachedActiveTrips = activeTrips;
                             
-                            // Update trip counters less frequently
-                            if (currentFrame % 30 === 0) {
-                                currentTripCounts = {
-                                    'BGU': 0,
-                                    'Gav Yam': 0,
-                                    'Soroka Hospital': 0
-                                };
-                                
-                                activeTrips.forEach(trip => {
-                                    if (trip.poi) {
-                                        currentTripCounts[trip.poi] += trip.numTrips;
-                                    }
-                                });
-                                
-                                // Update counter displays
-                                Object.entries(currentTripCounts).forEach(([poi, count]) => {
-                                    const id = poi.toLowerCase()
-                                                    .replace(/\\s+/g, '-')
-                                                    .replace(/[^a-z0-9-]/g, '')  // Remove special characters
-                                                    + '-counter';
-                                    document.getElementById(id).textContent = 
-                                        Math.round(count).toLocaleString();
-                                });
-                            }
+                            // Update counters
+                            updateCounters();
                             
-                            // Update deck.gl layers
                             const layers = [
                                 new deck.PolygonLayer({
                                     id: 'buildings',
@@ -327,7 +352,7 @@ HTML_TEMPLATE = """
 
                 // Initialize animation
                 animate();
-            }); // Close DOMContentLoaded
+            });
         </script>
     </body>
     </html>
