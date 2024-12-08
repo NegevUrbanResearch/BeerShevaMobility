@@ -65,9 +65,11 @@ def load_temporal_distributions():
             raise
             
     return distributions
+        
+
 
 def load_trip_data():
-    """Load and process trip data for animation with temporal distribution"""
+    """Load and process trip data with optimized timing distribution"""
     file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
     logger.info(f"Loading trip data from: {file_path}")
     
@@ -85,29 +87,26 @@ def load_trip_data():
         center_lat = (total_bounds[1] + total_bounds[3]) / 2
         
         # Animation parameters
-        frames_per_second = 60
-        minutes_per_simulated_hour = 10
+        frames_per_second = 30
+        minutes_per_simulated_hour = 60
         hours_per_day = 16  # 6:00-22:00
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
         
         logger.info(f"Animation Configuration:")
         logger.info(f"  - Hours simulated: {hours_per_day} (6:00-22:00)")
-        logger.info(f"  - Seconds per hour: {minutes_per_simulated_hour}")
         logger.info(f"  - Frames per hour: {frames_per_hour}")
         logger.info(f"  - Total frames: {animation_duration}")
         
-        trips_data = []
+        routes_data = []
         processed_trips = 0
-        hourly_trip_counts = {i: 0 for i in range(6, 23)}  # Track trips per hour (6:00-22:00)
         
         for idx, row in trips_gdf.iterrows():
             try:
                 coords = list(row.geometry.coords)
-                trip_duration = len(coords)
                 num_trips = int(row['num_trips'])
                 
-                if num_trips <= 0 or trip_duration < 2:
+                if num_trips <= 0 or len(coords) < 2:
                     continue
                 
                 # Determine POI for this route
@@ -122,76 +121,45 @@ def load_trip_data():
                     continue
                 
                 processed_trips += num_trips
+                path = [[float(x), float(y)] for x, y in coords]
                 
-                # Calculate exact number of trips for each hour - DO THIS ONLY ONCE PER TRIP
-                hour_trips = {}
+                # Instead of creating individual trips, create route patterns
                 for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
-                    # Round to nearest integer while preserving total
-                    hour_trips[hour_idx] = round(num_trips * hour_fraction)
-                
-                # Ensure the sum matches the original number of trips
-                total_distributed = sum(hour_trips.values())
-                if total_distributed != num_trips:
-                    max_hour = max(hour_trips.items(), key=lambda x: x[1])[0]
-                    hour_trips[max_hour] += (num_trips - total_distributed)
-                
-                # Create timestamps array for each point in the path
-                timestamps = []
-                for i in range(trip_duration):
-                    point_times = []
-                    progress = i / (trip_duration - 1)
+                    hour_trips = round(num_trips * hour_fraction)
+                    if hour_trips <= 0:
+                        continue
                     
-                    # Create timestamps for each hour's trips
-                    for hour_idx, hour_count in hour_trips.items():
-                        if hour_count > 0:
-                            hour_start = hour_idx * frames_per_hour
-                            
-                            for trip_idx in range(hour_count):
-                                # Spread trips evenly across the hour
-                                phase_shift = (trip_idx * frames_per_hour) / hour_count
-                                jitter = np.random.randint(-15, 15)
-                                
-                                base_time = hour_start + phase_shift + jitter
-                                trip_duration_frames = frames_per_hour / 8
-                                timestamp = int(base_time + (progress * trip_duration_frames))
-                                
-                                if timestamp >= 0 and timestamp < animation_duration:
-                                    point_times.append(timestamp)
-                                    # Only count each trip once, at its starting point
-                                    if i == 0:  # Only count at the first point of the path
-                                        hourly_trip_counts[hour_idx + 6] += 1
-                
-                    timestamps.append(sorted(point_times))
-                
-                trips_data.append({
-                    'path': [[float(x), float(y)] for x, y in coords],
-                    'timestamps': timestamps,
-                    'num_trips': num_trips,
-                    'poi': poi_name
-                })
+                    # Create a few staggered patterns per hour instead of individual trips
+                    num_patterns = min(5, max(1, hour_trips // 100))  # Scale patterns based on volume
+                    trips_per_pattern = hour_trips / num_patterns
+                    
+                    for pattern in range(num_patterns):
+                        # Add some randomness to start time within the hour
+                        start_offset = (pattern / num_patterns) * frames_per_hour + np.random.randint(-30, 30)
+                        start_time = hour_idx * frames_per_hour + start_offset
+                        
+                        routes_data.append({
+                            'path': path,
+                            'startTime': int(start_time),
+                            'numTrips': trips_per_pattern,
+                            'duration': len(coords) * 2,  # Base duration on path length
+                            'poi': poi_name
+                        })
                 
             except Exception as e:
-                logger.error(f"Error processing trip {idx}: {str(e)}")
+                logger.error(f"Error processing route {idx}: {str(e)}")
                 continue
         
-        # Log hourly trip statistics
-        logger.info("\nHourly Trip Distribution:")
-        logger.info("-" * 40)
-        total_instances = sum(hourly_trip_counts.values())
-        for hour in range(6, 23):
-            count = hourly_trip_counts[hour]
-            percentage = (count / total_instances * 100) if total_instances > 0 else 0
-            logger.info(f"{hour:02d}:00 - {count:5d} trips ({percentage:5.1f}%)")
-        logger.info("-" * 40)
-        logger.info(f"Total trip instances: {total_instances:,}")
+        logger.info(f"Created {len(routes_data)} route patterns")
         logger.info(f"Original trips processed: {processed_trips:,}")
-        logger.info(f"Average instances per original trip: {total_instances/processed_trips:.1f}")
         
-        return trips_data, center_lat, center_lon, processed_trips, animation_duration
+        return routes_data, center_lat, center_lon, raw_trip_count, animation_duration
         
     except Exception as e:
         logger.error(f"Error loading trip data: {str(e)}")
         raise
+        
+    
 
 
 def load_building_data():
@@ -275,7 +243,12 @@ def load_building_data():
         logger.error(f"Error loading building data: {str(e)}")
         raise
 
-# Update the create_animation function to handle the new return values
+
+
+
+
+
+# Update the create_animation function to match parameter names
 def create_animation(html_template):
     trips_data, center_lat, center_lon, total_trips, animation_duration = load_trip_data()
     buildings_data, text_features, poi_borders, poi_fills = load_building_data()
@@ -307,7 +280,7 @@ def create_animation(html_template):
         formatted_html = html_template % format_values
         
         # Write to file
-        output_path = os.path.join(OUTPUT_DIR, "trip_animation.html")
+        output_path = os.path.join(OUTPUT_DIR, "trip_animation_time.html")
         with open(output_path, 'w') as f:
             f.write(formatted_html)
             
