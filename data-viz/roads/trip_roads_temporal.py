@@ -11,7 +11,7 @@ from config import BUILDINGS_FILE
 from shapely.geometry import Point
 from pyproj import Transformer
 import re
-import html_template
+import trip_html_template
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -298,7 +298,7 @@ def create_animation(html_template):
         
 if __name__ == "__main__":
     try:
-        output_file = create_animation(html_template.HTML_TEMPLATE)
+        output_file = create_animation(trip_html_template.HTML_TEMPLATE)
         print(f"Animation saved to: {output_file}")
     except Exception as e:
         logger.error(f"Failed to create animation: {str(e)}")
