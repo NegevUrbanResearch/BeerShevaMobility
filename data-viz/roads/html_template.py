@@ -81,15 +81,15 @@ HTML_TEMPLATE = """
                 <div class="trip-counters">
                     Cumulative Trips:<br>
                     <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 240, 80); vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
                         BGU: <span id="bgu-counter">0</span>
                     </div>
                     <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(80, 200, 255); vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span>
                         Gav Yam: <span id="gav-yam-counter">0</span>
                     </div>
                     <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(220, 220, 220); vertical-align: middle;"></span>
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
                         Soroka: <span id="soroka-hospital-counter">0</span>
                     </div>
                 </div>
@@ -109,6 +109,13 @@ HTML_TEMPLATE = """
                 const SOROKA_INFO = %(soroka_info)s;
                 const ANIMATION_DURATION = %(animation_duration)d;
                 const LOOP_LENGTH = %(loopLength)d;
+                
+                // POI Colors
+                const POI_COLORS = {
+                    'BGU': [0, 255, 90],
+                    'Gav Yam': [0, 191, 255],
+                    'Soroka Hospital': [170, 0, 255]
+                };
                 
                 // Animation constants (remain the same)
                 const START_HOUR = 6;
@@ -168,19 +175,11 @@ HTML_TEMPLATE = """
                     return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
                 }
                 
-                function getPathColor(path) {
-                    const endPoint = path[path.length - 1];
-                    const isNearPOI = (point, poi) => {
-                        const dx = point[0] - poi.lon;
-                        const dy = point[1] - poi.lat;
-                        return Math.sqrt(dx*dx + dy*dy) <= POI_RADIUS;
-                    };
-                    
-                    if (isNearPOI(endPoint, BGU_INFO)) return [80, 240, 80];
-                    if (isNearPOI(endPoint, GAV_YAM_INFO)) return [80, 200, 255];
-                    if (isNearPOI(endPoint, SOROKA_INFO)) return [220, 220, 220];
-                    
-                    return [253, 128, 93];
+                function getPathColor(path, poi) {
+                    if (poi && POI_COLORS[poi]) {
+                        return POI_COLORS[poi];
+                    }
+                    return [253, 128, 93]; // Default color for undefined destinations
                 }
 
                 function processTrips(currentFrame) {
@@ -279,7 +278,7 @@ HTML_TEMPLATE = """
                                     data: activeTrips,
                                     getPath: d => d.path,
                                     getTimestamps: d => d.timestamps,
-                                    getColor: d => getPathColor(d.path),
+                                    getColor: d => getPathColor(d.path, d.poi),
                                     opacity: 0.8,
                                     widthMinPixels: 2,
                                     rounded: true,
@@ -333,7 +332,6 @@ HTML_TEMPLATE = """
     </body>
     </html>
 """
-
 
 # Fix JavaScript modulo operations
 HTML_TEMPLATE = re.sub(
