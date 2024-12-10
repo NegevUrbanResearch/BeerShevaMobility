@@ -1,58 +1,58 @@
 # Beer Sheva Mobility Analysis
 
-This repository contains two main components for analyzing mobility data in Beer Sheva:
+A comprehensive mobility data analysis and visualization platform for Beer Sheva, focusing on Points of Interest (POIs) and travel patterns.
 
+## Project Components
 
-1) POI Maps (@POI-Maps): Mapping analysis tools for Points of Interest.
-2) Dashboard (@Dashboard): An interactive web dashboard for visualizing mobility patterns.
-
-## Dataset
-
-The analysis is based on a comprehensive mobility dataset for Beer Sheva prepared by PGL Transportation Engineering and Planning Ltd. and collected by Decell. Key features include:
-
-- Time period: November 2019 to February 2020, with additional data from July 2021
-- Coverage: Hundreds of thousands of unique users aged 18+
-- Scope: 13 Points of Interest (POIs) in Beer Sheva
-- Data points: Origin, Destination, Purpose, Mode, Travel Time, Entry/Exit time from POIs, Frequency
-
-The dataset is proprietary and not included in this repository.
-
-## POI Maps (@POI-Maps)
-
-This component focuses on saving local maps and analysis of specific Points of Interest in Beer Sheva.
-
-### Key Features:
+### 1. POI Maps (@POI-Maps)
+Tools for analyzing and visualizing specific Points of Interest:
 - Geospatial analysis of POIs
-- Visualization of trip patterns around specific locations
+- Static maps of trip patterns
+- Inbound/outbound trip visualization
 
-## Dashboard (@Dashboard)
-
-The dashboard provides an interactive web interface for comparing patterns for different points of interest in Beer Sheva.
-
-### Key Features:
+### 2. Interactive Dashboard (@Dashboard)
+Web interface for exploring mobility data:
 - Interactive maps showing trip distributions
 - Charts for visualizing trip modes, purposes, and frequencies
 - Time-based analysis of trip patterns
 
-## Deployment Setup Instructions
+### 3. Advanced Visualizations (@roads)
+Dynamic visualizations of mobility patterns:
+- Animated trip flows
+- Walking route analysis
+- Road usage heatmaps
+- Temporal distribution analysis
+- Building-level visualizations
 
-1. Ensure Docker is installed on your machine.
+## Dataset
 
-2. Place the required data files in the `data` folder:
-   - `All-Stages.xlsx`
-   - `statisticalareas_demography2019.gdb`
-   - `poi_with_exact_coordinates.csv`
+The analysis uses mobility data for Beer Sheva prepared by PGL Transportation Engineering and Planning Ltd. and collected by Decell:
 
-3. Open a terminal and navigate to the Dashboard folder.
+- **Time Period**: November 2019 - February 2020, July 2021
+- **Coverage**: Hundreds of thousands of unique users (18+)
+- **Scope**: 13 Points of Interest
+- **Data Points**: 
+  - Origin/Destination
+  - Trip Purpose
+  - Travel Mode
+  - Travel Time
+  - Entry/Exit times
+  - Trip Frequency
 
-4. Build the Docker image:
-   ```
-   docker build -t beer-sheva-dashboard .
-   ```
+## Required Data Sources
 
-5. Run the Docker container:
-   ```
-   docker run -p 8050:8050 beer-sheva-dashboard
-   ```
+1. Trip Data:
+   - Excel files containing trip data (Proprietary)
+   - Statistical area spatial data (GDB format)
+   - POI coordinates (CSV from Google Maps API)
 
-6. Open a web browser and go to `http://localhost:8050/` to view the dashboard.
+2. Spatial Data:
+   - Building footprints (OpenStreetMap)
+   - Road network data (OTP model built locally)
+   - Statistical area boundaries
+
+
+
+## Note on Data Privacy
+
+This project uses sensitive mobility data. Raw data files are not included in the repository. Ensure you have necessary permissions before using or sharing any data.
