@@ -49,36 +49,6 @@ def load_temporal_distributions():
     
     return distributions
 
-def interpolate_color(t):
-    """Enhanced color interpolation with cube root scaling"""
-    t = np.cbrt(t)  # Apply cube root scaling for better distribution
-    
-    colors = {
-        0.0: [20, 42, 120],   # Dark blue
-        0.2: [40, 80, 180],   # Medium blue
-        0.4: [65, 182, 196],  # Light blue
-        0.6: [120, 200, 150], # Blue-green
-        0.8: [200, 220, 100], # Yellow-green
-        1.0: [255, 255, 0]    # Bright yellow
-    }
-    
-    lower_t = max([k for k in colors.keys() if k <= t])
-    upper_t = min([k for k in colors.keys() if k >= t])
-    
-    ratio = (t - lower_t) / (upper_t - lower_t) if upper_t != lower_t else 0
-    brightness = 0.85  # Slightly brighter than original
-    
-    c1 = colors[lower_t]
-    c2 = colors[upper_t]
-    
-    rgb = [
-        min(255, int((c1[0] + (c2[0] - c1[0]) * ratio) * brightness)),
-        min(255, int((c1[1] + (c2[1] - c1[1]) * ratio) * brightness)),
-        min(255, int((c1[2] + (c2[2] - c1[2]) * ratio) * brightness))
-    ]
-    
-    return rgb + [200]  # Fixed opacity for better visibility
-
 def load_poi_data():
     """Load POI polygon data"""
     attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
@@ -115,54 +85,115 @@ def create_hourly_segment_data(trips_data, hour, temporal_dist, poi_polygons):
     
     return segments
 
-def create_line_features(segments):
-    """Convert segments to deck.gl line features"""
-    features = []
-    if not segments:
-        return features
-        
-    max_trips = max(segments.values())
+
+def calculate_global_statistics(all_segments):
+    """Calculate global statistics for consistent color scaling"""
+    all_trips = []
+    for hour_segments in all_segments.values():
+        all_trips.extend(hour_segments.values())
     
-    for (start, end), trips in segments.items():
-        trip_ratio = trips / max_trips
-        color = interpolate_color(trip_ratio)
-        
-        features.append({
-            "start": [start[0], start[1], 5],
-            "end": [end[0], end[1], 5],
-            "trips": int(trips),
-            "color": color
-        })
+    all_trips = np.array(all_trips)
+    global_mean = np.mean(all_trips)
+    global_std = np.std(all_trips)
+    global_max = np.max(all_trips)
     
-    return features
+    # Create logarithmic bins
+    lower_bins = np.logspace(0, np.log10(global_mean), num=5)
+    upper_bins = np.logspace(np.log10(global_mean), np.log10(global_max), num=3)
+    bins = np.unique(np.concatenate([lower_bins, upper_bins]))
+    
+    return global_mean, global_std, global_max, bins
+
+def get_color_for_value(value, global_stats):
+    """Get color for a value based on global statistics"""
+    global_mean, global_std, global_max, bins = global_stats
+    
+    # Color scale definition
+    colors = {
+        0.0: [10, 20, 90],     # Dark blue for very low values
+        0.2: [65, 105, 225],   # Royal blue for low values
+        0.4: [30, 144, 255],   # Dodger blue for below average
+        0.6: [0, 191, 255],    # Deep sky blue for average
+        0.8: [255, 215, 0],    # Gold for high values
+        1.0: [255, 69, 0]      # Red-orange for very high values
+    }
+    
+    # Find which bin the value falls into
+    bin_index = np.digitize(value, bins) - 1
+    position = bin_index / (len(bins) - 1)
+    
+    # Apply sigmoid transformation for better contrast
+    position = 1 / (1 + np.exp(-4 * (position - 0.5)))
+    
+    # Get color positions
+    color_positions = sorted(colors.keys())
+    
+    # Find appropriate color interval
+    for i in range(len(color_positions) - 1):
+        if position <= color_positions[i + 1]:
+            lower_pos = color_positions[i]
+            upper_pos = color_positions[i + 1]
+            lower_color = colors[lower_pos]
+            upper_color = colors[upper_pos]
+            
+            # Interpolate color
+            factor = (position - lower_pos) / (upper_pos - lower_pos)
+            color = [
+                int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor),
+                int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor),
+                int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+            ]
+            
+            return color + [200]  # Add alpha channel
+    
+    return colors[1.0] + [200]
 
 def create_line_layer(trips_data, bounds):
-    """Create visualization data for all hours"""
+    """Create visualization data for all hours with enhanced color scaling"""
     print("\nProcessing temporal line data...")
     
-    # Load POI data
+    # Load POI data and temporal distributions
     poi_polygons = load_poi_data()
-    
-    # Load temporal distributions
     temporal_dist = load_temporal_distributions()
-    all_line_data = {}
-    max_trips_per_hour = {}
+    
+    # First pass: collect all segment data
+    all_segments = {}
     total_trips = trips_data['num_trips'].sum()
     
-    # Process each hour
     for hour in range(6, 23):
-        print(f"\nProcessing hour {hour:02d}:00...")
+        print(f"\nCollecting data for hour {hour:02d}:00...")
         segments = create_hourly_segment_data(trips_data, hour, temporal_dist, poi_polygons)
-        
         if segments:
-            hour_trips = sum(segments.values())
-            max_trips_per_hour[hour] = max(segments.values())
-            
-            line_features = create_line_features(segments)
-            all_line_data[str(hour)] = line_features
-            print(f"Hour {hour:02d}:00 - Generated {len(line_features)} segments with {hour_trips:.0f} trips")
+            all_segments[hour] = segments
     
-    # Create initial view state
+    # Calculate global statistics for consistent color scaling
+    global_stats = calculate_global_statistics(all_segments)
+    
+    # Second pass: create features with consistent color scaling
+    all_line_data = {}
+    max_trips_per_hour = {}
+    
+    for hour, segments in all_segments.items():
+        print(f"Processing visualization for hour {hour:02d}:00...")
+        features = []
+        
+        hour_trips = sum(segments.values())
+        max_trips_per_hour[hour] = max(segments.values())
+        
+        for (start, end), trips in segments.items():
+            color = get_color_for_value(trips, global_stats)
+            
+            features.append({
+                "start": [start[0], start[1], 5],
+                "end": [end[0], end[1], 5],
+                "trips": int(trips),
+                "color": color
+            })
+        
+        all_line_data[str(hour)] = features
+        print(f"Hour {hour:02d}:00 - Generated {len(features)} segments with {hour_trips:.0f} trips")
+    
+    # Create initial view state and building layers
     initial_view_state = {
         'latitude': (bounds[1] + bounds[3]) / 2,
         'longitude': (bounds[0] + bounds[2]) / 2,
@@ -171,8 +202,16 @@ def create_line_layer(trips_data, bounds):
         'bearing': 0
     }
     
-    # Create building layers
     building_layers = create_building_layer(bounds)
+    
+    # Prepare color scale information for legend
+    global_mean, global_std, global_max, bins = global_stats
+    color_scale_info = {
+        'min_value': int(bins[0]),
+        'mean_value': int(global_mean),
+        'max_value': int(global_max),
+        'bin_edges': [int(b) for b in bins]
+    }
     
     # Prepare template data
     template_data = {
@@ -186,7 +225,8 @@ def create_line_layer(trips_data, bounds):
                 'max_trips': max_trips_per_hour.get(hour, 0)
             } for hour, data in all_line_data.items()
         },
-        'building_layers': building_layers
+        'building_layers': building_layers,
+        'color_scale': color_scale_info
     }
     
     return template_data
