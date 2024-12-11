@@ -57,6 +57,16 @@ HTML_TEMPLATE = """
                 align-items: center;
                 gap: 8px;
             }
+            .map-attribution {
+                position: absolute;
+                bottom: 0;
+                right: 0;
+                background: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 5px;
+                font-size: 12px;
+                z-index: 1000;
+            }
         </style>
     </head>
     <body>
@@ -94,6 +104,10 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
             </p>
+        </div>
+        <div class="map-attribution">
+            © <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a>
+            © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>
         </div>
         <script>
             document.addEventListener('DOMContentLoaded', function() {
@@ -175,7 +189,7 @@ HTML_TEMPLATE = """
                     bearing: 0
                 };
                 
-                const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json';
+                const MAP_STYLE = '%(map_style)s';
                 
                 const deckgl = new deck.DeckGL({
                     container: 'container',

@@ -1,4 +1,3 @@
-import pydeck as pdk
 import pandas as pd
 import geopandas as gpd
 import numpy as np
@@ -249,12 +248,11 @@ def load_building_data():
 
 
 # Update the create_animation function to match parameter names
-def create_animation(html_template):
+def create_animation(html_template, map_style, output_suffix):
     trips_data, center_lat, center_lon, total_trips, animation_duration = load_trip_data()
     buildings_data, text_features, poi_borders, poi_fills = load_building_data()
     
-    # Calculate frames per hour based on animation duration and time range
-    hours_simulated = 16  # 6:00-22:00
+    hours_simulated = 16
     frames_per_hour = animation_duration // hours_simulated
     
     format_values = {
@@ -272,34 +270,65 @@ def create_animation(html_template):
         'mapbox_api_key': MAPBOX_API_KEY,
         'start_hour': 6,
         'end_hour': 22,
-        'frames_per_hour': frames_per_hour
+        'frames_per_hour': frames_per_hour,
+        'map_style': map_style
     }
     
     try:
-        # Format the HTML
         formatted_html = html_template % format_values
-        
-        # Write to file
-        output_path = os.path.join(OUTPUT_DIR, "trip_animation_time.html")
+        output_path = os.path.join(OUTPUT_DIR, f"trip_animation_time_{output_suffix}.html")
         with open(output_path, 'w') as f:
             f.write(formatted_html)
-            
         logger.info(f"Animation saved to: {output_path}")
         return output_path
-        
     except Exception as e:
         logger.error(f"Error writing HTML file: {str(e)}")
-        # Show a small section of the template around each format specifier
-        for match in re.finditer(r'%\([^)]+\)[sdfg]', html_template):
-            start = max(0, match.start() - 20)
-            end = min(len(html_template), match.end() + 20)
-            logger.error(f"Context around format specifier: ...{html_template[start:end]}...")
         raise
-        
+
 if __name__ == "__main__":
     try:
-        output_file = create_animation(trip_html_template.HTML_TEMPLATE)
-        print(f"Animation saved to: {output_file}")
+        # Updated map styles with CORS support and place names
+        MAP_STYLES = {
+            'dark_matter': 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            'dark_nolabels': 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+            'positron': 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+            'voyager': 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+            'dark_all': 'https://api.maptiler.com/maps/night/style.json?key=GnqbOrn8e3f2dldaHF31',  # Dark with all labels
+            'toner': {
+                'style': 'https://api.maptiler.com/maps/toner/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'toner_dark': {
+                'style': 'https://api.maptiler.com/maps/toner-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'basic_dark': {
+                'style': 'https://api.maptiler.com/maps/basic-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'dataviz_dark': {
+                'style': 'https://api.maptiler.com/maps/dataviz-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            }
+        }
+        
+        # Generate an animation for each map style
+        for suffix, style_info in MAP_STYLES.items():
+            # Handle both simple string styles and dictionary style configs
+            if isinstance(style_info, dict):
+                map_style = style_info['style']
+            else:
+                map_style = style_info
+                
+            # Modify the HTML template to use the current map style
+            modified_template = trip_html_template.HTML_TEMPLATE.replace(
+                "MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json'",
+                f"MAP_STYLE = '{map_style}'"
+            )
+            
+            output_file = create_animation(modified_template, map_style, suffix)
+            print(f"Animation with {suffix} style saved to: {output_file}")
+            
     except Exception as e:
-        logger.error(f"Failed to create animation: {str(e)}")
+        logger.error(f"Failed to create animations: {str(e)}")
         sys.exit(1) 
