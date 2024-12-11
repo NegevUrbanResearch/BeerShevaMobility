@@ -1,21 +1,143 @@
-# otp_client.py
+# walking_route_modeler.py
+
+import pandas as pd
+import geopandas as gpd
 import requests
+import json
+from shapely.geometry import Point, LineString
+import numpy as np
 from datetime import datetime
 import time
-import polyline
-from shapely.geometry import Point, LineString
-import sys
+from tqdm import tqdm
 import os
+import polyline
+from rtree import index
+
+# Add these imports at the top
+import sys
+# Add parent directory to Python path to access data_loader
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
-from config import OUTPUT_DIR
+
+entrances_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+                                    "data/filtered-entrances/filtered_entrances.shp")
+
+class RouteSegmentManager:
+    def __init__(self, joining_threshold=10):  # threshold in meters
+        self.segments = []  # List of LineStrings
+        self.segment_data = []  # Metadata for each segment
+        self.spatial_index = index.Index()
+        self.joining_threshold = joining_threshold
+        
+    def _coord_to_meters(self, lat1, lon1, lat2, lon2):
+        """Calculate distance between points in meters"""
+        R = 6371000
+        dlat = np.radians(lat2 - lat1)
+        dlon = np.radians(lon2 - lon1)
+        a = (np.sin(dlat/2) * np.sin(dlat/2) +
+             np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) *
+             np.sin(dlon/2) * np.sin(dlon/2))
+        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+        return R * c
+
+    def _find_joining_point(self, route_points, existing_segment):
+        """Find where a new route joins an existing segment"""
+        min_dist = float('inf')
+        join_idx = None
+        segment_idx = None
+        
+        line = LineString(existing_segment)
+        
+        for i, point in enumerate(route_points):
+            # Project point onto line
+            proj_point = line.interpolate(line.project(Point(point)))
+            dist = self._coord_to_meters(
+                point[1], point[0],
+                proj_point.y, proj_point.x
+            )
+            
+            if dist < min_dist and dist <= self.joining_threshold:
+                min_dist = dist
+                join_idx = i
+                segment_idx = int(line.project(Point(point)) / line.length * (len(existing_segment) - 1))
+        
+        return join_idx, segment_idx if min_dist <= self.joining_threshold else (None, None)
+
+    def add_route(self, points, metadata):
+        """Add a new route, joining with existing segments where possible"""
+        route_coords = [(lon, lat) for lat, lon in points]
+        
+        # Check for existing segments to join with
+        best_join = None
+        best_segment_idx = None
+        best_existing_idx = None
+        
+        # Create bounds for spatial indexing
+        bounds = LineString(route_coords).bounds
+        
+        # Query spatial index for potential matches
+        potential_matches = list(self.spatial_index.intersection(bounds))
+        
+        for idx in potential_matches:
+            existing_segment = self.segments[idx]
+            join_idx, segment_idx = self._find_joining_point(route_coords, existing_segment)
+            
+            if join_idx is not None:
+                best_join = join_idx
+                best_segment_idx = segment_idx
+                best_existing_idx = idx
+                break
+        
+        if best_join is not None:
+            # Join routes
+            new_route = route_coords[:best_join + 1]
+            existing_segment = self.segments[best_existing_idx]
+            joined_route = new_route + existing_segment[best_segment_idx:]
+            
+            # Update metadata
+            combined_metadata = {
+                'trips': metadata['trips'] + self.segment_data[best_existing_idx]['trips'],
+                'origins': metadata.get('origins', []) + self.segment_data[best_existing_idx].get('origins', []),
+                'entrance': metadata['entrance']
+            }
+            
+            # Add joined route as new segment
+            self._add_segment(joined_route, combined_metadata)
+        else:
+            # Add as new independent segment
+            self._add_segment(route_coords, {
+                'trips': metadata['trips'],
+                'origins': [metadata.get('origin')],
+                'entrance': metadata['entrance']
+            })
+
+    def _add_segment(self, coords, metadata):
+        """Add a new segment to the collection"""
+        idx = len(self.segments)
+        self.segments.append(coords)
+        self.segment_data.append(metadata)
+        
+        # Add to spatial index
+        line = LineString(coords)
+        self.spatial_index.insert(idx, line.bounds)
+
+    def get_all_segments(self):
+        """Get all route segments with their metadata"""
+        return list(zip(self.segments, self.segment_data))
 
 class OTPClient:
     def __init__(self, base_url="http://localhost:8080/otp/routers/default"):
         self.base_url = base_url
+        self.route_cache = {}  # (origin_x, origin_y) -> route_data
+        self.segment_manager = RouteSegmentManager(joining_threshold=10)
         
-    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon):
-        """Query OTP for a walking route"""
+    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon, metadata=None):
+        """Get walking route, using cache and joining similar routes"""
+        # Check cache first
+        cache_key = (round(from_lon, 5), round(from_lat, 5))
+        if cache_key in self.route_cache:
+            return self.route_cache[cache_key]
+        
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
@@ -32,70 +154,84 @@ class OTPClient:
                 data = response.json()
                 if 'error' in data or 'plan' not in data:
                     return None
-                return data
-            return None
-        except Exception:
-            return None
-
-# entrance_manager.py
-import geopandas as gpd
-import numpy as np
-
-class EntranceManager:
-    def __init__(self, entrances_gdf):
-        self.entrances = entrances_gdf
-        if self.entrances.crs != "EPSG:4326":
-            self.entrances = self.entrances.to_crs("EPSG:4326")
-    
-    def get_entrances_for_poi(self, poi_name):
-        """Get all entrance points for a given POI"""
-        prefix = 'Hospital' if 'Soroka' in poi_name else 'Uni'
-        return self.entrances[self.entrances['Name'].str.startswith(prefix)]
-    
-    def find_best_entrance(self, point, entrances, otp_client):
-        """Find the closest entrance with a valid walking route"""
-        best_route = None
-        best_duration = float('inf')
-        best_entrance = None
-        
-        origin_lat, origin_lon = point.y, point.x
-        
-        for _, entrance in entrances.iterrows():
-            entrance_point = entrance.geometry
-            route_data = otp_client.get_walking_route(
-                origin_lat, 
-                origin_lon,
-                entrance_point.y,
-                entrance_point.x
-            )
-            
-            if route_data and 'plan' in route_data and route_data['plan']['itineraries']:
-                itinerary = route_data['plan']['itineraries'][0]
-                duration = itinerary['duration']
                 
-                if duration < best_duration:
-                    best_duration = duration
-                    best_route = route_data
-                    best_entrance = entrance
+                if 'plan' in data and data['plan']['itineraries']:
+                    itinerary = data['plan']['itineraries'][0]
+                    leg = itinerary['legs'][0]
+                    points = polyline.decode(leg['legGeometry']['points'])
                     
-            time.sleep(0.1)
-            
-        return best_entrance, best_route
+                    if metadata:
+                        self.segment_manager.add_route(points, metadata)
+                    
+                    self.route_cache[cache_key] = data
+                    return data
+                    
+            return None
+        except Exception as e:
+            print(f"Error getting route: {e}")
+            return None
 
-# trip_generator.py
-import pandas as pd
-from tqdm import tqdm
-from shapely.geometry import Point
-import numpy as np
-
-class TripGenerator:
-    def __init__(self, zones_gdf, otp_client, entrance_manager):
-        self.zones = zones_gdf
+class RouteModeler:
+    def __init__(self):
+        self.target_pois = ['Ben-Gurion-University', 'Soroka-Medical-Center']
+        self.otp_client = OTPClient()
+        self.load_data()
+    # Update the load_data method in the RouteModeler class:
+    def load_data(self):
+        """Load and process required data"""
+        loader = DataLoader()
+        
+        self.zones = loader.load_zones()
         if self.zones.crs != "EPSG:4326":
             self.zones = self.zones.to_crs("EPSG:4326")
-        self.otp_client = otp_client
-        self.entrance_manager = entrance_manager
+            
+        self.poi_df = loader.load_poi_data()
+        self.trip_data = loader.load_trip_data()
         
+        # Load entrances
+        self.entrances = gpd.read_file(entrances_path)
+        if self.entrances.crs != "EPSG:4326":
+            self.entrances = self.entrances.to_crs("EPSG:4326")
+        
+        # Process trip data like in the original
+        self.processed_trips = {}
+        self.poi_df, self.trip_data = loader.clean_poi_names(self.poi_df, self.trip_data)
+            
+        for poi_name, trip_type in self.trip_data.keys():
+            if poi_name not in self.target_pois or trip_type != 'inbound':
+                continue
+                
+            df = self.trip_data[(poi_name, trip_type)]
+            if 'total_trips' not in df.columns or 'mode_ped' not in df.columns:
+                continue
+                
+            ped_trips = df['total_trips'] * (df['mode_ped'] / 100)
+            df_with_peds = df.copy()
+            df_with_peds['ped_trips'] = ped_trips
+            df_with_peds = df_with_peds[df_with_peds['ped_trips'] > 0]
+            
+            if len(df_with_peds) > 0:
+                self.processed_trips[poi_name] = df_with_peds
+                print(f"\nProcessed {poi_name}:")
+                print(f"Total pedestrian trips: {ped_trips.sum():.1f}")
+                print(f"Zones with pedestrian trips: {len(df_with_peds)}")
+        
+    def process_trip_data(self):
+        """Process trip data for pedestrian trips"""
+        self.processed_trips = {}
+        
+        for poi_name in self.target_pois:
+            df = self.trip_data[self.trip_data['destination'] == poi_name].copy()
+            if 'total_trips' in df.columns and 'mode_ped' in df.columns:
+                df['ped_trips'] = df['total_trips'] * (df['mode_ped'] / 100)
+                df = df[df['ped_trips'] > 0]
+                
+                if len(df) > 0:
+                    self.processed_trips[poi_name] = df
+                    print(f"\nProcessed {poi_name}:")
+                    print(f"Total pedestrian trips: {df['ped_trips'].sum():.1f}")
+                    print(f"Zones with pedestrian trips: {len(df)}")
+    
     def generate_random_points(self, geometry, num_points=50):
         """Generate random points within a zone geometry"""
         points = []
@@ -114,121 +250,99 @@ class TripGenerator:
                 
         return points
     
-    def process_zone_trips(self, zone_id, num_trips, poi_name, entrances):
-        """Process trips for a single zone"""
-        zone = self.zones[self.zones['YISHUV_STAT11'] == zone_id]
-        if len(zone) == 0:
-            return []
-            
-        # Generate random points within the zone
-        zone_geometry = zone.geometry.iloc[0]
-        random_points = self.generate_random_points(zone_geometry, num_points=50)
+    def find_closest_entrance(self, point, entrances):
+        """Find the closest entrance"""
+        min_dist = float('inf')
+        closest = None
         
-        if not random_points:
-            return []
-        
-        successful_routes = []
-        departure_time = datetime.now().replace(hour=8, minute=0, second=0)
-        
-        # Find routes for each point
-        for point in random_points:
-            best_entrance, route_data = self.entrance_manager.find_best_entrance(
-                point, entrances, self.otp_client
-            )
-            
-            if best_entrance is not None and route_data is not None:
-                itinerary = route_data['plan']['itineraries'][0]
-                leg = itinerary['legs'][0]
+        for _, entrance in entrances.iterrows():
+            dist = point.distance(entrance.geometry)
+            if dist < min_dist:
+                min_dist = dist
+                closest = entrance
                 
-                successful_routes.append({
-                    'points': polyline.decode(leg['legGeometry']['points']),
-                    'duration': leg['duration'],
-                    'entrance': best_entrance['Name'],
-                    'origin_coords': [point.x, point.y]
-                })
+        return closest
+    
+    def process_all_routes(self):
+        """Process walking routes for all POIs"""
+        all_segments = []
         
-        # Allocate trips among successful routes
-        trips = []
-        if successful_routes:
-            trips_per_route = num_trips / len(successful_routes)
-            
-            for i, route in enumerate(successful_routes):
-                trips.append({
-                    'geometry': LineString([(lon, lat) for lat, lon in route['points']]),
-                    'departure_time': departure_time,
-                    'arrival_time': departure_time + pd.Timedelta(seconds=route['duration']),
-                    'origin_zone': zone_id,
-                    'destination': poi_name,
-                    'entrance': route['entrance'],
-                    'route_id': f"{zone_id}-{poi_name}-{route['entrance']}-{i}",
-                    'num_trips': trips_per_route,
-                    'origin_x': route['origin_coords'][0],
-                    'origin_y': route['origin_coords'][1]
-                })
+        for poi_name in self.target_pois:
+            if poi_name not in self.processed_trips:
+                continue
                 
-        return trips
-
-# main.py
-from data_loader import DataLoader
-import os
-import geopandas as gpd
-
-def main():
-    # Initialize components
-    loader = DataLoader()
-    zones = loader.load_zones()
-    poi_df = loader.load_poi_data()
-    trip_data = loader.load_trip_data()
-    
-    entrances_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                "data/filtered-entrances/filtered_entrances.shp")
-    entrances = gpd.read_file(entrances_path)
-    
-    otp_client = OTPClient()
-    entrance_manager = EntranceManager(entrances)
-    trip_generator = TripGenerator(zones, otp_client, entrance_manager)
-    
-    target_pois = ['Ben-Gurion-University', 'Soroka-Medical-Center']
-    all_trips = []
-    
-    # Process each POI
-    for poi_name in target_pois:
-        if (poi_name, 'inbound') not in trip_data:
-            continue
+            print(f"\nProcessing routes for {poi_name}")
+            trip_df = self.processed_trips[poi_name]
             
-        df = trip_data[(poi_name, 'inbound')]
-        if 'total_trips' not in df.columns or 'mode_ped' not in df.columns:
-            continue
+            # Get entrances for this POI
+            poi_prefix = 'Hospital' if 'Soroka' in poi_name else 'Uni'
+            entrances = self.entrances[self.entrances['Name'].str.startswith(poi_prefix)]
             
-        # Calculate pedestrian trips
-        df['ped_trips'] = df['total_trips'] * (df['mode_ped'] / 100)
-        df = df[df['ped_trips'] > 0]
+            if len(entrances) == 0:
+                print(f"No entrances found for {poi_name}")
+                continue
+                
+            print(f"Found {len(entrances)} entrances")
+            
+            # Process each zone
+            for _, zone_data in tqdm(trip_df.iterrows(), total=len(trip_df)):
+                zone_id = zone_data['tract']
+                num_trips = int(round(zone_data['ped_trips']))
+                
+                if num_trips < 1:
+                    continue
+                    
+                zone = self.zones[self.zones['YISHUV_STAT11'] == zone_id]
+                if len(zone) == 0:
+                    continue
+                
+                zone_geometry = zone.geometry.iloc[0]
+                random_points = self.generate_random_points(zone_geometry, num_points=50)
+                
+                for point in random_points:
+                    closest_entrance = self.find_closest_entrance(point, entrances)
+                    
+                    if closest_entrance is not None:
+                        metadata = {
+                            'trips': num_trips / len(random_points),
+                            'origin': point,
+                            'entrance': closest_entrance['Name']
+                        }
+                        
+                        route_data = self.otp_client.get_walking_route(
+                            point.y, point.x,
+                            closest_entrance.geometry.y,
+                            closest_entrance.geometry.x,
+                            metadata=metadata
+                        )
+                        
+                        time.sleep(0.1)  # Rate limiting
         
-        if df.empty:
-            continue
-            
-        entrances = entrance_manager.get_entrances_for_poi(poi_name)
-        if entrances.empty:
-            continue
+        # Get all segments and create GeoDataFrame
+        segments = self.otp_client.segment_manager.get_all_segments()
         
-        # Process each zone
-        for _, zone_data in tqdm(df.iterrows(), total=len(df)):
-            zone_trips = trip_generator.process_zone_trips(
-                zone_data['tract'],
-                int(round(zone_data['ped_trips'])),
-                poi_name,
-                entrances
-            )
-            all_trips.extend(zone_trips)
-    
-    # Create and save GeoDataFrame
-    if all_trips:
-        trips_gdf = gpd.GeoDataFrame(all_trips, crs="EPSG:4326")
-        output_file = os.path.join(OUTPUT_DIR, "walking_routes_trips.geojson")
-        trips_gdf.to_file(output_file, driver="GeoJSON")
-        print(f"\nSaved {len(trips_gdf)} walking routes to: {output_file}")
-    else:
-        print("\nNo walking routes were generated!")
+        if segments:
+            gdf_data = []
+            for segment_coords, metadata in segments:
+                gdf_data.append({
+                    'geometry': LineString(segment_coords),
+                    'trips': metadata['trips'],
+                    'entrance': metadata['entrance'],
+                    'num_origins': len(metadata['origins'])
+                })
+            
+            segments_gdf = gpd.GeoDataFrame(gdf_data, crs="EPSG:4326")
+            return segments_gdf
+        else:
+            return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
 if __name__ == "__main__":
-    main()
+    modeler = RouteModeler()
+    walking_segments = modeler.process_all_routes()
+    
+    if not walking_segments.empty:
+        output_file = "walking_segments.geojson"
+        walking_segments.to_file(output_file, driver="GeoJSON")
+        print(f"\nSaved {len(walking_segments)} walking segments to: {output_file}")
+    else:
+        print("\nNo walking segments were generated!")
