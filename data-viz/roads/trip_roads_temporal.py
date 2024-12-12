@@ -80,11 +80,6 @@ def load_trip_data():
         # Load temporal distributions
         temporal_dist = load_temporal_distributions()
         
-        # Calculate center coordinates
-        total_bounds = trips_gdf.total_bounds
-        center_lon = (total_bounds[0] + total_bounds[2]) / 2
-        center_lat = (total_bounds[1] + total_bounds[3]) / 2
-        
         # Animation parameters
         frames_per_second = 30
         minutes_per_simulated_hour = 60
@@ -97,60 +92,76 @@ def load_trip_data():
         logger.info(f"  - Frames per hour: {frames_per_hour}")
         logger.info(f"  - Total frames: {animation_duration}")
         
+        # Process routes in smaller batches
         routes_data = []
+        batch_size = 50  # Process 50 routes at a time
         processed_trips = 0
         
-        for idx, row in trips_gdf.iterrows():
-            try:
-                coords = list(row.geometry.coords)
-                num_trips = int(row['num_trips'])
-                
-                if num_trips <= 0 or len(coords) < 2:
-                    continue
-                
-                # Determine POI for this route
-                dest_point = Point(coords[-1])
-                poi_name = None
-                for poi_poly_idx, poi_polygon in poi_polygons.iterrows():
-                    if dest_point.distance(poi_polygon.geometry) < POI_RADIUS:
-                        poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
-                        break
-                
-                if not poi_name:
-                    continue
-                
-                processed_trips += num_trips
-                path = [[float(x), float(y)] for x, y in coords]
-                
-                # Instead of creating individual trips, create route patterns
-                for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
-                    hour_trips = round(num_trips * hour_fraction)
-                    if hour_trips <= 0:
+        for batch_start in range(0, len(trips_gdf), batch_size):
+            batch_end = min(batch_start + batch_size, len(trips_gdf))
+            batch = trips_gdf.iloc[batch_start:batch_end]
+            
+            for idx, row in batch.iterrows():
+                try:
+                    coords = list(row.geometry.coords)
+                    num_trips = int(row['num_trips'])
+                    
+                    if num_trips <= 0 or len(coords) < 2:
                         continue
                     
-                    # Create a few staggered patterns per hour instead of individual trips
-                    num_patterns = min(5, max(1, hour_trips // 100))  # Scale patterns based on volume
-                    trips_per_pattern = hour_trips / num_patterns
+                    # Determine POI for this route
+                    dest_point = Point(coords[-1])
+                    poi_name = None
+                    for poi_poly_idx, poi_polygon in poi_polygons.iterrows():
+                        if dest_point.distance(poi_polygon.geometry) < POI_RADIUS:
+                            poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
+                            break
                     
-                    for pattern in range(num_patterns):
-                        # Add some randomness to start time within the hour
-                        start_offset = (pattern / num_patterns) * frames_per_hour + np.random.randint(-30, 30)
-                        start_time = hour_idx * frames_per_hour + start_offset
+                    if not poi_name:
+                        continue
+                    
+                    processed_trips += num_trips
+                    path = [[float(x), float(y)] for x, y in coords]
+                    
+                    # Optimize pattern creation
+                    for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
+                        hour_trips = round(num_trips * hour_fraction)
+                        if hour_trips <= 0:
+                            continue
                         
-                        routes_data.append({
-                            'path': path,
-                            'startTime': int(start_time),
-                            'numTrips': trips_per_pattern,
-                            'duration': len(coords) * 2,  # Base duration on path length
-                            'poi': poi_name
-                        })
+                        # Reduce number of patterns for smaller trip counts
+                        num_patterns = min(3, max(1, hour_trips // 200))
+                        trips_per_pattern = hour_trips / num_patterns
+                        
+                        for pattern in range(num_patterns):
+                            start_offset = (pattern / num_patterns) * frames_per_hour + np.random.randint(-15, 15)
+                            start_time = hour_idx * frames_per_hour + start_offset
+                            
+                            routes_data.append({
+                                'path': path,
+                                'startTime': int(start_time),
+                                'numTrips': trips_per_pattern,
+                                'duration': min(len(coords) * 2, frames_per_hour // 2),  # Limit duration
+                                'poi': poi_name
+                            })
                 
-            except Exception as e:
-                logger.error(f"Error processing route {idx}: {str(e)}")
-                continue
+                except Exception as e:
+                    logger.error(f"Error processing route {idx}: {str(e)}")
+                    continue
+            
+            # Clear memory after each batch
+            del batch
         
         logger.info(f"Created {len(routes_data)} route patterns")
         logger.info(f"Original trips processed: {processed_trips:,}")
+        
+        # Calculate center coordinates
+        total_bounds = trips_gdf.total_bounds
+        center_lon = (total_bounds[0] + total_bounds[2]) / 2
+        center_lat = (total_bounds[1] + total_bounds[3]) / 2
+        
+        # Clear large objects from memory
+        del trips_gdf
         
         return routes_data, center_lat, center_lon, raw_trip_count, animation_duration
         
