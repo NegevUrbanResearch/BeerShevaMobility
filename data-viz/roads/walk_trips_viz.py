@@ -48,9 +48,17 @@ POI_ID_MAP = {
 }
 
 def load_trip_data():
-    """Load and process walking trip data for animation with temporal distribution"""
+    """Load and process walking trip data for animation with time-based distribution"""
     file_path = os.path.join(OUTPUT_DIR, "walking_routes_trips.geojson")
     logger.info(f"Loading walking trip data from: {file_path}")
+    
+    # Define name mappings
+    DEST_MAPPING = {
+        'BGU': 'Ben-Gurion-University',
+        'Soroka Hospital': 'Soroka-Medical-Center',
+        'Ben-Gurion-University': 'Ben-Gurion-University',
+        'Soroka-Medical-Center': 'Soroka-Medical-Center'
+    }
     
     try:
         trips_gdf = gpd.read_file(file_path)
@@ -62,137 +70,88 @@ def load_trip_data():
         center_lon = (total_bounds[0] + total_bounds[2]) / 2
         center_lat = (total_bounds[1] + total_bounds[3]) / 2
         
-        # Define hourly distributions
-        bgu_dist = [0.020807, 0.148373, 0.132568, 
-                    0.180945, 0.091553, 0.11012, 0.067584, 0.071866, 0.036333, 0.044256,
-                    0.032612, 0.029451, 0.018447, 0.007843, 0.004041, 0.001521]
+        # Time distribution by hour (6-22) for BGU and Soroka
+        bgu_dist = {
+            6: 0.000641, 7: 0.020829, 8: 0.148528, 9: 0.132706, 10: 0.181134,
+            11: 0.091648, 12: 0.110234, 13: 0.067655, 14: 0.071941, 15: 0.036371,
+            16: 0.044302, 17: 0.032646, 18: 0.029481, 19: 0.018466, 20: 0.007851,
+            21: 0.004046, 22: 0.001522
+        }
         
-        soroka_dist = [0.002673, 0.024896, 0.080201, 0.269674, 
-                      0.110109, 0.088889, 0.051629, 0.052632, 0.05848, 0.102757, 0.029908,
-                      0.042774, 0.027068, 0.01721, 0.022723, 0.005681, 0.00401, 0.008187]
+        soroka_dist = {
+            6: 0.024975, 7: 0.080456, 8: 0.270533, 9: 0.110459, 10: 0.089172,
+            11: 0.051793, 12: 0.052799, 13: 0.058666, 14: 0.103084, 15: 0.030003,
+            16: 0.042910, 17: 0.027154, 18: 0.017264, 19: 0.022796, 20: 0.005699,
+            21: 0.004023, 22: 0.008213
+        }
+        
+        # Normalize distributions
+        bgu_sum = sum(bgu_dist.values())
+        soroka_sum = sum(soroka_dist.values())
+        
+        bgu_dist = {k: v/bgu_sum for k, v in bgu_dist.items()}
+        soroka_dist = {k: v/soroka_sum for k, v in soroka_dist.items()}
         
         # Animation parameters
-        frames_per_second = 60
-        total_animation_duration = 60 * frames_per_second  # 120 seconds total
-        path_duration = 180  # 3 seconds per trip
+        total_animation_time = 60000  # 60 seconds in milliseconds
+        hours_in_day = 17  # 6am to 22pm = 17 hours
+        ms_per_hour = total_animation_time / hours_in_day
         
         trips_data = []
-        processed_trips = 0
-        total_timestamps = 0
+        total_trips = 0
         
         for idx, row in trips_gdf.iterrows():
             try:
                 coords = list(row.geometry.coords)
+                trip_duration = len(coords)
                 num_trips = int(row['num_trips'])
-                destination = row['destination']
                 
-                if num_trips <= 0 or len(coords) < 2:
+                # Handle destination mapping
+                raw_destination = row['destination']
+                if raw_destination not in DEST_MAPPING:
+                    logger.warning(f"Unknown destination format: {raw_destination}")
+                    continue
+                    
+                destination = DEST_MAPPING[raw_destination]
+                dist = bgu_dist if raw_destination == 'BGU' else soroka_dist
+                
+                if trip_duration < 2:
                     continue
                 
-                # Select appropriate distribution based on destination
-                hour_dist = bgu_dist if destination == 'BGU' else soroka_dist
-                logger.debug(f"Processing route {idx} to {destination} with {num_trips} trips")
+                # Select hour based on distribution
+                hour = np.random.choice(list(dist.keys()), p=list(dist.values()))
                 
-                # Allocate trips to hours based on distribution
-                trips_per_hour = np.random.multinomial(num_trips, hour_dist)
+                # Calculate start time in milliseconds
+                hour_offset = hour - 6  # Hours since 6am
+                start_time = hour_offset * ms_per_hour
+                path_duration = ms_per_hour * 0.8  # Time to complete one path (80% of hour)
                 
-                # Generate timestamps for each trip
-                all_timestamps = []
-                for hour in range(24):
-                    hour_trips = trips_per_hour[hour]
-                    if hour_trips == 0:
-                        continue
-                    
-                    # Map 24 hours to 120 seconds
-                    hour_start = (hour * total_animation_duration) // 24
-                    hour_end = ((hour + 1) * total_animation_duration) // 24
-                    
-                    # Distribute trips within the hour's time window
-                    for trip in range(hour_trips):
-                        start_time = np.random.randint(hour_start, max(hour_start, hour_end - path_duration))
-                        timestamps = [t % total_animation_duration for t in range(start_time, start_time + path_duration)]
-                        all_timestamps.append(timestamps)
-                        total_timestamps += 1
+                # Generate timestamps for path points
+                timestamps = []
+                for i in range(trip_duration):
+                    progress = i / (trip_duration - 1)
+                    time = start_time + (progress * path_duration)
+                    timestamps.append([time])
                 
-                processed_trips += num_trips
+                total_trips += num_trips
                 
-                if all_timestamps:
-                    trips_data.append({
-                        'path': [[float(x), float(y)] for x, y in coords],
-                        'timestamps': all_timestamps,
-                        'num_trips': num_trips,
-                        'destination': destination,
-                        'entrance': row['entrance']
-                    })
-                    logger.debug(f"Added route with {len(all_timestamps)} timestamp sets")
+                trips_data.append({
+                    'path': [[float(x), float(y)] for x, y in coords],
+                    'timestamps': timestamps,
+                    'num_trips': 1,
+                    'destination': destination
+                })
                 
             except Exception as e:
                 logger.error(f"Error processing trip {idx}: {str(e)}")
                 continue
         
-        logger.info(f"Processed {processed_trips} trips across {len(trips_data)} routes")
-        logger.info(f"Generated {total_timestamps} total timestamp sets")
-        logger.info(f"First trip timestamps sample: {trips_data[0]['timestamps'][0][:10] if trips_data else 'No trips'}")
-        return trips_data, center_lat, center_lon, processed_trips
+        logger.info(f"Successfully processed {total_trips} unique trips")
+        return trips_data, center_lat, center_lon, total_trips
         
     except Exception as e:
         logger.error(f"Error loading trip data: {str(e)}")
         raise
-
-def create_animation():
-    trips_data, center_lat, center_lon, total_trips = load_trip_data()
-    buildings_data, entrance_features, poi_borders, poi_fills = load_building_data()
-    
-    # Update animation duration in template
-    total_animation_frames = 120 * 60  # 120 seconds * 60 fps
-    
-    # Update the HTML template to include icon handling
-    html_template = walk_html.HTML_TEMPLATE 
-
-    # Transform the trips data to match the expected POI names
-    for trip in trips_data:
-        if trip['destination'] == 'BGU':
-            trip['destination'] = 'Ben-Gurion-University'
-        elif trip['destination'] == 'Soroka Hospital':
-            trip['destination'] = 'Soroka-Medical-Center'
-    
-    format_values = {
-        'total_trips': total_trips,
-        'trips_data': json.dumps(trips_data),
-        'buildings_data': json.dumps(buildings_data),
-        'entrance_features': json.dumps(entrance_features),
-        'poi_borders': json.dumps(poi_borders),
-        'poi_fills': json.dumps(poi_fills),
-        'poi_radius': POI_RADIUS,
-        'animation_duration': total_animation_frames,
-        'loopLength': total_animation_frames,
-        'center_lon': center_lon,
-        'center_lat': center_lat,
-        'mapbox_api_key': MAPBOX_API_KEY if 'MAPBOX_API_KEY' in globals() else ''
-    }
-    
-    # Log some data samples for debugging
-    logger.info(f"Animation duration: {total_animation_frames} frames")
-    logger.info(f"Number of trips in data: {len(trips_data)}")
-    if trips_data:
-        sample_trip = trips_data[0]
-        logger.info(f"Sample trip - Path length: {len(sample_trip['path'])}")
-        logger.info(f"Sample trip - Number of timestamp sets: {len(sample_trip['timestamps'])}")
-        logger.info(f"Sample trip - First timestamp set: {sample_trip['timestamps'][0][:10]}")
-    
-    try:
-        formatted_html = html_template % format_values
-        output_path = os.path.join(OUTPUT_DIR, "walking_trip_animation.html")
-        with open(output_path, 'w') as f:
-            f.write(formatted_html)
-            
-        logger.info(f"Animation saved to: {output_path}")
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"Error writing HTML file: {str(e)}")
-        raise
-
 
 def load_building_data():
     """Load building data for 3D visualization"""
