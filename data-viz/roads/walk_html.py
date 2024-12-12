@@ -80,14 +80,14 @@ HTML_TEMPLATE = """
             Total Daily Trips: %(total_trips)d<br>
             Current Time: <span id="current-time">06:00</span><br>
             <div class="trip-counters">
-                Colors indicate destinations:<br>
-                <div style="margin-top: 5px;">
+                Cumulative Trips:<br>
+                <div class="counter-row">
                     <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
-                    Ben-Gurion University
+                    BGU: <span id="bgu-counter">0</span>
                 </div>
-                <div style="margin-top: 5px;">
+                <div class="counter-row">
                     <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
-                    Soroka Medical Center
+                    Soroka: <span id="soroka-counter">0</span>
                 </div>
             </div>
         </p>
@@ -127,7 +127,7 @@ HTML_TEMPLATE = """
         const START_HOUR = 6;
         const END_HOUR = 22;
         const HOURS_PER_DAY = END_HOUR - START_HOUR;
-        const ANIMATION_DURATION = 60000; // 60 seconds in milliseconds
+        const ANIMATION_DURATION = 240000;  // 240 seconds (4 minutes per cycle, longer than original)
         const LOOP_LENGTH = ANIMATION_DURATION;
         const MS_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
 
@@ -137,6 +137,12 @@ HTML_TEMPLATE = """
         let animation;
         let lastLoggedHour = -1;
 
+        // Track active trips by destination
+        let activeTrips = {
+            'Ben-Gurion-University': 0,
+            'Soroka-Medical-Center': 0
+        };
+
         const INITIAL_VIEW_STATE = {
             longitude: 34.8113,
             latitude: 31.2627,
@@ -145,6 +151,7 @@ HTML_TEMPLATE = """
             bearing: 0
         };
 
+        // Initial logging
         log('Animation Constants:', {
             START_HOUR,
             END_HOUR,
@@ -152,6 +159,11 @@ HTML_TEMPLATE = """
             ANIMATION_DURATION,
             MS_PER_HOUR,
             'Total Trips': TRIPS_DATA.length
+        });
+
+        log('Initial Trip Distribution:', {
+            'BGU Trips': TRIPS_DATA.filter(t => t.destination === 'Ben-Gurion-University').length,
+            'Soroka Trips': TRIPS_DATA.filter(t => t.destination === 'Soroka-Medical-Center').length
         });
 
         // Tooltip setup
@@ -186,6 +198,71 @@ HTML_TEMPLATE = """
             return POI_INFO[destination]?.color.slice(0, 3) || [255, 255, 255];
         }
 
+        function updateActiveTripCounts(currentFrame) {
+            activeTrips = {
+                'Ben-Gurion-University': 0,
+                'Soroka-Medical-Center': 0
+            };
+            
+            TRIPS_DATA.forEach(trip => {
+                const timestamps = trip.timestamps.flat();
+                if (timestamps[0] <= currentFrame && timestamps[timestamps.length - 1] >= currentFrame) {
+                    activeTrips[trip.destination]++;
+                }
+            });
+
+            // Update counters in UI if elements exist
+            const counterDiv = document.querySelector('.trip-counters');
+            if (counterDiv) {
+                counterDiv.innerHTML = `
+                    Colors indicate destinations:<br>
+                    <div style="margin-top: 5px;">
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
+                        BGU: ${activeTrips['Ben-Gurion-University']}
+                    </div>
+                    <div style="margin-top: 5px;">
+                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
+                        Soroka: ${activeTrips['Soroka-Medical-Center']}
+                    </div>
+                `;
+            }
+        }
+
+        // Add hourly totals
+        const HOURLY_TOTALS = %(hourly_totals)s;
+        
+        // Animation state
+        let lastHour = -1;
+        let cumulativeCounts = {
+            'Ben-Gurion-University': 0,
+            'Soroka-Medical-Center': 0
+        };
+        
+        function updateCounters(currentFrame) {
+            const currentHour = Math.floor((currentFrame / MS_PER_HOUR) + START_HOUR);
+            
+            // Reset counters if we've gone back to the start
+            if (currentHour < lastHour) {
+                cumulativeCounts = {
+                    'Ben-Gurion-University': 0,
+                    'Soroka-Medical-Center': 0
+                };
+            } else if (currentHour > lastHour && lastHour >= 6) {
+                // Add hourly totals to cumulative counts
+                Object.keys(cumulativeCounts).forEach(poi => {
+                    cumulativeCounts[poi] += HOURLY_TOTALS[lastHour][poi];
+                });
+            }
+            lastHour = currentHour;
+
+            // Update counter displays
+            document.getElementById('bgu-counter').textContent = 
+                Math.round(cumulativeCounts['Ben-Gurion-University']).toLocaleString();
+            document.getElementById('soroka-counter').textContent = 
+                Math.round(cumulativeCounts['Soroka-Medical-Center']).toLocaleString();
+        }
+
+
         function animate() {
             log('Starting animation with speed:', animationSpeed);
             
@@ -200,34 +277,28 @@ HTML_TEMPLATE = """
                 repeat: Infinity,
                 onUpdate: time => {
                     const currentFrame = time % ANIMATION_DURATION;
-                    const currentHour = Math.floor((currentFrame / MS_PER_HOUR) + START_HOUR);
-                    
-                    // Log hour transitions
-                    if (currentHour !== lastLoggedHour) {
-                        log(`Hour transition: ${lastLoggedHour} -> ${currentHour}`);
-                        lastLoggedHour = currentHour;
-                    }
-
                     const currentTime = formatTimeString(currentFrame);
+                    // Calculate current hour here before using it
+                    const currentHour = Math.floor((currentFrame / MS_PER_HOUR) + START_HOUR);
                     
                     // Update time displays
                     document.querySelector('.time-display').textContent = currentTime;
                     document.getElementById('current-time').textContent = currentTime;
-
+                    
+                    // Update counters with the calculated currentHour
+                    updateCounters(currentFrame);
+                    
                     // Debug timing every second
                     if (currentFrame % 1000 < 16) {  // Check approximately every second
                         log('Animation Status:', {
                             time: currentTime,
                             frame: Math.round(currentFrame),
                             hour: currentHour,
-                            'active trips': TRIPS_DATA.filter(trip => {
-                                const timestamps = trip.timestamps.flat();
-                                return timestamps[0] <= currentFrame && 
-                                       timestamps[timestamps.length - 1] >= currentFrame;
-                            }).length
+                            'BGU active': activeTrips['Ben-Gurion-University'],
+                            'Soroka active': activeTrips['Soroka-Medical-Center']
                         });
                     }
-
+                    
                     const layers = [
                         new deck.PolygonLayer({
                             id: 'buildings',
@@ -251,8 +322,10 @@ HTML_TEMPLATE = """
                             widthMinPixels: 2,
                             jointRounded: true,
                             capRounded: true,
-                            trailLength: trailLength * 5,
-                            currentTime: currentFrame
+                            trailLength: trailLength * 1000,
+                            currentTime: currentFrame,
+                            fadeTrail: true,
+                            getWidth: 3
                         }),
                         new deck.PolygonLayer({
                             id: 'poi-borders',

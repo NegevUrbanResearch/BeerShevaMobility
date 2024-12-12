@@ -47,6 +47,14 @@ POI_ID_MAP = {
     11: 'Soroka Hospital'
 }
 
+def normalize_distribution(dist):
+    """Normalize a probability distribution to sum to 1"""
+    total = sum(dist.values())
+    if total == 0:
+        logger.error("Distribution sums to 0")
+        return dist
+    return {k: v/total for k, v in dist.items()}
+
 def load_trip_data():
     """Load and process walking trip data for animation with time-based distribution"""
     file_path = os.path.join(OUTPUT_DIR, "walking_routes_trips.geojson")
@@ -86,19 +94,24 @@ def load_trip_data():
         }
         
         # Normalize distributions
-        bgu_sum = sum(bgu_dist.values())
-        soroka_sum = sum(soroka_dist.values())
+        bgu_dist = normalize_distribution(bgu_dist)
+        soroka_dist = normalize_distribution(soroka_dist)
         
-        bgu_dist = {k: v/bgu_sum for k, v in bgu_dist.items()}
-        soroka_dist = {k: v/soroka_sum for k, v in soroka_dist.items()}
+        # Log normalized distributions
+        logger.info("Normalized BGU distribution sum: %.6f", sum(bgu_dist.values()))
+        logger.info("Normalized Soroka distribution sum: %.6f", sum(soroka_dist.values()))
         
         # Animation parameters
-        total_animation_time = 60000  # 60 seconds in milliseconds
-        hours_in_day = 17  # 6am to 22pm = 17 hours
+        total_animation_time = 240000  # 240 seconds (4 minutes) to match HTML template
+        hours_in_day = 16  # 6am to 22pm = 16 hours
         ms_per_hour = total_animation_time / hours_in_day
         
         trips_data = []
-        total_trips = 0
+        destination_counts = {'Ben-Gurion-University': 0, 'Soroka-Medical-Center': 0}
+        
+        # Pre-calculate hourly trip totals
+        hourly_totals = {hour: {'Ben-Gurion-University': 0, 'Soroka-Medical-Center': 0} 
+                         for hour in range(6, 23)}
         
         for idx, row in trips_gdf.iterrows():
             try:
@@ -106,53 +119,66 @@ def load_trip_data():
                 trip_duration = len(coords)
                 num_trips = int(row['num_trips'])
                 
-                # Handle destination mapping
                 raw_destination = row['destination']
                 if raw_destination not in DEST_MAPPING:
                     logger.warning(f"Unknown destination format: {raw_destination}")
                     continue
                     
                 destination = DEST_MAPPING[raw_destination]
-                dist = bgu_dist if raw_destination == 'BGU' else soroka_dist
+                dist = bgu_dist if destination == 'Ben-Gurion-University' else soroka_dist
                 
                 if trip_duration < 2:
+                    logger.warning(f"Skipping trip with duration < 2: {trip_duration}")
                     continue
                 
-                # Select hour based on distribution
-                hour = np.random.choice(list(dist.keys()), p=list(dist.values()))
-                
-                # Calculate start time in milliseconds
-                hour_offset = hour - 6  # Hours since 6am
-                start_time = hour_offset * ms_per_hour
-                path_duration = ms_per_hour * 0.8  # Time to complete one path (80% of hour)
-                
-                # Generate timestamps for path points
-                timestamps = []
-                for i in range(trip_duration):
-                    progress = i / (trip_duration - 1)
-                    time = start_time + (progress * path_duration)
-                    timestamps.append([time])
-                
-                total_trips += num_trips
-                
-                trips_data.append({
-                    'path': [[float(x), float(y)] for x, y in coords],
-                    'timestamps': timestamps,
-                    'num_trips': 1,
-                    'destination': destination
-                })
+                # Generate one path per actual trip
+                for _ in range(num_trips):
+                    try:
+                        hour = np.random.choice(list(dist.keys()), p=list(dist.values()))
+                        # Add to hourly totals
+                        hourly_totals[hour][destination] += 1
+                        
+                        # Calculate timestamps
+                        hour_offset = hour - 6  # Hours since 6am
+                        start_time = hour_offset * ms_per_hour
+                        path_duration = min(ms_per_hour * 0.8, 15000)  # Cap duration at 15 seconds
+                        
+                        timestamps = []
+                        for i in range(trip_duration):
+                            progress = i / (trip_duration - 1)
+                            time = start_time + (progress * path_duration)
+                            timestamps.append([time])
+                        
+                        trips_data.append({
+                            'path': [[float(x), float(y)] for x, y in coords],
+                            'timestamps': timestamps,
+                            'destination': destination,
+                            'startTime': start_time,
+                            'duration': path_duration
+                        })
+                        destination_counts[destination] += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing individual trip {idx}: {str(e)}")
+                        continue
                 
             except Exception as e:
-                logger.error(f"Error processing trip {idx}: {str(e)}")
+                logger.error(f"Error processing trip group {idx}: {str(e)}")
                 continue
         
-        logger.info(f"Successfully processed {total_trips} unique trips")
-        return trips_data, center_lat, center_lon, total_trips
+        # Log final counts
+        for dest, count in destination_counts.items():
+            logger.info(f"{dest}: {count:,} trips")
+        
+        total_processed = sum(destination_counts.values())
+        logger.info(f"Total processed trips: {total_processed:,} (Original: {raw_trip_count:,})")
+        
+        return trips_data, center_lat, center_lon, total_processed, hourly_totals
         
     except Exception as e:
         logger.error(f"Error loading trip data: {str(e)}")
         raise
-
+    
 def load_building_data():
     """Load building data for 3D visualization"""
     try:
@@ -240,7 +266,7 @@ def load_building_data():
 
 
 def create_animation():
-    trips_data, center_lat, center_lon, total_trips = load_trip_data()
+    trips_data, center_lat, center_lon, total_trips, hourly_totals = load_trip_data()
     buildings_data, entrance_features, poi_borders, poi_fills = load_building_data()
     
     # Update the HTML template to include icon handling
@@ -267,8 +293,9 @@ def create_animation():
         'poi_borders': json.dumps(poi_borders),
         'poi_fills': json.dumps(poi_fills),
         'poi_radius': POI_RADIUS,
-        'animation_duration': 3600,
-        'loopLength': 3600,
+        'animation_duration': 240000,  # 4 minutes
+        'loopLength': 240000,
+        'hourly_totals': json.dumps(hourly_totals),
         # Fix these values using single pass substitution
         'center_lon': center_lon,
         'center_lat': center_lat,
