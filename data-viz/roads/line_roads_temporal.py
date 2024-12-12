@@ -85,6 +85,18 @@ def create_hourly_segment_data(trips_data, hour, temporal_dist, poi_polygons):
     
     return segments
 
+def calculate_temporal_weight(hour, prev_segments, next_segments, segment, current_value):
+    """Calculate temporal weight based on changes from previous and next hour"""
+    prev_value = prev_segments.get(segment, 0) if prev_segments else 0
+    next_value = next_segments.get(segment, 0) if next_segments else 0
+    
+    # Calculate relative changes
+    prev_change = (current_value - prev_value) / (prev_value + 1)  # Add 1 to avoid division by zero
+    next_change = (next_value - current_value) / (current_value + 1)
+    
+    # Weight factor based on how dramatic the changes are
+    temporal_weight = (abs(prev_change) + abs(next_change)) / 2
+    return temporal_weight
 
 def calculate_global_statistics(all_segments):
     """Calculate global statistics for consistent color scaling"""
@@ -104,26 +116,34 @@ def calculate_global_statistics(all_segments):
     
     return global_mean, global_std, global_max, bins
 
-def get_color_for_value(value, global_stats):
-    """Get color for a value based on global statistics"""
+def get_enhanced_color_for_value(value, global_stats, temporal_weight=0):
+    """Get enhanced color with more gradients and temporal weighting"""
     global_mean, global_std, global_max, bins = global_stats
     
-    # Color scale definition
+    # Enhanced color scale definition with more gradients
     colors = {
-        0.0: [10, 20, 90],     # Dark blue for very low values
-        0.2: [65, 105, 225],   # Royal blue for low values
-        0.4: [30, 144, 255],   # Dodger blue for below average
-        0.6: [0, 191, 255],    # Deep sky blue for average
-        0.8: [255, 215, 0],    # Gold for high values
-        1.0: [255, 69, 0]      # Red-orange for very high values
+        0.0: [10, 20, 90],      # Dark blue
+        0.15: [65, 105, 225],   # Royal blue
+        0.3: [30, 144, 255],    # Dodger blue
+        0.45: [0, 191, 255],    # Deep sky blue
+        0.6: [0, 255, 255],     # Cyan
+        0.7: [50, 205, 50],     # Lime green
+        0.8: [255, 215, 0],     # Gold
+        0.9: [255, 140, 0],     # Dark orange
+        1.0: [255, 69, 0]       # Red-orange
     }
     
     # Find which bin the value falls into
     bin_index = np.digitize(value, bins) - 1
     position = bin_index / (len(bins) - 1)
     
-    # Apply sigmoid transformation for better contrast
-    position = 1 / (1 + np.exp(-4 * (position - 0.5)))
+    # Apply enhanced sigmoid transformation for better contrast
+    position = 1 / (1 + np.exp(-5 * (position - 0.5)))
+    
+    # Adjust position based on temporal weight
+    temporal_factor = min(0.3, temporal_weight)  # Cap the temporal influence
+    position = position * (1 + temporal_factor)
+    position = min(1.0, position)  # Ensure we don't exceed 1.0
     
     # Get color positions
     color_positions = sorted(colors.keys())
@@ -136,20 +156,26 @@ def get_color_for_value(value, global_stats):
             lower_color = colors[lower_pos]
             upper_color = colors[upper_pos]
             
-            # Interpolate color
+            # Enhanced interpolation with temporal weight influence
             factor = (position - lower_pos) / (upper_pos - lower_pos)
+            
+            # Add slight saturation boost for segments with high temporal change
+            saturation_boost = 1 + (temporal_weight * 0.2)
+            
             color = [
-                int(lower_color[0] + (upper_color[0] - lower_color[0]) * factor),
-                int(lower_color[1] + (upper_color[1] - lower_color[1]) * factor),
-                int(lower_color[2] + (upper_color[2] - lower_color[2]) * factor)
+                min(255, int((lower_color[0] + (upper_color[0] - lower_color[0]) * factor) * saturation_boost)),
+                min(255, int((lower_color[1] + (upper_color[1] - lower_color[1]) * factor) * saturation_boost)),
+                min(255, int((lower_color[2] + (upper_color[2] - lower_color[2]) * factor) * saturation_boost))
             ]
             
-            return color + [200]  # Add alpha channel
+            # Adjust alpha based on temporal weight
+            alpha = int(200 + (temporal_weight * 55))  # More temporal change = more opacity
+            return color + [min(255, alpha)]
     
-    return colors[1.0] + [200]
+    return colors[1.0] + [255]
 
 def create_line_layer(trips_data, bounds):
-    """Create visualization data for all hours with enhanced color scaling"""
+    """Create visualization data for all hours with enhanced temporal coloring"""
     print("\nProcessing temporal line data...")
     
     # Load POI data and temporal distributions
@@ -169,13 +195,17 @@ def create_line_layer(trips_data, bounds):
     # Calculate global statistics for consistent color scaling
     global_stats = calculate_global_statistics(all_segments)
     
-    # Second pass: create features with consistent color scaling
+    # Second pass: create features with enhanced temporal coloring
     all_line_data = {}
     max_trips_per_hour = {}
     
     for hour, segments in all_segments.items():
         print(f"Processing visualization for hour {hour:02d}:00...")
         features = []
+        
+        # Get adjacent hour segments for temporal comparison
+        prev_segments = all_segments.get(hour - 1, {})
+        next_segments = all_segments.get(hour + 1, {})
         
         # Calculate trips for this hour
         hour_trips = 0
@@ -191,19 +221,25 @@ def create_line_layer(trips_data, bounds):
         
         max_trips_per_hour[hour] = max(segments.values())
         
-        for (start, end), trips in segments.items():
-            color = get_color_for_value(trips, global_stats)
+        for segment, trips in segments.items():
+            # Calculate temporal weight based on changes from previous and next hour
+            temporal_weight = calculate_temporal_weight(hour, prev_segments, next_segments, segment, trips)
             
+            # Get enhanced color with temporal weighting
+            color = get_enhanced_color_for_value(trips, global_stats, temporal_weight)
+            
+            start, end = segment
             features.append({
                 "start": [start[0], start[1], 5],
                 "end": [end[0], end[1], 5],
                 "trips": int(trips),
-                "color": color
+                "color": color,
+                "temporal_weight": float(temporal_weight)
             })
         
         all_line_data[str(hour)] = features
         print(f"Hour {hour:02d}:00 - Generated {len(features)} segments with {hour_trips:.0f} trips")
-    
+        total_unique_trips = hour_trips
     # Create initial view state and building layers
     initial_view_state = {
         'latitude': (bounds[1] + bounds[3]) / 2,
@@ -228,16 +264,7 @@ def create_line_layer(trips_data, bounds):
     temporal_stats = {}
     for hour, data in all_line_data.items():
         hour_int = int(hour)
-        hour_trips = 0
-        for _, row in trips_data.iterrows():
-            end_point = Point(list(row.geometry.coords)[-1])
-            for _, poi_polygon in poi_polygons.iterrows():
-                if end_point.distance(poi_polygon.geometry) < POI_RADIUS:
-                    poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
-                    if poi_name in temporal_dist:
-                        hour_trips += row['num_trips'] * temporal_dist[poi_name][hour_int-6]
-                    break
-        
+        hour_trips = sum(feature["trips"] for feature in data)
         temporal_stats[hour] = {
             'total_trips': int(hour_trips),
             'num_segments': len(data),
@@ -247,7 +274,7 @@ def create_line_layer(trips_data, bounds):
     # Prepare template data
     template_data = {
         'initial_view_state': initial_view_state,
-        'total_trips': total_trips,
+        'total_trips': total_unique_trips,
         'line_data': all_line_data,
         'temporal_stats': temporal_stats,
         'building_layers': building_layers,

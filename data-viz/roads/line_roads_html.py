@@ -99,16 +99,32 @@ def create_html_template(template_data):
             
             <div class="legend">
                 <div class="legend-item">
-                    <div class="legend-color" style="background: rgb(20,42,120)"></div>
+                    <div class="legend-color" style="background: rgb(10,20,90)"></div>
+                    <span>Very Low Traffic</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgb(65,105,225)"></div>
                     <span>Low Traffic</span>
                 </div>
                 <div class="legend-item">
-                    <div class="legend-color" style="background: rgb(65,182,196)"></div>
+                    <div class="legend-color" style="background: rgb(0,191,255)"></div>
+                    <span>Moderate Traffic</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgb(0,255,255)"></div>
                     <span>Medium Traffic</span>
                 </div>
                 <div class="legend-item">
-                    <div class="legend-color" style="background: rgb(255,255,0)"></div>
+                    <div class="legend-color" style="background: rgb(50,205,50)"></div>
+                    <span>Medium-High Traffic</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgb(255,215,0)"></div>
                     <span>High Traffic</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: rgb(255,69,0)"></div>
+                    <span>Very High Traffic</span>
                 </div>
             </div>
             
@@ -181,7 +197,7 @@ def create_html_template(template_data):
                     getSourcePosition: d => d.start,
                     getTargetPosition: d => d.end,
                     getColor: d => d.color,
-                    getWidth: d => Math.sqrt(d.trips) * 0.5,
+                    getWidth: d => 2,
                     pickable: true,
                     opacity: 0.8
                 });
@@ -246,7 +262,7 @@ def create_html_template(template_data):
                                 getSourcePosition: d => d.start,
                                 getTargetPosition: d => d.end,
                                 getColor: d => d.color,
-                                getWidth: d => Math.sqrt(d.trips) * 0.5,
+                                getWidth: d => 2,
                                 pickable: true,
                                 opacity: opacity * 0.8
                             })
