@@ -177,7 +177,18 @@ def create_line_layer(trips_data, bounds):
         print(f"Processing visualization for hour {hour:02d}:00...")
         features = []
         
-        hour_trips = sum(segments.values())
+        # Calculate trips for this hour
+        hour_trips = 0
+        for _, row in trips_data.iterrows():
+            # Find destination POI
+            end_point = Point(list(row.geometry.coords)[-1])
+            for _, poi_polygon in poi_polygons.iterrows():
+                if end_point.distance(poi_polygon.geometry) < POI_RADIUS:
+                    poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
+                    if poi_name in temporal_dist:
+                        hour_trips += row['num_trips'] * temporal_dist[poi_name][hour-6]
+                    break
+        
         max_trips_per_hour[hour] = max(segments.values())
         
         for (start, end), trips in segments.items():
@@ -213,18 +224,32 @@ def create_line_layer(trips_data, bounds):
         'bin_edges': [int(b) for b in bins]
     }
     
+    # Calculate temporal stats with correct trip counts
+    temporal_stats = {}
+    for hour, data in all_line_data.items():
+        hour_int = int(hour)
+        hour_trips = 0
+        for _, row in trips_data.iterrows():
+            end_point = Point(list(row.geometry.coords)[-1])
+            for _, poi_polygon in poi_polygons.iterrows():
+                if end_point.distance(poi_polygon.geometry) < POI_RADIUS:
+                    poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
+                    if poi_name in temporal_dist:
+                        hour_trips += row['num_trips'] * temporal_dist[poi_name][hour_int-6]
+                    break
+        
+        temporal_stats[hour] = {
+            'total_trips': int(hour_trips),
+            'num_segments': len(data),
+            'max_trips': max_trips_per_hour.get(hour_int, 0)
+        }
+    
     # Prepare template data
     template_data = {
         'initial_view_state': initial_view_state,
         'total_trips': total_trips,
         'line_data': all_line_data,
-        'temporal_stats': {
-            str(hour): {
-                'total_trips': sum(trip['trips'] for trip in data) if data else 0,
-                'num_segments': len(data),
-                'max_trips': max_trips_per_hour.get(hour, 0)
-            } for hour, data in all_line_data.items()
-        },
+        'temporal_stats': temporal_stats,
         'building_layers': building_layers,
         'color_scale': color_scale_info
     }
