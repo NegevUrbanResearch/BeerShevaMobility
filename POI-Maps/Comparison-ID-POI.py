@@ -2,12 +2,12 @@ import sys
 import os
 import numpy as np
 import random
-
 import sys
-# Add parent directory to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config import BASE_DIR, OUTPUT_DIR, DATA_DIR
+import os
+# Navigate to the directory containing BeerShevaMobility
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'BeerShevaMobility', 'data-viz')))
+# Import the configuration
+from config import OUTPUT_DIR
 
 from data_loader import DataLoader
 import pandas as pd
@@ -19,7 +19,7 @@ from branca.colormap import LinearColormap
 def load_data():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    loader = DataLoader(BASE_DIR, OUTPUT_DIR)
+    loader = DataLoader()
     print(f"Looking for zones file at: {loader.zones_file}")
     zones = loader.load_zones()
     poi_df = loader.load_poi_data()

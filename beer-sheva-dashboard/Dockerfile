@@ -15,27 +15,25 @@ RUN apt-get update && apt-get install -y \
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
 
-# Copy the current directory contents into the container at /app
-COPY . /app
-
-# Create data directory and copy data files
-RUN mkdir -p /app/data
-COPY data/* /app/data/
-
-# Create necessary directories
-RUN mkdir -p /app/output/dashboard_data
-
-# Install any needed packages specified in requirements.txt
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Run preprocessing script
-RUN python preprocess_data.py
+# Create necessary directories
+RUN mkdir -p /app/data/raw \
+    /app/data/processed \
+    /app/output/dashboard_data \
+    /app/output/poi_charts
 
-# Make port 8050 available to the world outside this container
+# Copy the application code
+COPY . /app/
+
+# Run preprocessing scripts
+RUN python pre_preprocess_data.py && \
+    python preprocess_data.py
+
+# Make port 8050 available
 EXPOSE 8050
-
-# Define environment variable
-ENV NAME World
 
 # Run app.py when the container launches
 CMD ["python", "app.py"]

@@ -75,7 +75,7 @@ class ChartCreator:
         # Adjust autotext sizes
         for autotext in autotexts:
             autotext.set_color(self.color_scheme['text'])
-            autotext.set_fontsize(22)  # Increased from 15
+            autotext.set_fontsize(22)
         
         # Add a legend with increased font size and moved to upper right
         legend_labels = [f'{label}: {value:.1f}%' for label, value in sorted_data.items()]
@@ -83,8 +83,8 @@ class ChartCreator:
                  title=category.capitalize(), 
                  loc="upper right", 
                  bbox_to_anchor=(1.3, 1.1), 
-                 fontsize=22,  # Increased from 15
-                 title_fontsize=24)  # Increased from 16
+                 fontsize=22,
+                 title_fontsize=24)
         
         # Title
         ax.set_title(category.capitalize(), 
@@ -124,35 +124,6 @@ class ChartCreator:
             print(f"Warning: Chart image not found: {image_path}")
             return ''
 
-    def create_time_chart(self, df):
-        time_columns = [col for col in df.columns if col.startswith('arrival_')]
-        
-        if not time_columns:
-            return go.Figure()
-
-        time_data = (df[time_columns] * df['total_trips'].values[:, None]).sum() / df['total_trips'].sum()
-        time_data = time_data.sort_index()
-        
-        hours = [col.split('_')[1] for col in time_data.index]
-        
-        fig = go.Figure(data=[go.Bar(
-            x=hours,
-            y=time_data.values,
-            marker_color=self.chart_colors[0]
-        )])
-        
-        fig.update_layout(
-            title='Trip Times',  # Simplified title
-            xaxis_title='Hour',
-            yaxis_title='Percentage of Trips',
-            paper_bgcolor=self.color_scheme['background'],
-            plot_bgcolor=self.color_scheme['background'],
-            font_color=self.color_scheme['text'],
-            font=dict(size=18)
-        )
-        
-        return fig
-
 def test_chart_creator():
     from data_loader import DataLoader
     
@@ -167,13 +138,6 @@ def test_chart_creator():
     test_trip_type = 'inbound'
     test_df = trip_data[(test_poi, test_trip_type)]
     
-    print(f"Testing create_time_chart() for {test_poi} ({test_trip_type}):")
-    fig = chart_creator.create_time_chart(test_df)
-    
-    # Save the test time chart
-    import plotly.io as pio
-    pio.write_html(fig, file='test_time_chart.html', auto_open=True)
-    print("Test time chart saved as 'test_time_chart.html'")
     print("\nTesting create_pie_chart() and save_pie_chart():")
     for category, title in [('mode', 'Average Trip Modes'), 
                             ('purpose', 'Average Trip Purposes'), 

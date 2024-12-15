@@ -25,10 +25,19 @@ buffer_union = unary_union(poi_polygons.geometry).buffer(0.0045)
 # Filter points within buffer
 points_within = google_points[google_points.geometry.within(buffer_union)]
 
+# Filter out points that are within the POI polygons
+poi_union = unary_union(poi_polygons.geometry)
+points_within = points_within[~points_within.geometry.within(poi_union)]
+
 # Create output directory if it doesn't exist
 output_dir = "shapes/data/output"
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
+
+# Save filtered points as shapefile
+points_shapefile = os.path.join(output_dir, "points_within_buffer.shp")
+points_within.to_file(points_shapefile)
+print(f"Filtered points (excluding POI areas) saved to {points_shapefile}")
 
 # Create the map
 center_lat = poi_polygons.geometry.centroid.y.mean()
@@ -82,12 +91,9 @@ map_path = os.path.join(output_dir, "walking_amenities_poi.html")
 m.save(map_path)
 print(f"Map saved to {map_path}")
 
-# Save as GeoDatabase with separate layers
-gdb_path = os.path.join(output_dir, "walking_amenities_poi.gdb")
+# Save each layer as separate shapefiles
+poi_polygons.to_file(os.path.join(output_dir, "walking_amenities_polygons.shp"))
+points_within.to_file(os.path.join(output_dir, "walking_amenities_points.shp"))
+entry_points.to_file(os.path.join(output_dir, "walking_amenities_entrances.shp"))
 
-# Save each layer separately to the GeoDatabase
-poi_polygons.to_file(gdb_path, layer='polygons', driver="FileGDB")
-points_within.to_file(gdb_path, layer='points', driver="FileGDB")
-entry_points.to_file(gdb_path, layer='entrances', driver="FileGDB")
-
-print("GeoDatabase saved with three layers: polygons, points, and entrances")
+print("Shapefiles saved: polygons, points, and entrances")

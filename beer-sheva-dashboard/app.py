@@ -13,6 +13,8 @@ import traceback
 import plotly.graph_objects as go
 from dash.exceptions import PreventUpdate
 
+
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ class DashboardApp:
         self.setup_layout()
         self.setup_callbacks()
 
+ 
     def setup_layout(self):
         self.app.layout = dbc.Container([
             dbc.Row([
@@ -102,10 +105,6 @@ class DashboardApp:
                                        style={'width': '100%', 'height': 'auto'}), 
                                width=4)
                     ], className="mb-4"),
-                    
-                    dbc.Row([
-                        dbc.Col(dcc.Graph(id='time-chart'), width=12)
-                    ])
                 ], width=10),  # Main content
                 dbc.Col([], width=1)  # Right buffer
             ])
@@ -198,7 +197,6 @@ class DashboardApp:
              dash.Output('mode-chart', 'src'),
              dash.Output('purpose-chart', 'src'),
              dash.Output('frequency-chart', 'src'),
-             dash.Output('time-chart', 'figure'),
              dash.Output('poi-selector', 'value')],
             [dash.Input('poi-selector', 'value'),
              dash.Input('trip-type-selector', 'value'),
@@ -213,7 +211,6 @@ class DashboardApp:
                 if clicked_poi and clicked_poi in self.poi_df['name'].values:
                     selected_poi = clicked_poi
                 else:
-                    # If clicked on a zone or non-POI area, don't update
                     raise PreventUpdate()
 
             try:
@@ -229,15 +226,13 @@ class DashboardApp:
                 purpose_chart_src = self.chart_creator.load_pie_chart(selected_poi.replace(' ', '_'), 'avg_trip_purpose')
                 frequency_chart_src = self.chart_creator.load_pie_chart(selected_poi.replace(' ', '_'), 'avg_trip_frequency')
                 
-                time_chart = self.chart_creator.create_time_chart(df)
-                
                 logger.info("Dashboard update completed successfully")
-                return map_fig, mode_chart_src, purpose_chart_src, frequency_chart_src, time_chart, selected_poi
+                return map_fig, mode_chart_src, purpose_chart_src, frequency_chart_src, selected_poi
             except Exception as e:
                 logger.error(f"Error updating dashboard: {str(e)}")
                 logger.error(traceback.format_exc())
                 # Return empty figures/charts in case of error
-                return go.Figure(), '', '', '', go.Figure(), selected_poi
+                return go.Figure(), '', '', '', selected_poi
 
     def run_server(self, debug=True):
         self.app.run_server(debug=debug)
