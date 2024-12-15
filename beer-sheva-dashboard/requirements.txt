@@ -1,6 +1,6 @@
 dash==2.14.1
 dash-bootstrap-components==1.4.1
-fiona==1.9.5
+fiona>=1.10b2
 pandas==1.5.3
 geopandas==0.12.2
 plotly==5.14.1
