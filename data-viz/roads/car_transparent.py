@@ -8,37 +8,97 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import logging
 from config import OUTPUT_DIR
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from PIL import Image
-import time
-import io
 from shapely.geometry import Point
-
-try:
-    import cv2
-except ImportError:
-    print("Please install OpenCV with: pip install opencv-python")
-    raise
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Update the load_trip_data function to include POI information
+def determine_poi(coords, poi_polygons, poi_id_map):
+    """
+    Determine which POI a coordinate belongs to.
+    
+    Args:
+        coords: Tuple of (longitude, latitude)
+        poi_polygons: GeoDataFrame containing POI polygons
+        poi_id_map: Dictionary mapping POI IDs to names
+    
+    Returns:
+        String: POI name if within a POI area, None otherwise
+    """
+    point = Point(coords)
+    
+    for _, poi in poi_polygons.iterrows():
+        if poi.geometry.contains(point):
+            poi_id = poi['ID']
+            return poi_id_map.get(poi_id)
+    
+    return None
+
+def load_temporal_distributions():
+    """Load temporal distribution data for each POI"""
+    distributions = {}
+    
+    # Map file names to POI keys
+    file_mapping = {
+        'ben_gurion_university': 'BGU',
+        'gav_yam_high_tech_park': 'Gav Yam',
+        'soroka_medical_center': 'Soroka Hospital'
+    }
+    
+    for file_prefix, poi_key in file_mapping.items():
+        # Load only inbound distributions
+        inbound_file = os.path.join(OUTPUT_DIR, f"{file_prefix}_inbound_temporal.csv")
+        
+        try:
+            inbound_df = pd.read_csv(inbound_file)
+            
+            # Use only inbound distribution for cars
+            dist = inbound_df['car_dist'].values
+            
+            # Verify we have 24 hours of data
+            if len(dist) != 24:
+                logger.warning(f"Expected 24 hours of data for {poi_key}, got {len(dist)}")
+                dist = np.zeros(24)  # Fallback to uniform distribution
+            
+            # Normalize to ensure sum is 1.0
+            dist = dist / dist.sum() if dist.sum() > 0 else np.ones(24)/24
+            
+            # Log the distribution for verification
+            logger.info(f"\nTemporal distribution for {poi_key}:")
+            for hour, pct in enumerate(dist):
+                logger.info(f"Hour {hour:02d}:00 - {pct*100:5.1f}%")
+            
+            distributions[poi_key] = dist
+            
+        except Exception as e:
+            logger.error(f"Error loading temporal data for {poi_key}: {str(e)}")
+            # Fallback to uniform distribution
+            distributions[poi_key] = np.ones(24)/24
+    
+    return distributions
+
 def load_trip_data():
-    """Load and process trip data with POI-based coloring"""
+    """Load and process trip data with POI-based coloring and temporal distribution"""
     file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
     logger.info(f"Loading trip data from: {file_path}")
     
     # Define POIs and their colors
     POI_COLORS = {
-        'BGU': [0, 255, 90],        # Bright green
-        'Gav Yam': [0, 191, 255],   # Deep sky blue
-        'Soroka Hospital': [170, 0, 255]  # Deep purple
+        'BGU': [0, 255, 90],
+        'Gav Yam': [0, 191, 255],
+        'Soroka Hospital': [170, 0, 255]
     }
     
-    POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
+    # Animation timing constants
+    fps = 30
+    minutes_per_hour = 60
+    hours_per_day = 24  # Keep full 24 hours
+    frames_per_hour = fps * minutes_per_hour
+    animation_duration = frames_per_hour * hours_per_day
+    
+    # Load temporal distributions
+    temporal_dist = load_temporal_distributions()
     
     # Load POI polygons
     attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
@@ -54,54 +114,155 @@ def load_trip_data():
     trips_gdf = gpd.read_file(file_path)
     raw_trip_count = trips_gdf['num_trips'].sum()
     
-    # Animation parameters
-    fps = 30
-    minutes_per_hour = 60
-    hours_per_day = 24
-    frames_per_hour = fps * minutes_per_hour
-    animation_duration = frames_per_hour * hours_per_day
-    
     routes_data = []
     processed_trips = 0
+    hourly_trip_counts = {i: 0 for i in range(24)}
     
     for idx, row in trips_gdf.iterrows():
         try:
             coords = list(row.geometry.coords)
-            num_trips = int(row['num_trips'])
+            num_trips = float(row['num_trips'])
             
             if num_trips <= 0 or len(coords) < 2:
                 continue
             
             # Determine POI for this route
-            dest_point = Point(coords[-1])
-            poi_name = None
-            for _, poi_polygon in poi_polygons.iterrows():
-                if dest_point.distance(poi_polygon.geometry) < POI_RADIUS:
-                    poi_name = POI_ID_MAP[int(poi_polygon['ID'])]
-                    break
+            poi_name = determine_poi(coords[-1], poi_polygons, POI_ID_MAP)
+            if not poi_name:
+                continue
             
             path = [[float(x), float(y)] for x, y in coords]
-            processed_trips += num_trips
             
-            routes_data.append({
-                'path': path,
-                'startTime': 0,
-                'numTrips': num_trips,
-                'duration': len(coords) * 2,
-                'poi': poi_name
-            })
+            # Get temporal distribution for this POI
+            poi_dist = temporal_dist.get(poi_name, [1/24] * 24)
+            
+            # Process all 24 hours
+            for hour in range(24):
+                trips_this_hour = num_trips * poi_dist[hour]
+                
+                if trips_this_hour > 0.1:
+                    trips_this_hour = max(1, round(trips_this_hour))
+                    start_time = hour * frames_per_hour
+                    
+                    routes_data.append({
+                        'path': path,
+                        'startTime': start_time,
+                        'duration': min(frames_per_hour // 2, len(coords) * 2),
+                        'numTrips': trips_this_hour,
+                        'poi': poi_name
+                    })
+                    processed_trips += trips_this_hour
+                    hourly_trip_counts[hour] += trips_this_hour
             
         except Exception as e:
             logger.error(f"Error processing route {idx}: {str(e)}")
             continue
     
+    # Log distribution statistics
+    logger.info("\nHourly Trip Distribution:")
+    for hour in range(24):
+        count = hourly_trip_counts[hour]
+        percentage = (count / processed_trips * 100) if processed_trips > 0 else 0
+        logger.info(f"{hour:02d}:00 - {count:5d} trips ({percentage:5.1f}%)")
+    
     return routes_data, animation_duration, POI_COLORS
 
-def create_deck_html(routes_data, animation_duration, poi_colors):
+def load_model_outline(shapefile_path):
+    """Load model outline and convert to web mercator projection"""
+    model = gpd.read_file(shapefile_path)
+    if model.crs != 'EPSG:4326':
+        model = model.to_crs('EPSG:4326')
+    bounds = model.geometry.iloc[0].bounds
+    return model.geometry.iloc[0], bounds
+
+def get_optimal_viewport(bounds):
+    """Calculate optimal viewport settings based on geometry bounds"""
+    minx, miny, maxx, maxy = bounds
+    center_lon = (minx + maxx) / 2
+    center_lat = (miny + maxy) / 2
+    
+    # Calculate zoom level to fit bounds
+    lat_zoom = np.log2(360 / (maxy - miny)) + 1
+    lon_zoom = np.log2(360 / (maxx - minx)) + 1
+    zoom = min(lat_zoom, lon_zoom) - 0.5  # Slight padding
+    
+    return {
+        'longitude': center_lon,
+        'latitude': center_lat,
+        'zoom': zoom,
+        'pitch': 45,
+        'bearing': 0
+    }
+
+def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
     """Create HTML with transparent background and POI-colored trips"""
     routes_json = json.dumps(routes_data)
     poi_colors_json = json.dumps(poi_colors)
+    viewport_json = json.dumps(viewport)
     
+    animation_js = """
+            let cachedActiveTrips = null;
+            let lastFrame = -1;
+            let lastHour = -1;
+            
+            function processTrips(currentFrame) {
+                const currentHour = Math.floor((currentFrame / ANIMATION_DURATION) * 24);
+                
+                // Only process trips every 30 frames (1 second) or when hour changes
+                if (currentFrame === lastFrame && cachedActiveTrips && currentHour === lastHour) {
+                    return cachedActiveTrips;
+                }
+                
+                lastFrame = currentFrame;
+                lastHour = currentHour;
+                
+                // Filter active trips more efficiently
+                const activeTrips = ROUTES_DATA.filter(route => {
+                    const elapsedTime = (currentFrame - route.startTime) % ANIMATION_DURATION;
+                    return elapsedTime >= 0 && elapsedTime <= route.duration;
+                });
+                
+                cachedActiveTrips = activeTrips;
+                return activeTrips;
+            }
+            
+            function animate() {
+                const currentTime = performance.now();
+                const frame = Math.floor((currentTime / 1000 * 30) % ANIMATION_DURATION);
+                const hour = Math.floor((frame / ANIMATION_DURATION) * 24);
+                
+                if (hour !== lastHour) {
+                    console.log(`Hour ${hour}:00`);
+                }
+                
+                const trips = new deck.TripsLayer({
+                    id: 'trips',
+                    data: processTrips(frame),
+                    getPath: d => d.path,
+                    getTimestamps: d => d.path.map((_, i) => d.startTime + (i * d.duration / d.path.length)),
+                    getColor: d => getPathColor(d.path, d.poi),
+                    getWidth: d => Math.sqrt(d.numTrips),
+                    opacity: 0.8,
+                    widthMinPixels: 2,
+                    widthMaxPixels: 2,
+                    jointRounded: true,
+                    capRounded: true,
+                    trailLength: 5,
+                    currentTime: frame,
+                    updateTriggers: {
+                        getColor: [frame]
+                    }
+                });
+                
+                deckgl.setProps({
+                    layers: [trips]
+                });
+                
+                requestAnimationFrame(animate);
+            }
+    """
+    
+    # Update HTML template to include timing logs
     return f"""
     <!DOCTYPE html>
     <html>
@@ -179,13 +340,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors):
 
             const lightingEffect = new deck.LightingEffect({{ambientLight, pointLight}});
             
-            const INITIAL_VIEW_STATE = {{
-                longitude: 34.8113,
-                latitude: 31.2627,
-                zoom: 13,
-                pitch: 45,
-                bearing: 0
-            }};
+            const INITIAL_VIEW_STATE = {viewport_json};
             
             const deckgl = new deck.DeckGL({{
                 container: 'container',
@@ -202,11 +357,18 @@ def create_deck_html(routes_data, animation_duration, poi_colors):
                     depthTest: true,
                     depthFunc: WebGLRenderingContext.LEQUAL
                 }},
+                glOptions: {{
+                    webgl2: true,
+                    webgl1: true,
+                    preserveDrawingBuffer: true
+                }},
                 onWebGLInitialized: (gl) => {{
+                    console.log('WebGL initialized');
                     gl.enable(gl.BLEND);
                     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
                 }},
                 onLoad: () => {{
+                    console.log('deck.gl loaded');
                     isInitialized = true;
                     document.getElementById('loading').style.display = 'none';
                     window.deckglLoaded = true;
@@ -224,43 +386,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors):
                 return [253, 128, 93];
             }}
             
-            function animate() {{
-                if (!isInitialized) {{
-                    requestAnimationFrame(animate);
-                    return;
-                }}
-                
-                const hour = Math.floor((frame / ANIMATION_DURATION) * HOURS_PER_DAY + START_HOUR) % 24;
-                
-                if (hour !== lastLoggedHour) {{
-                    console.log(`Hour ${{hour}}:00`);
-                    lastLoggedHour = hour;
-                }}
-                
-                const trips = new deck.TripsLayer({{
-                    id: 'trips',
-                    data: ROUTES_DATA,
-                    getPath: d => d.path,
-                    getTimestamps: d => d.path.map((_, i) => d.startTime + (i * d.duration / d.path.length)),
-                    getColor: d => getPathColor(d.path, d.poi),
-                    getWidth: d => Math.sqrt(d.numTrips || 1),
-                    opacity: 1.0,
-                    widthMinPixels: 2,
-                    widthMaxPixels: 10,
-                    jointRounded: true,
-                    capRounded: true,
-                    trailLength,
-                    currentTime: frame,
-                    shadowEnabled: false,
-                }});
-                
-                deckgl.setProps({{
-                    layers: [trips]
-                }});
-                
-                frame = (frame + 1) % ANIMATION_DURATION;
-                requestAnimationFrame(animate);
-            }}
+            {animation_js}
             
             setTimeout(() => {{
                 animate();
@@ -271,112 +397,31 @@ def create_deck_html(routes_data, animation_duration, poi_colors):
     </html>
     """
 
-def save_frames_as_images(html_path, output_dir, duration_seconds=60):
-    """Save individual frames as PNG images with progress tracking"""
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--hide-scrollbars')
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.get(f'file://{html_path}')
-    
-    logger.info("Waiting for animation to initialize...")
-    time.sleep(3)
-    
-    try:
-        initialized = driver.execute_script("return window.deckglLoaded === true;")
-        animation_started = driver.execute_script("return window.animationStarted === true;")
-        
-        if not initialized or not animation_started:
-            logger.error("Animation failed to initialize properly")
-            return
-        
-        logger.info("Animation initialized, starting capture...")
-        frames_to_capture = duration_seconds * 30
-        
-        # Update progress bar
-        def update_progress(progress):
-            driver.execute_script(f"document.querySelector('.progress').style.width = '{progress}%'")
-        
-        for i in range(frames_to_capture):
-            screenshot = driver.get_screenshot_as_png()
-            image = Image.open(io.BytesIO(screenshot))
-            
-            if image.mode != 'RGBA':
-                image = image.convert('RGBA')
-            
-            frame_path = os.path.join(output_dir, f'frame_{i:05d}.png')
-            image.save(frame_path, 'PNG')
-            
-            # Update progress every frame
-            progress = (i + 1) * 100 / frames_to_capture
-            update_progress(progress)
-            
-            if i % 30 == 0:
-                logger.info(f"Saved frame {i}/{frames_to_capture} ({progress:.1f}%)")
-            
-            time.sleep(1/30)
-    
-    finally:
-        driver.quit()
-
-def create_video_from_frames(frame_dir, output_path, fps=30):
-    """Create video from frames preserving transparency"""
-    frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame_')])
-    if not frame_files:
-        raise ValueError("No frames found in directory")
-    
-    first_frame = cv2.imread(os.path.join(frame_dir, frame_files[0]), cv2.IMREAD_UNCHANGED)
-    height, width = first_frame.shape[:2]
-    
-    fourcc = cv2.VideoWriter_fourcc(*'png ')  # Space is intentional
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height), True)
-    
-    try:
-        for frame_file in frame_files:
-            frame_path = os.path.join(frame_dir, frame_file)
-            frame = cv2.imread(frame_path, cv2.IMREAD_UNCHANGED)
-            
-            if frame.shape[2] == 4:  # If RGBA
-                bgr = frame[:, :, :3]
-                alpha = frame[:, :, 3]
-                white_bg = np.ones_like(bgr) * 255
-                alpha_3d = np.stack([alpha, alpha, alpha], axis=2) / 255.0
-                blended = (bgr * alpha_3d + white_bg * (1 - alpha_3d)).astype(np.uint8)
-                out.write(blended)
-            else:
-                out.write(frame)
-    finally:
-        out.release()
-
 def main():
-    # Load trip data with POI colors
+    # Load trip data
     routes_data, animation_duration, poi_colors = load_trip_data()
     
-    # Create HTML file
-    html_path = os.path.join(OUTPUT_DIR, "projection_animation.html")
-    html_content = create_deck_html(routes_data, animation_duration, poi_colors)
+    # Load both model outlines
+    big_model_outline, big_bounds = load_model_outline('data-viz/data/model_outline/big model.shp')
+    small_model_outline, small_bounds = load_model_outline('data-viz/data/model_outline/small model.shp')
     
-    with open(html_path, "w") as f:
+    # Create viewports for both models
+    big_viewport = get_optimal_viewport(big_bounds)
+    small_viewport = get_optimal_viewport(small_bounds)
+    
+    # Generate HTML files only
+    html_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
+    html_content = create_deck_html(routes_data, animation_duration, poi_colors, big_viewport)
+    with open(html_path_big, "w") as f:
         f.write(html_content)
     
-    print(f"\nHTML file created at: {html_path}")
+    html_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
+    html_content = create_deck_html(routes_data, animation_duration, poi_colors, small_viewport)
+    with open(html_path_small, "w") as f:
+        f.write(html_content)
     
-    # Create frames directory
-    frames_dir = os.path.join(OUTPUT_DIR, "animation_frames")
-    
-    # Save frames as images
-    save_frames_as_images(os.path.abspath(html_path), frames_dir)
-    
-    # Create video from frames
-    output_path = os.path.join(OUTPUT_DIR, "projection_animation.mp4")
-    create_video_from_frames(frames_dir, output_path)
-    
-    logger.info(f"Video saved to: {output_path}")
+    logger.info(f"HTML files saved to:\n{html_path_big}\n{html_path_small}")
 
 if __name__ == "__main__":
     main()
+
