@@ -81,29 +81,12 @@ def load_temporal_distributions():
 def load_trip_data():
     """Load and process trip data with POI-based coloring and temporal distribution"""
     file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
-    logger.info(f"Loading trip data from: {file_path}")
-    
     # Define POIs and their colors
     POI_COLORS = {
         'BGU': [0, 255, 90],
         'Gav Yam': [0, 191, 255],
         'Soroka Hospital': [170, 0, 255]
     }
-    
-    # Animation timing constants - UPDATED
-    fps = 30
-    seconds_per_hour = 12  # Slow down: each hour takes 12 seconds
-    hours_per_day = 24
-    frames_per_hour = fps * seconds_per_hour
-    animation_duration = frames_per_hour * hours_per_day  # Will be 8640 frames total
-    
-    # Load temporal distributions
-    temporal_dist = load_temporal_distributions()
-    
-    # Load POI polygons
-    attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-    poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]
-    
     # POI ID mapping
     POI_ID_MAP = {
         7: 'BGU',
@@ -111,61 +94,101 @@ def load_trip_data():
         11: 'Soroka Hospital'
     }
     
-    trips_gdf = gpd.read_file(file_path)
-    raw_trip_count = trips_gdf['num_trips'].sum()
-    
-    routes_data = []
-    processed_trips = 0
-    hourly_trip_counts = {i: 0 for i in range(24)}
-    
-    for idx, row in trips_gdf.iterrows():
-        try:
-            coords = list(row.geometry.coords)
-            num_trips = float(row['num_trips'])
-            
-            if num_trips <= 0 or len(coords) < 2:
-                continue
-            
-            # Determine POI for this route
-            poi_name = determine_poi(coords[-1], poi_polygons, POI_ID_MAP)
-            if not poi_name:
-                continue
-            
-            path = [[float(x), float(y)] for x, y in coords]
-            
-            # Get temporal distribution for this POI
-            poi_dist = temporal_dist.get(poi_name, [1/24] * 24)
-            
-            # Process all 24 hours
-            for hour in range(24):
-                trips_this_hour = num_trips * poi_dist[hour]
+    try:
+        # Animation timing constants - UPDATED
+        fps = 30
+        seconds_per_hour = 30  # Increase from 12 to 30 seconds per hour
+        hours_per_day = 24
+        frames_per_hour = fps * seconds_per_hour
+        animation_duration = frames_per_hour * hours_per_day
+        
+        # Add logging for animation timing
+        logger.info(f"\nAnimation timing configuration:")
+        logger.info(f"FPS: {fps}")
+        logger.info(f"Seconds per hour: {seconds_per_hour}")
+        logger.info(f"Frames per hour: {frames_per_hour}")
+        logger.info(f"Total frames: {animation_duration}")
+        logger.info(f"Total animation duration: {animation_duration/fps:.1f} seconds")
+        
+        # Load temporal distributions
+        temporal_dist = load_temporal_distributions()
+        
+        # Load POI polygons
+        attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+        poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]
+        
+        trips_gdf = gpd.read_file(file_path)
+        raw_trip_count = trips_gdf['num_trips'].sum()
+        
+        routes_data = []
+        processed_trips = 0
+        skipped_trips = 0
+        hourly_trip_counts = {i: {'planned': 0, 'actual': 0} for i in range(24)}
+        
+        for idx, row in trips_gdf.iterrows():
+            try:
+                coords = list(row.geometry.coords)
+                num_trips = float(row['num_trips'])
                 
-                if trips_this_hour > 0.1:
-                    trips_this_hour = max(1, round(trips_this_hour))
-                    start_time = hour * frames_per_hour
+                if num_trips <= 0 or len(coords) < 2:
+                    continue
+                
+                # Determine POI for this route
+                poi_name = determine_poi(coords[-1], poi_polygons, POI_ID_MAP)
+                if not poi_name:
+                    continue
+                
+                path = [[float(x), float(y)] for x, y in coords]
+                poi_dist = temporal_dist.get(poi_name, [1/24] * 24)
+                
+                # Process all 24 hours
+                for hour in range(24):
+                    trips_this_hour = num_trips * poi_dist[hour]
+                    hourly_trip_counts[hour]['planned'] += trips_this_hour
                     
-                    routes_data.append({
-                        'path': path,
-                        'startTime': start_time,
-                        'duration': min(frames_per_hour // 2, len(coords) * 2),
-                        'numTrips': trips_this_hour,
-                        'poi': poi_name
-                    })
-                    processed_trips += trips_this_hour
-                    hourly_trip_counts[hour] += trips_this_hour
-            
-        except Exception as e:
-            logger.error(f"Error processing route {idx}: {str(e)}")
-            continue
-    
-    # Log distribution statistics
-    logger.info("\nHourly Trip Distribution:")
-    for hour in range(24):
-        count = hourly_trip_counts[hour]
-        percentage = (count / processed_trips * 100) if processed_trips > 0 else 0
-        logger.info(f"{hour:02d}:00 - {count:5d} trips ({percentage:5.1f}%)")
-    
-    return routes_data, animation_duration, POI_COLORS
+                    if trips_this_hour > 0.1:
+                        # Don't round down small numbers of trips
+                        trips_this_hour = max(1, trips_this_hour)
+                        start_time = hour * frames_per_hour
+                        
+                        routes_data.append({
+                            'path': path,
+                            'startTime': start_time,
+                            'duration': min(frames_per_hour // 2, len(coords) * 2),
+                            'numTrips': trips_this_hour,
+                            'poi': poi_name,
+                            'debug': True
+                        })
+                        
+                        processed_trips += trips_this_hour
+                        hourly_trip_counts[hour]['actual'] += trips_this_hour
+                    else:
+                        skipped_trips += trips_this_hour
+                        
+            except Exception as e:
+                logger.error(f"Error processing route {idx}: {str(e)}")
+                continue
+        
+        # Log detailed statistics
+        logger.info("\nTrip Processing Statistics:")
+        logger.info(f"Total planned trips: {processed_trips + skipped_trips:,.0f}")
+        logger.info(f"Actually processed trips: {processed_trips:,.0f}")
+        logger.info(f"Skipped trips: {skipped_trips:,.0f}")
+        logger.info(f"Processing ratio: {(processed_trips/(processed_trips + skipped_trips))*100:.1f}%")
+        
+        logger.info("\nHourly Trip Distribution:")
+        for hour in range(24):
+            planned = hourly_trip_counts[hour]['planned']
+            actual = hourly_trip_counts[hour]['actual']
+            if planned > 0:
+                ratio = (actual / planned) * 100
+                logger.info(f"{hour:02d}:00 - Planned: {planned:6.1f}, Actual: {actual:6.1f} ({ratio:5.1f}%)")
+        
+        return routes_data, animation_duration, POI_COLORS
+        
+    except Exception as e:
+        logger.error(f"Error loading trip data: {str(e)}")
+        raise
 
 def load_model_outline(shapefile_path):
     """Load model outline and convert to web mercator projection"""
@@ -259,6 +282,45 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
                 });
                 
                 requestAnimationFrame(animate);
+            }
+            
+            let totalTripsDisplayed = 0;
+            let lastLogTime = 0;
+            
+            function logTripStatistics(currentFrame, activeTrips) {
+                const currentTime = performance.now();
+                if (currentTime - lastLogTime > 1000) {  // Log once per second
+                    const currentHour = Math.floor((currentFrame / ANIMATION_DURATION) * 24);
+                    const tripsByPOI = {
+                        'BGU': 0,
+                        'Gav Yam': 0,
+                        'Soroka Hospital': 0
+                    };
+                    
+                    let totalTrips = 0;
+                    activeTrips.forEach(trip => {
+                        if (trip.poi) {
+                            tripsByPOI[trip.poi] += trip.numTrips;
+                            totalTrips += trip.numTrips;
+                        }
+                    });
+                    
+                    console.log(`Hour ${currentHour}:00 - Active trips: ${totalTrips.toFixed(0)}`);
+                    console.log('Trips by POI:', tripsByPOI);
+                    
+                    totalTripsDisplayed += totalTrips;
+                    lastLogTime = currentTime;
+                }
+            }
+            
+            function processTrips(currentFrame) {
+                const activeTrips = ROUTES_DATA.filter(route => {
+                    const elapsedTime = (currentFrame - route.startTime) % ANIMATION_DURATION;
+                    return elapsedTime >= 0 && elapsedTime <= route.duration;
+                });
+                
+                logTripStatistics(currentFrame, activeTrips);
+                return activeTrips;
             }
     """
     

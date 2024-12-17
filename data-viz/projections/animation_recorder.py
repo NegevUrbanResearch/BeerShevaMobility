@@ -15,18 +15,22 @@ from PIL import Image
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
+from animation_config import ANIMATION_CONFIG
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def save_frames_as_images(html_path, output_dir, duration_seconds=288):
+def save_frames_as_images(html_path, output_dir):
     """Save individual frames as PNG images with robust progress tracking"""
+    # Get duration from shared config
+    duration_seconds = ANIMATION_CONFIG['total_seconds']
+    fps = ANIMATION_CONFIG['fps']
+    
     firefox_options = FirefoxOptions()
     firefox_options.add_argument('--headless')
     firefox_options.add_argument('--width=1920')
     firefox_options.add_argument('--height=1080')
-    # Enable WebGL
     firefox_options.set_preference('webgl.force-enabled', True)
     firefox_options.set_preference('webgl.disabled', False)
     
@@ -93,7 +97,7 @@ def save_frames_as_images(html_path, output_dir, duration_seconds=288):
             raise TimeoutError("Animation failed to initialize within timeout period")
         
         logger.info("Animation initialized successfully!")
-        frames_to_capture = duration_seconds * 30
+        frames_to_capture = int(duration_seconds * fps)
         
         # Clear existing frames
         for file in os.listdir(output_dir):
@@ -134,8 +138,9 @@ def save_frames_as_images(html_path, output_dir, duration_seconds=288):
     finally:
         driver.quit()
 
-def create_video_from_frames(frame_dir, output_path, fps=30):
+def create_video_from_frames(frame_dir, output_path):
     """Create video from frames using parallel processing"""
+    fps = ANIMATION_CONFIG['fps']
     frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame_')])
     if not frame_files:
         raise ValueError("No frames found in directory")
@@ -144,16 +149,16 @@ def create_video_from_frames(frame_dir, output_path, fps=30):
     first_frame = cv2.imread(os.path.join(frame_dir, frame_files[0]), cv2.IMREAD_UNCHANGED)
     height, width = first_frame.shape[:2]
     
-    # Calculate expected durations
+    # Calculate expected durations from shared config
     total_frames = len(frame_files)
     total_duration = total_frames / fps
-    hour_duration = total_duration / 24
+    hour_duration = total_duration / ANIMATION_CONFIG['hours_per_day']
     
     logger.info(f"Animation timing:")
     logger.info(f"Total frames: {total_frames}")
     logger.info(f"FPS: {fps}")
     logger.info(f"Total duration: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
-    logger.info(f"Hours in animation: 24")
+    logger.info(f"Hours in animation: {ANIMATION_CONFIG['hours_per_day']}")
     logger.info(f"Duration per hour: {hour_duration:.2f} seconds")
     
     # Try different codecs in order of preference
