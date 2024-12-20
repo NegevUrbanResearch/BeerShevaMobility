@@ -26,7 +26,9 @@ def calculate_animation_duration():
         'hours_per_day': hours_per_day,
         'frames_per_hour': frames_per_hour,
         'animation_duration': animation_duration,
-        'total_seconds': total_seconds
+        'total_seconds': total_seconds,
+        'trip_duration_multiplier': 2.0,  # Added for slower trips
+        'path_length_multiplier': 30      # Added for slower trips
     }
 
 # Calculate once at module import

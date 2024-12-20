@@ -9,6 +9,7 @@ import json
 import logging
 from config import OUTPUT_DIR
 from shapely.geometry import Point
+from animation_config import ANIMATION_CONFIG, calculate_animation_duration
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -95,12 +96,13 @@ def load_trip_data():
     }
     
     try:
-        # Animation timing constants - UPDATED
-        fps = 30
-        seconds_per_hour = 30  # Increase from 12 to 30 seconds per hour
-        hours_per_day = 24
-        frames_per_hour = fps * seconds_per_hour
-        animation_duration = frames_per_hour * hours_per_day
+        
+        # Animation timing constants from config
+        animation_config = calculate_animation_duration()
+        fps = animation_config['fps']
+        seconds_per_hour = animation_config['seconds_per_hour']
+        frames_per_hour = animation_config['frames_per_hour']
+        animation_duration = animation_config['animation_duration']
         
         # Add logging for animation timing
         logger.info(f"\nAnimation timing configuration:")
@@ -154,7 +156,8 @@ def load_trip_data():
                         routes_data.append({
                             'path': path,
                             'startTime': start_time,
-                            'duration': min(frames_per_hour // 2, len(coords) * 2),
+                            'duration': min(frames_per_hour * animation_config['trip_duration_multiplier'], 
+                                           len(coords) * animation_config['path_length_multiplier']),
                             'numTrips': trips_this_hour,
                             'poi': poi_name,
                             'debug': True

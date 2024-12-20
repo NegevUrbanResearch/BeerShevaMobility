@@ -16,13 +16,15 @@ import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from itertools import islice
 from animation_config import ANIMATION_CONFIG
+import subprocess
+import platform
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def save_frames_as_images(html_path, output_dir):
-    """Save individual frames as PNG images with robust progress tracking"""
+    """Save individual frames as PNG images with proper timing"""
     # Get duration from shared config
     duration_seconds = ANIMATION_CONFIG['total_seconds']
     fps = ANIMATION_CONFIG['fps']
@@ -104,9 +106,19 @@ def save_frames_as_images(html_path, output_dir):
             if file.startswith('frame_'):
                 os.remove(os.path.join(output_dir, file))
         
+        # Get the initial animation time
+        start_time = driver.execute_script("return performance.now()")
+        
         for i in range(frames_to_capture):
             current_frame = i + 1
             progress = (current_frame * 100) / frames_to_capture
+            
+            # Synchronize with animation timing
+            expected_time = start_time + (i * 1000 / fps)  # Convert to milliseconds
+            current_time = driver.execute_script("return performance.now()")
+            
+            if current_time < expected_time:
+                time.sleep((expected_time - current_time) / 1000)  # Convert back to seconds
             
             # Take screenshot
             screenshot = driver.get_screenshot_as_png()
@@ -211,22 +223,156 @@ def create_video_from_frames(frame_dir, output_path):
     
     raise RuntimeError("Failed to create video with any available codec")
 
+def record_animation_mac(html_path, output_path, duration_seconds):
+    """Record animation using headless Firefox and ffmpeg"""
+    logger.info("Starting Firefox for screen recording...")
+    
+    firefox_options = FirefoxOptions()
+    firefox_options.add_argument('--headless')
+    firefox_options.add_argument('--width=1920')
+    firefox_options.add_argument('--height=1080')
+    firefox_options.set_preference('webgl.force-enabled', True)
+    firefox_options.set_preference('webgl.disabled', False)
+    
+    driver = webdriver.Firefox(options=firefox_options)
+    
+    try:
+        logger.info(f"Loading page: file://{html_path}")
+        driver.get(f'file://{html_path}')
+        
+        # Wait for initialization
+        WebDriverWait(driver, 60).until(
+            lambda d: d.execute_script("return window.animationStarted === true")
+        )
+        
+        logger.info("Animation initialized, starting recording...")
+        
+        # Create temporary directory for frames
+        temp_dir = os.path.join(os.path.dirname(output_path), "temp_frames")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        fps = ANIMATION_CONFIG['fps']
+        frames_to_capture = int(duration_seconds * fps)
+        frame_interval = 1.0 / fps  # Time between frames in seconds
+        
+        # Inject frame rate control into the page
+        driver.execute_script("""
+            window.lastFrameTime = performance.now();
+            window.frameInterval = %f * 1000;  // Convert to milliseconds
+            
+            // Override requestAnimationFrame to control frame rate
+            const originalRAF = window.requestAnimationFrame;
+            window.requestAnimationFrame = function(callback) {
+                const now = performance.now();
+                const elapsed = now - window.lastFrameTime;
+                
+                if (elapsed >= window.frameInterval) {
+                    window.lastFrameTime = now;
+                    return originalRAF(callback);
+                }
+                
+                // Wait until next frame interval
+                return setTimeout(() => {
+                    window.lastFrameTime = performance.now();
+                    originalRAF(callback);
+                }, window.frameInterval - elapsed);
+            };
+        """ % frame_interval)
+        
+        # Get initial animation time
+        start_time = time.time()
+        
+        # Capture frames
+        for i in range(frames_to_capture):
+            # Calculate when this frame should be captured
+            target_time = start_time + (i * frame_interval)
+            current_time = time.time()
+            
+            # Wait if we're ahead of schedule
+            if current_time < target_time:
+                time.sleep(target_time - current_time)
+            
+            # Take screenshot
+            screenshot = driver.get_screenshot_as_png()
+            image = Image.open(io.BytesIO(screenshot))
+            
+            # Save frame
+            frame_path = os.path.join(temp_dir, f'frame_{i:05d}.png')
+            image.save(frame_path, 'PNG')
+            
+            # Print progress
+            if i % 30 == 0 or i == frames_to_capture - 1:
+                progress = ((i + 1) * 100) / frames_to_capture
+                logger.info(f"Recording progress: {progress:.1f}% ({i + 1}/{frames_to_capture} frames)")
+        
+        # Use ffmpeg to create video with exact frame rate
+        output_file = output_path.rsplit('.', 1)[0] + '.mp4'
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file if it exists
+            '-framerate', str(fps),
+            '-i', os.path.join(temp_dir, 'frame_%05d.png'),
+            '-c:v', 'libx264',
+            '-preset', 'slow',  # Higher quality encoding
+            '-pix_fmt', 'yuv420p',
+            '-crf', '18',  # Higher quality (lower is better, 18-28 is good range)
+            '-vf', f'fps={fps}',  # Force exact output framerate
+            output_file
+        ]
+        
+        logger.info("Creating video from frames...")
+        subprocess.run(ffmpeg_cmd, check=True)
+        
+        # Clean up temporary files
+        import shutil
+        shutil.rmtree(temp_dir)
+        
+        logger.info(f"Recording completed: {output_file}")
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"Error during recording: {str(e)}")
+        raise
+        
+    finally:
+        driver.quit()
+
 def main():
     from config import OUTPUT_DIR
     
-    # Process big model
-    html_path = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
-    frames_dir_big = os.path.join(OUTPUT_DIR, "animation_frames_big")
-    save_frames_as_images(os.path.abspath(html_path), frames_dir_big)
-    output_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.mp4")
-    create_video_from_frames(frames_dir_big, output_path_big)
-    
-    # Process small model
-    html_path = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
-    frames_dir_small = os.path.join(OUTPUT_DIR, "animation_frames_small")
-    save_frames_as_images(os.path.abspath(html_path), frames_dir_small)
-    output_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.mp4")
-    create_video_from_frames(frames_dir_small, output_path_small)
+    if platform.system() == 'Darwin':  # macOS
+        # Process big model
+        html_path = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
+        output_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.mp4")
+        record_animation_mac(
+            os.path.abspath(html_path), 
+            output_path_big,
+            ANIMATION_CONFIG['total_seconds']
+        )
+        
+        # Process small model
+        html_path = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
+        output_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.mp4")
+        record_animation_mac(
+            os.path.abspath(html_path),
+            output_path_small,
+            ANIMATION_CONFIG['total_seconds']
+        )
+    else:
+        # Fall back to frame-by-frame capture for non-Mac systems
+        # Process big model
+        html_path = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
+        frames_dir_big = os.path.join(OUTPUT_DIR, "animation_frames_big")
+        save_frames_as_images(os.path.abspath(html_path), frames_dir_big)
+        output_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.mp4")
+        create_video_from_frames(frames_dir_big, output_path_big)
+        
+        # Process small model
+        html_path = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
+        frames_dir_small = os.path.join(OUTPUT_DIR, "animation_frames_small")
+        save_frames_as_images(os.path.abspath(html_path), frames_dir_small)
+        output_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.mp4")
+        create_video_from_frames(frames_dir_small, output_path_small)
     
     logger.info(f"Videos saved to:\n{output_path_big}\n{output_path_small}")
 
