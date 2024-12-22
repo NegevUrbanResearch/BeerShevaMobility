@@ -27,8 +27,14 @@ def calculate_animation_duration():
         'frames_per_hour': frames_per_hour,
         'animation_duration': animation_duration,
         'total_seconds': total_seconds,
-        'trip_duration_multiplier': 2.0,  # Added for slower trips
-        'path_length_multiplier': 30      # Added for slower trips
+        'trip_duration_multiplier': {
+            'car': 2.0,    # Cars move faster
+            'walk': 3.0    # Pedestrians move slower
+        },
+        'path_length_multiplier': {
+            'car': 30,     # Car path stretching
+            'walk': 45     # Walking path stretching
+        }
     }
 
 # Calculate once at module import

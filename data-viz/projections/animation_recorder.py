@@ -340,41 +340,40 @@ def record_animation_mac(html_path, output_path, duration_seconds):
 def main():
     from config import OUTPUT_DIR
     
-    if platform.system() == 'Darwin':  # macOS
-        # Process big model
-        html_path = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
-        output_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.mp4")
-        record_animation_mac(
-            os.path.abspath(html_path), 
-            output_path_big,
-            ANIMATION_CONFIG['total_seconds']
-        )
-        
-        # Process small model
-        html_path = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
-        output_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.mp4")
-        record_animation_mac(
-            os.path.abspath(html_path),
-            output_path_small,
-            ANIMATION_CONFIG['total_seconds']
-        )
-    else:
-        # Fall back to frame-by-frame capture for non-Mac systems
-        # Process big model
-        html_path = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
-        frames_dir_big = os.path.join(OUTPUT_DIR, "animation_frames_big")
-        save_frames_as_images(os.path.abspath(html_path), frames_dir_big)
-        output_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.mp4")
-        create_video_from_frames(frames_dir_big, output_path_big)
-        
-        # Process small model
-        html_path = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
-        frames_dir_small = os.path.join(OUTPUT_DIR, "animation_frames_small")
-        save_frames_as_images(os.path.abspath(html_path), frames_dir_small)
-        output_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.mp4")
-        create_video_from_frames(frames_dir_small, output_path_small)
+    modes = ['car', 'walk']
+    directions = ['inbound', 'outbound']
+    models = ['big', 'small']
     
-    logger.info(f"Videos saved to:\n{output_path_big}\n{output_path_small}")
+    for mode in modes:
+        for direction in directions:
+            for model_size in models:
+                # Define paths
+                html_path = os.path.join(
+                    OUTPUT_DIR, 
+                    f"projection_animation_{model_size}_{mode}_{direction}.html"
+                )
+                output_path = os.path.join(
+                    OUTPUT_DIR, 
+                    f"projection_animation_{model_size}_{mode}_{direction}.mp4"
+                )
+                
+                logger.info(f"\nProcessing {model_size} model {mode} {direction} animation")
+                
+                if platform.system() == 'Darwin':  # macOS
+                    record_animation_mac(
+                        os.path.abspath(html_path),
+                        output_path,
+                        ANIMATION_CONFIG['total_seconds']
+                    )
+                else:
+                    frames_dir = os.path.join(
+                        OUTPUT_DIR, 
+                        f"animation_frames_{model_size}_{mode}_{direction}"
+                    )
+                    save_frames_as_images(os.path.abspath(html_path), frames_dir)
+                    create_video_from_frames(frames_dir, output_path)
+                
+                logger.info(f"Completed: {output_path}")
 
 if __name__ == "__main__":
     main() 

@@ -36,7 +36,7 @@ def determine_poi(coords, poi_polygons, poi_id_map):
     
     return None
 
-def load_temporal_distributions():
+def load_temporal_distributions(mode):
     """Load temporal distribution data for each POI"""
     distributions = {}
     
@@ -79,9 +79,11 @@ def load_temporal_distributions():
     
     return distributions
 
-def load_trip_data():
+def load_trip_data(mode='car', direction='inbound'):
     """Load and process trip data with POI-based coloring and temporal distribution"""
-    file_path = os.path.join(OUTPUT_DIR, "road_usage_trips.geojson")
+    # Determine file path based on mode and direction
+    file_path = os.path.join(OUTPUT_DIR, f"{mode}_routes_{direction}.geojson")
+    
     # Define POIs and their colors
     POI_COLORS = {
         'BGU': [0, 255, 90],
@@ -112,13 +114,14 @@ def load_trip_data():
         logger.info(f"Total frames: {animation_duration}")
         logger.info(f"Total animation duration: {animation_duration/fps:.1f} seconds")
         
-        # Load temporal distributions
-        temporal_dist = load_temporal_distributions()
+        # Load temporal distributions for the specific mode
+        temporal_dist = load_temporal_distributions(mode)
         
         # Load POI polygons
         attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
         poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]
         
+        # Load trips
         trips_gdf = gpd.read_file(file_path)
         raw_trip_count = trips_gdf['num_trips'].sum()
         
@@ -156,10 +159,12 @@ def load_trip_data():
                         routes_data.append({
                             'path': path,
                             'startTime': start_time,
-                            'duration': min(frames_per_hour * animation_config['trip_duration_multiplier'], 
-                                           len(coords) * animation_config['path_length_multiplier']),
+                            'duration': min(frames_per_hour * animation_config['trip_duration_multiplier'][mode], 
+                                           len(coords) * animation_config['path_length_multiplier'][mode]),
                             'numTrips': trips_this_hour,
                             'poi': poi_name,
+                            'mode': mode,
+                            'direction': direction,
                             'debug': True
                         })
                         
@@ -220,7 +225,7 @@ def get_optimal_viewport(bounds):
         'bearing': 0
     }
 
-def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
+def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode, direction):
     """Create HTML with transparent background and POI-colored trips"""
     routes_json = json.dumps(routes_data)
     poi_colors_json = json.dumps(poi_colors)
@@ -267,16 +272,17 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
                     getPath: d => d.path,
                     getTimestamps: d => d.path.map((_, i) => d.startTime + (i * d.duration / d.path.length)),
                     getColor: d => getPathColor(d.path, d.poi),
-                    getWidth: d => Math.sqrt(d.numTrips),
+                    getWidth: d => getPathWidth(d),
                     opacity: 0.8,
-                    widthMinPixels: 2,
-                    widthMaxPixels: 2,
+                    widthMinPixels: d => d.mode === 'walk' ? 1 : 2,
+                    widthMaxPixels: d => d.mode === 'walk' ? 1 : 2,
                     jointRounded: true,
                     capRounded: true,
-                    trailLength: 5,
+                    trailLength: d => d.mode === 'walk' ? 3 : 5,
                     currentTime: frame,
                     updateTriggers: {
-                        getColor: [frame]
+                        getColor: [frame],
+                        getWidth: [frame]
                     }
                 });
                 
@@ -324,6 +330,11 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
                 
                 logTripStatistics(currentFrame, activeTrips);
                 return activeTrips;
+            }
+            
+            function getPathWidth(d) {
+                const baseWidth = Math.sqrt(d.numTrips);
+                return d.mode === 'walk' ? baseWidth * 0.7 : baseWidth;  // Thinner lines for walking
             }
     """
     
@@ -463,29 +474,43 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport):
     """
 
 def main():
-    # Load trip data
-    routes_data, animation_duration, poi_colors = load_trip_data()
+    # Process all combinations
+    modes = ['car', 'walk']
+    directions = ['inbound', 'outbound']
+    models = ['big', 'small']
     
-    # Load both model outlines
-    big_model_outline, big_bounds = load_model_outline('data-viz/data/model_outline/big model.shp')
-    small_model_outline, small_bounds = load_model_outline('data-viz/data/model_outline/small model.shp')
-    
-    # Create viewports for both models
-    big_viewport = get_optimal_viewport(big_bounds)
-    small_viewport = get_optimal_viewport(small_bounds)
-    
-    # Generate HTML files only
-    html_path_big = os.path.join(OUTPUT_DIR, "projection_animation_big.html")
-    html_content = create_deck_html(routes_data, animation_duration, poi_colors, big_viewport)
-    with open(html_path_big, "w") as f:
-        f.write(html_content)
-    
-    html_path_small = os.path.join(OUTPUT_DIR, "projection_animation_small.html")
-    html_content = create_deck_html(routes_data, animation_duration, poi_colors, small_viewport)
-    with open(html_path_small, "w") as f:
-        f.write(html_content)
-    
-    logger.info(f"HTML files saved to:\n{html_path_big}\n{html_path_small}")
+    for mode in modes:
+        for direction in directions:
+            # Load trip data for this combination
+            routes_data, animation_duration, poi_colors = load_trip_data(mode, direction)
+            
+            for model_size in models:
+                # Load appropriate model outline
+                model_outline, bounds = load_model_outline(
+                    f'data-viz/data/model_outline/{model_size} model.shp'
+                )
+                
+                # Create viewport for this model
+                viewport = get_optimal_viewport(bounds)
+                
+                # Generate HTML
+                html_path = os.path.join(
+                    OUTPUT_DIR, 
+                    f"projection_animation_{model_size}_{mode}_{direction}.html"
+                )
+                html_content = create_deck_html(
+                    routes_data, 
+                    animation_duration, 
+                    poi_colors, 
+                    viewport,
+                    mode,
+                    direction
+                )
+                
+                with open(html_path, "w") as f:
+                    f.write(html_content)
+                
+                logger.info(f"Created HTML: {html_path}")
 
 if __name__ == "__main__":
     main()

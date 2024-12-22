@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class OTPClient:
-    def __init__(self, base_url="http://localhost:8080/otp/routers/default", max_retries=3, retry_delay=1):
+    def __init__(self, base_url="http://localhost:8080/otp/routers/default", max_retries=3, retry_delay=0.1):
         self.base_url = base_url
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -322,7 +322,7 @@ class ImprovedTripGenerator:
                         logger.warning(f"Too many consecutive failures for zone {zone_id}. Skipping remaining trips.")
                         break
                     
-                time.sleep(0.5)  # Increased rate limiting
+                time.sleep(0.05)  # Sleep time
                 
         return successful_routes
 
@@ -357,35 +357,50 @@ def main():
         # Process each POI
         for poi_name in target_pois:
             # Process both inbound and outbound trips
-            for direction in ['outbound', 'inbound']:
+            for direction in ['inbound', 'outbound']:
                 logger.info(f"\nProcessing {poi_name} - {direction}")
                 if (poi_name, direction) not in trip_data:
+                    logger.warning(f"No {direction} trip data found for {poi_name}")
+                    poi_pbar.update(1)
                     continue
                 
                 df = trip_data[(poi_name, direction)]
+                
+                # Verify required columns exist
                 if 'total_trips' not in df.columns or 'mode_ped' not in df.columns:
+                    logger.warning(f"Missing required columns in {direction} data for {poi_name}")
+                    poi_pbar.update(1)
                     continue
                 
-                # Calculate pedestrian trips
+                # Calculate and filter pedestrian trips
                 df['ped_trips'] = df['total_trips'] * (df['mode_ped'] / 100)
-                df = df[df['ped_trips'] > 0]
+                df = df[df['ped_trips'] >= 1]  # Only include zones with at least 1 pedestrian trip
                 
                 if df.empty:
+                    logger.warning(f"No pedestrian trips found for {poi_name} - {direction}")
+                    poi_pbar.update(1)
                     continue
+                
+                logger.info(f"Processing {int(df['ped_trips'].sum())} pedestrian trips for {poi_name} - {direction}")
                 
                 entrances = entrance_manager.get_entrances_for_poi(poi_name)
                 if entrances.empty:
+                    logger.warning(f"No entrances found for {poi_name}")
+                    poi_pbar.update(1)
                     continue
                 
                 # Process each zone
                 for _, zone_data in df.iterrows():
-                    # For outbound trips, swap origin and destination
+                    num_ped_trips = int(round(zone_data['ped_trips']))
+                    if num_ped_trips < 1:
+                        continue
+                        
                     if direction == 'outbound':
                         # Select a random entrance as the origin
                         entrance = entrances.sample(n=1).iloc[0]
                         zone_trips = trip_generator.process_zone_trips(
                             zone_data['tract'],
-                            int(round(zone_data['ped_trips'])),
+                            num_ped_trips,
                             poi_name,
                             entrances,
                             zone_data,
@@ -395,7 +410,7 @@ def main():
                     else:
                         zone_trips = trip_generator.process_zone_trips(
                             zone_data['tract'],
-                            int(round(zone_data['ped_trips'])),
+                            num_ped_trips,
                             poi_name,
                             entrances,
                             zone_data,
