@@ -231,7 +231,7 @@ def create_animation(html_template, map_style, output_suffix):
         'frames_per_hour': frames_per_hour,
          'map_style': map_style
     }
-    
+    print(f"Using Mapbox token: {MAPBOX_API_KEY[:10]}...") 
     try:
         formatted_html = html_template % format_values
         output_path = os.path.join(OUTPUT_DIR, f"trip_animation_mapbox_{output_suffix}.html")

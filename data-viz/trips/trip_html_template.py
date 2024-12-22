@@ -22,6 +22,22 @@ HTML_TEMPLATE = """
             border-radius: 5px;
             color: #FFFFFF;
             font-family: Arial;
+            z-index: 1000;
+        }
+        .debug-panel {
+            position: absolute;
+            bottom: 40px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 12px;
+            border-radius: 5px;
+            color: #FFFFFF;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            width: 400px;
         }
         .methodology-container {
             position: fixed;
@@ -33,6 +49,7 @@ HTML_TEMPLATE = """
             color: #FFFFFF;
             font-family: Arial;
             max-width: 300px;
+            z-index: 1000;
         }
         .time-display {
             position: absolute;
@@ -71,6 +88,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div id="container"></div>
+    <div class="debug-panel" id="debug-panel"></div>
     <div class="control-panel">
         <div>
             <label>Trail Length: <span id="trail-value">5</span></label>
@@ -110,11 +128,44 @@ HTML_TEMPLATE = """
         © <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>
     </div>
     <script>
-    // Configure Mapbox first, before any other script execution
-    mapboxgl.accessToken = '%(mapbox_api_key)s';
+    //------------------------------------------------------------------------------
+    // UTILITY FUNCTIONS
+    //------------------------------------------------------------------------------
+    const debugLog = {
+        log: function(message, type = 'info') {
+            const debugPanel = document.getElementById('debug-panel');
+            if (!debugPanel) {
+                console[type](message);
+                return;
+            }
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.style.color = type === 'error' ? '#ff6b6b' : 
+                            type === 'warning' ? '#ffd93d' : '#4cd137';
+            entry.textContent = `[${timestamp}] ${message}`;
+            debugPanel.appendChild(entry);
+            debugPanel.scrollTop = debugPanel.scrollHeight;
+            console[type](message);
+        },
+        error: function(message) { this.log(message, 'error'); },
+        warn: function(message) { this.log(message, 'warning'); }
+    };
+
+    //------------------------------------------------------------------------------
+    // MAPBOX INITIALIZATION
+    //------------------------------------------------------------------------------
+    // Set Mapbox token globally before any map operations
+    mapboxgl.accessToken = 'pk.eyJ1Ijoibm9hbWpnYWwiLCJhIjoiY20zbHJ5MzRvMHBxZTJrcW9uZ21pMzMydiJ9.B_aBdP5jxu9nwTm3CoNhlg';
 
     document.addEventListener('DOMContentLoaded', async function() {
         try {
+            debugLog.log('Initializing application...');
+            debugLog.log(`Mapbox GL JS version: ${mapboxgl.version}`);
+            debugLog.log(`Using token: ${mapboxgl.accessToken.substring(0, 10)}...`);
+            
+            //------------------------------------------------------------------------------
+            // DATA INITIALIZATION
+            //------------------------------------------------------------------------------
             // Constants
             const TRIPS_DATA = %(trips_data)s;
             const BUILDINGS_DATA = %(buildings_data)s;
@@ -126,21 +177,77 @@ HTML_TEMPLATE = """
             const SOROKA_INFO = %(soroka_info)s;
             const ANIMATION_DURATION = %(animation_duration)d;
             const LOOP_LENGTH = %(loopLength)d;
-            const MAP_STYLE = '%(map_style)s';
+            const MAP_STYLE = 'mapbox://styles/mapbox/dark-v11';  // Explicitly set style
+            const START_HOUR = %(start_hour)d;
+            const END_HOUR = %(end_hour)d;
+
+            // Verify data loading
+            if (!TRIPS_DATA || !TRIPS_DATA.length) {
+                debugLog.error('No trip data available!');
+            } else {
+                debugLog.log(`Loaded ${TRIPS_DATA.length} trips`);
+            }
             
+            if (!BUILDINGS_DATA || !BUILDINGS_DATA.length) {
+                debugLog.error('No building data available!');
+            } else {
+                debugLog.log(`Loaded ${BUILDINGS_DATA.length} buildings`);
+            }
+
+            //------------------------------------------------------------------------------
+            // MAP CONFIGURATION
+            //------------------------------------------------------------------------------
+            // Initial view settings
+            const INITIAL_VIEW_STATE = {
+                longitude: 34.8113,
+                latitude: 31.2627,
+                zoom: 13,
+                pitch: 45,
+                bearing: 0
+            };
+
+            // Create base map
+            debugLog.log('Creating map instance...');
+            const map = new mapboxgl.Map({
+                container: 'container',
+                style: MAP_STYLE,
+                ...INITIAL_VIEW_STATE,
+                interactive: true,
+                attributionControl: false,
+                maxZoom: 20,
+                antialias: true
+            });
+
+            // Map event handlers
+            map.on('load', () => {
+                debugLog.log('Map loaded successfully');
+                checkMapResources();
+            });
+
+            map.on('error', (e) => {
+                debugLog.error(`Map error: ${e.error.message}`);
+                if (e.error.message.includes('access token')) {
+                    debugLog.error(`Current token: ${mapboxgl.accessToken.substring(0, 10)}...`);
+                    debugLog.error('Token configuration failed');
+                }
+            });
+
+            map.on('sourcedata', (e) => {
+                if (e.isSourceLoaded && e.sourceId === 'composite') {
+                    debugLog.log('Composite source loaded');
+                }
+            });
+
+            //------------------------------------------------------------------------------
+            // LIGHTING AND VISUAL EFFECTS
+            //------------------------------------------------------------------------------
             // POI Colors
             const POI_COLORS = {
                 'BGU': [0, 255, 90],
                 'Gav Yam': [0, 191, 255],
                 'Soroka Hospital': [170, 0, 255]
             };
-            
-            // Animation constants
-            const START_HOUR = %(start_hour)d;
-            const END_HOUR = %(end_hour)d;
-            const HOURS_PER_DAY = END_HOUR - START_HOUR;
-            const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
-            
+
             // Lighting setup
             const ambientLight = new deck.AmbientLight({
                 color: [255, 255, 255],
@@ -154,14 +261,85 @@ HTML_TEMPLATE = """
             });
 
             const lightingEffect = new deck.LightingEffect({ambientLight, pointLight});
-            
-            // Animation state
+
+            //------------------------------------------------------------------------------
+            // DECK.GL INITIALIZATION
+            //------------------------------------------------------------------------------
+            const deckgl = new deck.DeckGL({
+                container: 'container',
+                mapboxgl: map,
+                initialViewState: INITIAL_VIEW_STATE,
+                controller: true,
+                effects: [lightingEffect],
+                onWebGLInitialized: (gl) => {
+                    debugLog.log('WebGL initialized');
+                    gl.enable(gl.DEPTH_TEST);
+                    gl.depthFunc(gl.LEQUAL);
+                }
+            });
+
+            //------------------------------------------------------------------------------
+            // BUILDING LAYER FUNCTIONS
+            //------------------------------------------------------------------------------
+            function checkMapResources() {
+                if (!map.getSource('composite')) {
+                    debugLog.warn('Composite source not found - retrying in 1s...');
+                    setTimeout(checkMapResources, 1000);
+                    return;
+                }
+
+                if (!map.isStyleLoaded()) {
+                    debugLog.warn('Style not fully loaded - retrying in 100ms...');
+                    setTimeout(checkMapResources, 100);
+                    return;
+                }
+
+                try {
+                    addBuildingLayer();
+                    debugLog.log('3D buildings layer added successfully');
+                } catch (err) {
+                    debugLog.error(`Failed to add building layer: ${err.message}`);
+                }
+            }
+
+            function addBuildingLayer() {
+                if (map.getLayer('mapbox-3d-buildings')) {
+                    map.removeLayer('mapbox-3d-buildings');
+                }
+
+                map.addLayer({
+                    'id': 'mapbox-3d-buildings',
+                    'source': 'composite',
+                    'source-layer': 'building',
+                    'filter': ['==', 'extrude', 'true'],
+                    'type': 'fill-extrusion',
+                    'minzoom': 12,
+                    'paint': {
+                        'fill-extrusion-color': '#aaaaaa',
+                        'fill-extrusion-height': [
+                            'interpolate',
+                            ['linear'],
+                            ['zoom'],
+                            15,
+                            0,
+                            15.05,
+                            ['get', 'height']
+                        ],
+                        'fill-extrusion-base': ['get', 'min_height'],
+                        'fill-extrusion-opacity': 0.4
+                    }
+                }, 'road-label');
+            }
+
+            //------------------------------------------------------------------------------
+            // ANIMATION STATE AND CONTROLS
+            //------------------------------------------------------------------------------
             let trailLength = 5;
             let animationSpeed = 2.5;
             let animation;
             let cachedActiveTrips = null;
             let lastHour = -1;
-            
+
             // Counter state
             let cumulativeCounts = {
                 'BGU': 0,
@@ -169,39 +347,13 @@ HTML_TEMPLATE = """
                 'Soroka Hospital': 0
             };
 
-            // Pre-calculate hourly trip totals
-            let hourlyTripTotals = Array(HOURS_PER_DAY).fill(null).map(() => ({
-                'BGU': 0,
-                'Gav Yam': 0,
-                'Soroka Hospital': 0
-            }));
-
-            TRIPS_DATA.forEach(trip => {
-                if (trip.poi) {
-                    const hour = Math.floor(trip.startTime / FRAMES_PER_HOUR);
-                    if (hour >= 0 && hour < HOURS_PER_DAY) {
-                        hourlyTripTotals[hour][trip.poi] += trip.numTrips;
-                    }
-                }
-            });
-            
-            // Initial view setup            
-            const INITIAL_VIEW_STATE = {
-                longitude: 34.8113,
-                latitude: 31.2627,
-                zoom: 13,
-                pitch: 45,
-                bearing: 0
-            };
-
-            // Helper functions
             function formatTimeString(frame) {
-                const hoursElapsed = frame / FRAMES_PER_HOUR;
+                const hoursElapsed = frame / (ANIMATION_DURATION / (END_HOUR - START_HOUR));
                 const currentHour = Math.floor(START_HOUR + hoursElapsed);
                 const minutes = Math.floor((hoursElapsed % 1) * 60);
                 return `${currentHour.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
             }
-            
+
             function getPathColor(path, poi) {
                 if (poi && POI_COLORS[poi]) {
                     return POI_COLORS[poi];
@@ -210,22 +362,17 @@ HTML_TEMPLATE = """
             }
 
             function processTrips(currentFrame) {
-                const currentHour = Math.floor(currentFrame / FRAMES_PER_HOUR);
+                const currentHour = Math.floor(currentFrame / (ANIMATION_DURATION / (END_HOUR - START_HOUR)));
                 
                 if (currentHour < lastHour) {
-                    console.log('Day reset detected - Resetting counters');
+                    debugLog.log('Day reset - Resetting counters');
                     cumulativeCounts = {
                         'BGU': 0,
                         'Gav Yam': 0,
                         'Soroka Hospital': 0
                     };
-                } else if (currentHour > lastHour) {
-                    Object.keys(cumulativeCounts).forEach(poi => {
-                        if (lastHour >= 0 && lastHour < hourlyTripTotals.length) {
-                            cumulativeCounts[poi] += hourlyTripTotals[lastHour][poi];
-                        }
-                    });
                 }
+                
                 lastHour = currentHour;
 
                 return TRIPS_DATA.map(route => {
@@ -234,13 +381,11 @@ HTML_TEMPLATE = """
                         return null;
                     }
                     
-                    const timestamps = route.path.map((_, index) => 
-                        route.startTime + (index / (route.path.length - 1)) * route.duration
-                    );
-                    
                     return {
                         path: route.path,
-                        timestamps,
+                        timestamps: route.path.map((_, index) => 
+                            route.startTime + (index / (route.path.length - 1)) * route.duration
+                        ),
                         numTrips: route.numTrips,
                         poi: route.poi
                     };
@@ -250,7 +395,7 @@ HTML_TEMPLATE = """
             function updateCounters() {
                 Object.entries(cumulativeCounts).forEach(([poi, count]) => {
                     const id = poi.toLowerCase()
-                                .replace(/\\s+/g, '-')
+                                .replace(/\s+/g, '-')
                                 .replace(/[^a-z0-9-]/g, '')
                                 + '-counter';
                     const element = document.getElementById(id);
@@ -260,7 +405,11 @@ HTML_TEMPLATE = """
                 });
             }
 
+            //------------------------------------------------------------------------------
+            // ANIMATION FUNCTION
+            //------------------------------------------------------------------------------
             function animate() {
+                debugLog.log('Starting animation');
                 animation = popmotion.animate({
                     from: 0,
                     to: LOOP_LENGTH,
@@ -339,53 +488,9 @@ HTML_TEMPLATE = """
                 });
             }
 
-            // Create a base map first
-            const map = new mapboxgl.Map({
-                container: 'container',
-                style: MAP_STYLE,
-                ...INITIAL_VIEW_STATE,
-                interactive: false,
-                attributionControl: false
-            });
-
-            // Wait for the map to load before initializing deck.gl
-            await new Promise((resolve, reject) => {
-                map.on('load', resolve);
-                map.on('error', reject);
-            });
-
-            // Initialize deck.gl after map is loaded
-            const deckgl = new deck.DeckGL({
-                container: 'container',
-                mapboxgl: map,
-                initialViewState: INITIAL_VIEW_STATE,
-                controller: true,
-                effects: [lightingEffect]
-            });
-
-            map.on('style.load', () => {
-                try {
-                    // Add 3D building layer
-                    map.addLayer({
-                        'id': 'mapbox-3d-buildings',
-                        'source': 'composite',
-                        'source-layer': 'building',
-                        'filter': ['==', 'extrude', 'true'],
-                        'type': 'fill-extrusion',
-                        'minzoom': 12,
-                        'paint': {
-                            'fill-extrusion-color': '#aaaaaa',
-                            'fill-extrusion-height': ['get', 'height'],
-                            'fill-extrusion-base': ['get', 'min_height'],
-                            'fill-extrusion-opacity': 0.4
-                        }
-                    }, 'road-label');
-                } catch (err) {
-                    console.error('Error adding 3D buildings:', err);
-                }
-            });
-
-            // Control panel handlers
+            //------------------------------------------------------------------------------
+            // EVENT LISTENERS
+            //------------------------------------------------------------------------------
             document.getElementById('trail-length').oninput = function() {
                 trailLength = Number(this.value);
                 document.getElementById('trail-value').textContent = this.value;
@@ -400,11 +505,12 @@ HTML_TEMPLATE = """
                 animate();
             };
 
-            // Initialize animation
+            // Start animation
             animate();
 
         } catch (err) {
-            console.error('Error initializing map:', err);
+            debugLog.error(`Fatal error initializing map: ${err.message}`);
+            console.error(err);
         }
     });
     </script>

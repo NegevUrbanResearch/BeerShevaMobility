@@ -12,8 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Add parent directory to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OUTPUT_DIR
+OUTPUT_DIR = "shapes/data/output"
 
 def is_valid_geojson(geojson):
     """Check if the GeoJSON is valid."""
