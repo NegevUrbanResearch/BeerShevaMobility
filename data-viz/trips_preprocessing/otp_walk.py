@@ -429,11 +429,11 @@ def main():
         outbound_trips = trips_gdf[trips_gdf['direction'] == 'outbound']
         
         # Save inbound trips
-        inbound_file = os.path.join(OUTPUT_DIR, "walking_routes_inbound.geojson")
+        inbound_file = os.path.join(OUTPUT_DIR, "walk_routes_inbound.geojson")
         inbound_trips.to_file(inbound_file, driver="GeoJSON")
         
         # Save outbound trips
-        outbound_file = os.path.join(OUTPUT_DIR, "walking_routes_outbound.geojson")
+        outbound_file = os.path.join(OUTPUT_DIR, "walk_routes_outbound.geojson")
         outbound_trips.to_file(outbound_file, driver="GeoJSON")
         
         # Log statistics
