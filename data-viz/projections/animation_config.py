@@ -1,6 +1,9 @@
 """Shared configuration for animation timing and route settings"""
 import logging
+
 logger = logging.getLogger(__name__)
+
+OUTPUT_DIR = '/Users/noamgal/DSProjects/BeerShevaMobility/data-viz/output/dashboard_data'
 
 def calculate_animation_duration():
     """
