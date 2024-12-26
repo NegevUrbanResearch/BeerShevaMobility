@@ -23,7 +23,7 @@ def calculate_animation_duration():
         'car': {
             'speed_multiplier': 2.0,        # Cars move faster
             'path_multiplier': 30,          # Car path stretching
-            'trail_length': 5,              # Longer trail for cars
+            'trail_length': 8,              # Longer trail for cars
             'min_width': 2,                 # Minimum line width
             'max_width': 4,                 # Maximum line width
             'opacity': 0.8,                 # Slightly more opaque
@@ -32,7 +32,7 @@ def calculate_animation_duration():
         'walk': {
             'speed_multiplier': 1.0,        # Base walking speed
             'path_multiplier': 45,          # Walking path stretching
-            'trail_length': 3,              # Shorter trail for walking
+            'trail_length': 4,              # Shorter trail for walking
             'min_width': 1,                 # Thinner lines for walking
             'max_width': 2,                 # Maximum width for walking
             'opacity': 0.7,                 # Slightly more transparent

@@ -18,6 +18,7 @@ from itertools import islice
 from animation_config import ANIMATION_CONFIG
 import subprocess
 import platform
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,9 +29,9 @@ def save_frames_as_images(html_path, output_dir):
     # Get duration from shared config
     duration_seconds = ANIMATION_CONFIG['total_seconds']
     source_fps = ANIMATION_CONFIG['fps']  # Original FPS from config (30)
-    target_fps = 10  # New target FPS for recording
+    target_fps = 30  # Restore to original FPS
     
-    # Calculate total frames needed at target FPS
+    # Calculate total frames needed
     frames_to_capture = int(duration_seconds * target_fps)
     
     firefox_options = FirefoxOptions()
@@ -39,6 +40,10 @@ def save_frames_as_images(html_path, output_dir):
     firefox_options.add_argument('--height=1080')
     firefox_options.set_preference('webgl.force-enabled', True)
     firefox_options.set_preference('webgl.disabled', False)
+    # Add hardware acceleration options
+    firefox_options.set_preference('layers.acceleration.force-enabled', True)
+    firefox_options.set_preference('gfx.canvas.azure.accelerated', True)
+    firefox_options.set_preference('media.hardware-video-decoding.force-enabled', True)
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -105,46 +110,45 @@ def save_frames_as_images(html_path, output_dir):
         logger.info("Animation initialized successfully!")
         
         # Calculate frame timing
-        frame_interval = 1.0 / target_fps  # Time between frames in seconds
+        frame_interval = 1.0 / target_fps
         source_frame_interval = 1.0 / source_fps
         
         # Get the initial animation time
         start_time = driver.execute_script("return performance.now()")
         
-        for i in range(frames_to_capture):
-            current_frame = i + 1
-            progress = (current_frame * 100) / frames_to_capture
+        # Create a thread pool for parallel image processing
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            futures = []
             
-            # Calculate the corresponding source frame time
-            source_frame = int((i * source_fps) / target_fps)
+            for i in range(frames_to_capture):
+                current_frame = i + 1
+                progress = (current_frame * 100) / frames_to_capture
+                
+                # Calculate timing
+                source_frame = int((i * source_fps) / target_fps)
+                expected_time = start_time + (source_frame * source_frame_interval * 1000)
+                current_time = driver.execute_script("return performance.now()")
+                
+                if current_time < expected_time:
+                    time.sleep((expected_time - current_time) / 1000)
+                
+                # Capture frame
+                screenshot = driver.get_screenshot_as_png()
+                
+                # Process image in parallel
+                frame_path = os.path.join(output_dir, f'frame_{i:05d}.png')
+                futures.append(executor.submit(process_frame, screenshot, frame_path))
+                
+                # Print progress every 30 frames
+                if current_frame % 30 == 0 or current_frame == frames_to_capture:
+                    logger.info(f"Progress: {progress:.1f}% ({current_frame}/{frames_to_capture} frames)")
+                
+                # Update progress bar
+                driver.execute_script(f"document.querySelector('.progress').style.width = '{progress}%'")
             
-            # Synchronize with animation timing
-            expected_time = start_time + (source_frame * source_frame_interval * 1000)  # Convert to milliseconds
-            current_time = driver.execute_script("return performance.now()")
-            
-            if current_time < expected_time:
-                time.sleep((expected_time - current_time) / 1000)  # Convert back to seconds
-            
-            # Take screenshot
-            screenshot = driver.get_screenshot_as_png()
-            image = Image.open(io.BytesIO(screenshot))
-            
-            # Convert to RGBA if needed
-            if image.mode != 'RGBA':
-                image = image.convert('RGBA')
-            
-            # Save frame with zero-padded index to ensure correct ordering
-            frame_path = os.path.join(output_dir, f'frame_{i:05d}.png')
-            image.save(frame_path, 'PNG')
-            
-            # Print progress
-            if current_frame % 10 == 0 or current_frame == frames_to_capture:
-                logger.info(f"Progress: {progress:.1f}% ({current_frame}/{frames_to_capture} frames)")
-            
-            # Update progress bar in browser
-            driver.execute_script(f"document.querySelector('.progress').style.width = '{progress}%'")
-            
-            time.sleep(1/30)  # Maintain 30 FPS
+            # Wait for all image processing to complete
+            for future in futures:
+                future.result()
         
         logger.info("Frame capture completed successfully!")
         
@@ -155,9 +159,20 @@ def save_frames_as_images(html_path, output_dir):
     finally:
         driver.quit()
 
+def process_frame(screenshot_data, output_path):
+    """Process a single frame in parallel"""
+    image = Image.open(io.BytesIO(screenshot_data))
+    
+    # Convert to RGBA if needed
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    # Optimize image saving
+    image.save(output_path, 'PNG', optimize=True)
+
 def create_video_from_frames(frame_dir, output_path):
-    """Create video from frames using parallel processing"""
-    target_fps = 10  # New target FPS for recording
+    """Create video from frames using hardware acceleration"""
+    target_fps = 30  # Restore to original FPS
     frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame_')])
     if not frame_files:
         raise ValueError("No frames found in directory")
@@ -166,71 +181,77 @@ def create_video_from_frames(frame_dir, output_path):
     first_frame = cv2.imread(os.path.join(frame_dir, frame_files[0]), cv2.IMREAD_UNCHANGED)
     height, width = first_frame.shape[:2]
     
-    # Calculate expected durations from shared config
+    # Calculate expected durations
     total_frames = len(frame_files)
     total_duration = total_frames / target_fps
-    hour_duration = total_duration / ANIMATION_CONFIG['hours_per_day']
     
     logger.info(f"Animation timing:")
     logger.info(f"Total frames: {total_frames}")
     logger.info(f"Target FPS: {target_fps}")
-    logger.info(f"Total duration: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
-    logger.info(f"Hours in animation: {ANIMATION_CONFIG['hours_per_day']}")
-    logger.info(f"Duration per hour: {hour_duration:.2f} seconds")
+    logger.info(f"Total duration: {total_duration:.2f} seconds")
     
-    # Try different codecs in order of preference
-    codecs = [('avc1', '.mp4'), ('mp4v', '.mp4'), ('vp09', '.webm')]
+    # Try hardware-accelerated encoding first
+    output_file = output_path.rsplit('.', 1)[0] + '.mp4'
     
-    for codec, ext in codecs:
-        try:
-            output_file = output_path.rsplit('.', 1)[0] + ext
-            fourcc = cv2.VideoWriter_fourcc(*codec)
-            out = cv2.VideoWriter(output_file, fourcc, target_fps, (width, height), True)
-            
-            if not out.isOpened():
-                logger.warning(f"Failed to initialize VideoWriter with codec {codec}")
-                continue
-            
-            logger.info(f"Creating video with codec {codec}")
-            
-            # Pre-load frames in parallel
-            def load_frame(frame_file):
-                frame_path = os.path.join(frame_dir, frame_file)
-                frame = cv2.imread(frame_path, cv2.IMREAD_UNCHANGED)
-                if frame.shape[2] == 4:  # RGBA
-                    bgr = frame[:, :, :3]
-                    alpha = frame[:, :, 3]
-                    white_bg = np.ones_like(bgr) * 255
-                    alpha_3d = np.stack([alpha, alpha, alpha], axis=2) / 255.0
-                    return (bgr * alpha_3d + white_bg * (1 - alpha_3d)).astype(np.uint8)
-                return frame
-            
-            # Process frames in chunks to balance memory usage and performance
-            chunk_size = 100
-            with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
-                for i in range(0, len(frame_files), chunk_size):
-                    chunk = frame_files[i:i+chunk_size]
-                    frames = list(executor.map(load_frame, chunk))
-                    
-                    for frame in frames:
-                        out.write(frame)
-                    
-                    progress = min(100, (i + len(chunk)) * 100 / len(frame_files))
-                    logger.info(f"Video encoding progress: {progress:.1f}% ({i + len(chunk)}/{len(frame_files)} frames)")
-            
-            out.release()
-            logger.info(f"Video successfully created at: {output_file}")
-            return output_file
-            
-        except Exception as e:
-            logger.error(f"Failed with codec {codec}: {str(e)}")
-            continue
+    # Determine available hardware acceleration
+    system = platform.system()
+    if system == 'Darwin':  # macOS
+        encoder = 'h264_videotoolbox'
+    elif system == 'Windows':
+        encoder = 'h264_nvenc'  # NVIDIA GPU
+    else:  # Linux
+        encoder = 'h264_vaapi'  # Intel GPU
     
-    raise RuntimeError("Failed to create video with any available codec")
+    try:
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file
+            '-framerate', str(target_fps),
+            '-i', os.path.join(frame_dir, 'frame_%05d.png'),
+            '-c:v', encoder,
+            '-b:v', '20M',  # Higher bitrate for better quality
+            '-maxrate', '25M',
+            '-bufsize', '25M',
+            '-preset', 'fast',  # Use faster encoding preset
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            output_file
+        ]
+        
+        logger.info(f"Creating video with hardware acceleration ({encoder})...")
+        subprocess.run(ffmpeg_cmd, check=True)
+        logger.info(f"Video successfully created at: {output_file}")
+        return output_file
+        
+    except subprocess.CalledProcessError:
+        logger.warning(f"Hardware acceleration failed, falling back to software encoding...")
+        
+        # Fall back to software encoding
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',
+            '-framerate', str(target_fps),
+            '-i', os.path.join(frame_dir, 'frame_%05d.png'),
+            '-c:v', 'libx264',
+            '-preset', 'faster',
+            '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            output_file
+        ]
+        
+        subprocess.run(ffmpeg_cmd, check=True)
+        logger.info(f"Video successfully created at: {output_file}")
+        return output_file
 
 def record_animation_mac(html_path, output_path, duration_seconds):
     """Record animation using headless Firefox and ffmpeg"""
     logger.info("Starting Firefox for screen recording...")
+    
+    # Validate expected duration
+    expected_duration = ANIMATION_CONFIG['total_seconds']
+    if abs(duration_seconds - expected_duration) > 1:  # Allow 1 second tolerance
+        raise ValueError(f"Duration mismatch: expected {expected_duration} seconds, got {duration_seconds} seconds")
     
     firefox_options = FirefoxOptions()
     firefox_options.add_argument('--headless')
@@ -238,6 +259,9 @@ def record_animation_mac(html_path, output_path, duration_seconds):
     firefox_options.add_argument('--height=1080')
     firefox_options.set_preference('webgl.force-enabled', True)
     firefox_options.set_preference('webgl.disabled', False)
+    firefox_options.set_preference('layers.acceleration.force-enabled', True)
+    firefox_options.set_preference('gfx.canvas.azure.accelerated', True)
+    firefox_options.set_preference('media.hardware-video-decoding.force-enabled', True)
     
     driver = webdriver.Firefox(options=firefox_options)
     
@@ -256,9 +280,19 @@ def record_animation_mac(html_path, output_path, duration_seconds):
         temp_dir = os.path.join(os.path.dirname(output_path), "temp_frames")
         os.makedirs(temp_dir, exist_ok=True)
         
-        target_fps = 10  # New target FPS
-        frames_to_capture = int(duration_seconds * target_fps)  # This will be 1/3 of the original frames
+        target_fps = ANIMATION_CONFIG['fps']  # Use FPS from config (30)
+        frames_to_capture = int(duration_seconds * target_fps)
         frame_interval = 1.0 / target_fps
+        
+        # Validate total frames
+        expected_frames = int(expected_duration * target_fps)
+        if frames_to_capture != expected_frames:
+            raise ValueError(f"Frame count mismatch: expected {expected_frames}, calculated {frames_to_capture}")
+        
+        logger.info(f"Recording configuration:")
+        logger.info(f"Target FPS: {target_fps}")
+        logger.info(f"Total frames to capture: {frames_to_capture}")
+        logger.info(f"Expected duration: {duration_seconds} seconds")
         
         # Inject frame rate control into the page
         driver.execute_script("""
@@ -285,51 +319,96 @@ def record_animation_mac(html_path, output_path, duration_seconds):
         """ % frame_interval)
         
         # Get initial animation time
-        start_time = time.time()
+        start_time = time.perf_counter()
         
-        # Capture frames
-        for i in range(frames_to_capture):
-            # Calculate when this frame should be captured
-            target_time = start_time + (i * frame_interval)
-            current_time = time.time()
+        # Create a thread pool for parallel image processing
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            futures = []
             
-            # Wait if we're ahead of schedule
-            if current_time < target_time:
-                time.sleep(target_time - current_time)
+            # Capture frames
+            for i in range(frames_to_capture):
+                # Calculate when this frame should be captured
+                target_time = start_time + (i * frame_interval)
+                current_time = time.perf_counter()
+                
+                # Wait if we're ahead of schedule
+                if current_time < target_time:
+                    time.sleep(target_time - current_time)
+                
+                # Take screenshot
+                screenshot = driver.get_screenshot_as_png()
+                
+                # Process frame in parallel
+                frame_path = os.path.join(temp_dir, f'frame_{i:05d}.png')
+                futures.append(executor.submit(process_frame, screenshot, frame_path))
+                
+                # Print progress
+                if i % 30 == 0 or i == frames_to_capture - 1:
+                    progress = ((i + 1) * 100) / frames_to_capture
+                    logger.info(f"Recording progress: {progress:.1f}% ({i + 1}/{frames_to_capture} frames)")
+                
+                # Update progress bar in browser
+                driver.execute_script(f"document.querySelector('.progress').style.width = '{progress}%'")
             
-            # Take screenshot
-            screenshot = driver.get_screenshot_as_png()
-            image = Image.open(io.BytesIO(screenshot))
-            
-            # Save frame
-            frame_path = os.path.join(temp_dir, f'frame_{i:05d}.png')
-            image.save(frame_path, 'PNG')
-            
-            # Print progress
-            if i % 30 == 0 or i == frames_to_capture - 1:
-                progress = ((i + 1) * 100) / frames_to_capture
-                logger.info(f"Recording progress: {progress:.1f}% ({i + 1}/{frames_to_capture} frames)")
+            # Wait for all image processing to complete
+            for future in futures:
+                future.result()
+        
+        # Calculate actual duration
+        actual_duration = time.perf_counter() - start_time
+        logger.info(f"Recording completed in {actual_duration:.2f} seconds")
+        
+        if abs(actual_duration - duration_seconds) > duration_seconds * 0.1:  # Allow 10% tolerance
+            logger.warning(f"Recording duration deviation: expected {duration_seconds:.2f}s, got {actual_duration:.2f}s")
         
         # Use ffmpeg to create video with exact frame rate
         output_file = output_path.rsplit('.', 1)[0] + '.mp4'
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',  # Overwrite output file if it exists
-            '-framerate', str(target_fps),
-            '-i', os.path.join(temp_dir, 'frame_%05d.png'),
-            '-c:v', 'libx264',
-            '-preset', 'slow',  # Higher quality encoding
-            '-pix_fmt', 'yuv420p',
-            '-crf', '18',  # Higher quality (lower is better, 18-28 is good range)
-            '-vf', f'fps={target_fps},pad=width=1920:height=996:x=0:y=0:color=0x00FF00',  # Green padding
-            output_file
-        ]
         
-        logger.info("Creating video from frames...")
-        subprocess.run(ffmpeg_cmd, check=True)
+        # Determine hardware acceleration codec
+        system = platform.system()
+        if system == 'Darwin':  # macOS
+            encoder = 'h264_videotoolbox'
+        elif system == 'Windows':
+            encoder = 'h264_nvenc'  # NVIDIA GPU
+        else:  # Linux
+            encoder = 'h264_vaapi'  # Intel GPU
+        
+        try:
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file if it exists
+                '-framerate', str(target_fps),
+                '-i', os.path.join(temp_dir, 'frame_%05d.png'),
+                '-c:v', encoder,
+                '-b:v', '20M',  # Higher bitrate
+                '-maxrate', '25M',
+                '-bufsize', '25M',
+                '-preset', 'fast',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                output_file
+            ]
+            
+            logger.info(f"Creating video with hardware acceleration ({encoder})...")
+            subprocess.run(ffmpeg_cmd, check=True)
+            
+        except subprocess.CalledProcessError:
+            logger.warning("Hardware acceleration failed, falling back to software encoding...")
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',
+                '-framerate', str(target_fps),
+                '-i', os.path.join(temp_dir, 'frame_%05d.png'),
+                '-c:v', 'libx264',
+                '-preset', 'faster',
+                '-crf', '23',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                output_file
+            ]
+            subprocess.run(ffmpeg_cmd, check=True)
         
         # Clean up temporary files
-        import shutil
         shutil.rmtree(temp_dir)
         
         logger.info(f"Recording completed: {output_file}")
