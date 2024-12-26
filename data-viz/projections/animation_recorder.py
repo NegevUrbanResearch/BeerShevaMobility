@@ -27,7 +27,11 @@ def save_frames_as_images(html_path, output_dir):
     """Save individual frames as PNG images with proper timing"""
     # Get duration from shared config
     duration_seconds = ANIMATION_CONFIG['total_seconds']
-    fps = ANIMATION_CONFIG['fps']
+    source_fps = ANIMATION_CONFIG['fps']  # Original FPS from config (30)
+    target_fps = 10  # New target FPS for recording
+    
+    # Calculate total frames needed at target FPS
+    frames_to_capture = int(duration_seconds * target_fps)
     
     firefox_options = FirefoxOptions()
     firefox_options.add_argument('--headless')
@@ -99,12 +103,10 @@ def save_frames_as_images(html_path, output_dir):
             raise TimeoutError("Animation failed to initialize within timeout period")
         
         logger.info("Animation initialized successfully!")
-        frames_to_capture = int(duration_seconds * fps)
         
-        # Clear existing frames
-        for file in os.listdir(output_dir):
-            if file.startswith('frame_'):
-                os.remove(os.path.join(output_dir, file))
+        # Calculate frame timing
+        frame_interval = 1.0 / target_fps  # Time between frames in seconds
+        source_frame_interval = 1.0 / source_fps
         
         # Get the initial animation time
         start_time = driver.execute_script("return performance.now()")
@@ -113,8 +115,11 @@ def save_frames_as_images(html_path, output_dir):
             current_frame = i + 1
             progress = (current_frame * 100) / frames_to_capture
             
+            # Calculate the corresponding source frame time
+            source_frame = int((i * source_fps) / target_fps)
+            
             # Synchronize with animation timing
-            expected_time = start_time + (i * 1000 / fps)  # Convert to milliseconds
+            expected_time = start_time + (source_frame * source_frame_interval * 1000)  # Convert to milliseconds
             current_time = driver.execute_script("return performance.now()")
             
             if current_time < expected_time:
@@ -128,12 +133,12 @@ def save_frames_as_images(html_path, output_dir):
             if image.mode != 'RGBA':
                 image = image.convert('RGBA')
             
-            # Save frame
+            # Save frame with zero-padded index to ensure correct ordering
             frame_path = os.path.join(output_dir, f'frame_{i:05d}.png')
             image.save(frame_path, 'PNG')
             
             # Print progress
-            if current_frame % 30 == 0 or current_frame == frames_to_capture:
+            if current_frame % 10 == 0 or current_frame == frames_to_capture:
                 logger.info(f"Progress: {progress:.1f}% ({current_frame}/{frames_to_capture} frames)")
             
             # Update progress bar in browser
@@ -152,7 +157,7 @@ def save_frames_as_images(html_path, output_dir):
 
 def create_video_from_frames(frame_dir, output_path):
     """Create video from frames using parallel processing"""
-    fps = ANIMATION_CONFIG['fps']
+    target_fps = 10  # New target FPS for recording
     frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame_')])
     if not frame_files:
         raise ValueError("No frames found in directory")
@@ -163,12 +168,12 @@ def create_video_from_frames(frame_dir, output_path):
     
     # Calculate expected durations from shared config
     total_frames = len(frame_files)
-    total_duration = total_frames / fps
+    total_duration = total_frames / target_fps
     hour_duration = total_duration / ANIMATION_CONFIG['hours_per_day']
     
     logger.info(f"Animation timing:")
     logger.info(f"Total frames: {total_frames}")
-    logger.info(f"FPS: {fps}")
+    logger.info(f"Target FPS: {target_fps}")
     logger.info(f"Total duration: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
     logger.info(f"Hours in animation: {ANIMATION_CONFIG['hours_per_day']}")
     logger.info(f"Duration per hour: {hour_duration:.2f} seconds")
@@ -180,7 +185,7 @@ def create_video_from_frames(frame_dir, output_path):
         try:
             output_file = output_path.rsplit('.', 1)[0] + ext
             fourcc = cv2.VideoWriter_fourcc(*codec)
-            out = cv2.VideoWriter(output_file, fourcc, fps, (width, height), True)
+            out = cv2.VideoWriter(output_file, fourcc, target_fps, (width, height), True)
             
             if not out.isOpened():
                 logger.warning(f"Failed to initialize VideoWriter with codec {codec}")
@@ -251,9 +256,9 @@ def record_animation_mac(html_path, output_path, duration_seconds):
         temp_dir = os.path.join(os.path.dirname(output_path), "temp_frames")
         os.makedirs(temp_dir, exist_ok=True)
         
-        fps = ANIMATION_CONFIG['fps']
-        frames_to_capture = int(duration_seconds * fps)
-        frame_interval = 1.0 / fps  # Time between frames in seconds
+        target_fps = 10  # New target FPS
+        frames_to_capture = int(duration_seconds * target_fps)  # This will be 1/3 of the original frames
+        frame_interval = 1.0 / target_fps
         
         # Inject frame rate control into the page
         driver.execute_script("""
@@ -310,13 +315,13 @@ def record_animation_mac(html_path, output_path, duration_seconds):
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',  # Overwrite output file if it exists
-            '-framerate', str(fps),
+            '-framerate', str(target_fps),
             '-i', os.path.join(temp_dir, 'frame_%05d.png'),
             '-c:v', 'libx264',
             '-preset', 'slow',  # Higher quality encoding
             '-pix_fmt', 'yuv420p',
             '-crf', '18',  # Higher quality (lower is better, 18-28 is good range)
-            '-vf', f'fps={fps}',  # Force exact output framerate
+            '-vf', f'fps={target_fps},pad=width=1920:height=996:x=0:y=0:color=0x00FF00',  # Green padding
             output_file
         ]
         
