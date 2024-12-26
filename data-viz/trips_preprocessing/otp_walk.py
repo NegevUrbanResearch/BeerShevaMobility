@@ -13,6 +13,7 @@ from rtree import index
 from scipy.spatial import cKDTree
 import logging
 import sys
+from coordinate_utils import CoordinateValidator
 
 # Add parent directory to Python path to access data_loader
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,8 +30,59 @@ class OTPClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         
-    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon):
-        """Query OTP for a walking route with retries"""
+        # Load and store POI polygons with their IDs
+        attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+        # BGU (11) and Soroka (7)
+        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])].copy()
+        if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
+            self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
+    
+    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
+        """
+        Query OTP for a walking route with retries.
+        
+        Parameters:
+        - from_lat, from_lon: Origin coordinates
+        - to_lat, to_lon: Destination coordinates
+        - destination_poi: Name of destination POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
+        """
+        # Validate coordinates before processing
+        from_lat, from_lon, valid_origin = CoordinateValidator.validate_wgs84(
+            from_lat, from_lon, use_beer_sheva_bounds=True
+        )
+        to_lat, to_lon, valid_dest = CoordinateValidator.validate_wgs84(
+            to_lat, to_lon, use_beer_sheva_bounds=True
+        )
+        
+        if not (valid_origin and valid_dest):
+            logger.debug("Using adjusted coordinates for routing")
+        
+        point_origin = Point(from_lon, from_lat)
+        point_dest = Point(to_lon, to_lat)
+        
+        # Map POI names to IDs
+        poi_name_to_id = {
+            'Ben-Gurion-University': 11,
+            'Soroka-Medical-Center': 7
+        }
+        
+        # Determine which polygons to avoid based on origin/destination containment
+        avoid_polygons = []
+        for _, poi in self.poi_polygons.iterrows():
+            # If this POI contains either the origin or destination, allow routing through it
+            if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
+                continue
+                
+            # If this is destination POI's entrance point, allow routing through it
+            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
+                continue
+                
+            # Otherwise, prevent routing through this POI
+            avoid_polygons.append(poi.geometry.wkt)
+            
+        # Create avoidance string if needed
+        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
@@ -41,12 +93,16 @@ class OTPClient:
             'walkSpeed': 1.4
         }
         
+        # Add polygon avoidance if needed
+        if avoid_str:
+            params['avoid'] = avoid_str
+            
         for attempt in range(self.max_retries):
             try:
                 response = requests.get(
                     f"{self.base_url}/plan", 
                     params=params, 
-                    timeout=10  # Add timeout
+                    timeout=10
                 )
                 
                 if response.status_code == 200:
@@ -176,20 +232,22 @@ class ImprovedTripGenerator:
         
         return None
     
-    def _get_valid_route(self, origin_point, destination_point, amenity_stop=None):
+    def _get_valid_route(self, origin_point, destination_point, poi_id=None, amenity_stop=None):
         """Get a valid walking route, optionally including an amenity stop"""
         if amenity_stop:
             # Get route segments: origin -> amenity -> destination
             route1 = self.otp_client.get_walking_route(
                 origin_point.y, origin_point.x,
-                amenity_stop['geometry'].y, amenity_stop['geometry'].x
+                amenity_stop['geometry'].y, amenity_stop['geometry'].x,
+                destination_poi=poi_id
             )
             if not route1 or 'plan' not in route1 or not route1['plan'].get('itineraries'):
                 return None
             
             route2 = self.otp_client.get_walking_route(
                 amenity_stop['geometry'].y, amenity_stop['geometry'].x,
-                destination_point.y, destination_point.x
+                destination_point.y, destination_point.x,
+                destination_poi=poi_id
             )
             if not route2 or 'plan' not in route2 or not route2['plan'].get('itineraries'):
                 return None
@@ -212,7 +270,8 @@ class ImprovedTripGenerator:
         else:
             route = self.otp_client.get_walking_route(
                 origin_point.y, origin_point.x,
-                destination_point.y, destination_point.x
+                destination_point.y, destination_point.x,
+                destination_poi=poi_id
             )
             if not route or 'plan' not in route or not route['plan'].get('itineraries'):
                 return None
@@ -274,13 +333,15 @@ class ImprovedTripGenerator:
                         route_data = self._get_valid_route(
                             origin_point,
                             destination_point,
-                            amenity_stop
+                            poi_id=poi_name,
+                            amenity_stop=amenity_stop
                         )
                 
                 if not route_data:
                     route_data = self._get_valid_route(
                         origin_point,
-                        destination_point
+                        destination_point,
+                        poi_id=poi_name
                     )
                 
                 if route_data:

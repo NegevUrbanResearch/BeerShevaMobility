@@ -14,11 +14,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
 from pyproj import Transformer
 from config import BASE_DIR, OUTPUT_DIR, FINAL_ZONES_FILE, POI_FILE, FINAL_TRIPS_PATTERN, BUILDINGS_FILE
-import polyline  # Add this import at the top
+import polyline  
+
+
 
 
 #    Bash Commands to Launch the OTP server on my local machine:
+# 1. Navigate to the directory containing the OTP jar:
 #    cd /Users/noamgal/Downloads/NUR/otp_project
+# If necessary, run the build command:
+# java -Xmx8G -jar otp-2.5.0-shaded.jar --build graphs/israel-and-palestine-latest.osm.pbf graphs/israel-public-transportation
+# Run the server:
 #    java -Xmx8G -jar otp-2.5.0-shaded.jar --load --serve graphs
 
 class RouteModeler:
