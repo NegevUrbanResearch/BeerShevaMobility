@@ -36,11 +36,21 @@ def determine_poi(coords, poi_polygons, poi_id_map):
             return poi_id_map.get(poi_id)
     return None
 
-def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode, direction):
+def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode, direction, model_outline):
     """
     Create HTML visualization with transparent background and POI-colored trips.
     Uses animation settings from ANIMATION_CONFIG.
     """
+    # Convert model outline to GeoJSON format
+    model_geojson = {
+        'type': 'Feature',
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': [[list(coord) for coord in model_outline.exterior.coords]]
+        },
+        'properties': {}
+    }
+
     # Prepare JSON data
     routes_json = json.dumps(routes_data)
     poi_colors_json = json.dumps(poi_colors)
@@ -108,12 +118,17 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
             function animate() {{
                 const currentTime = performance.now();
                 const frame = Math.floor((currentTime / 1000 * {ANIMATION_CONFIG['fps']}) % ANIMATION_DURATION);
-                const hour = Math.floor((frame / ANIMATION_DURATION) * 24);
                 
-                if (hour !== lastHour) {{
-                    console.log(`Hour ${{hour}}:00`);
-                }}
-                
+                const modelOutline = new deck.GeoJsonLayer({{
+                    id: 'model-outline',
+                    data: {json.dumps(model_geojson)},
+                    stroked: true,
+                    filled: false,
+                    lineWidthMinPixels: 1,
+                    getLineColor: [255, 255, 255, 128],  // Semi-transparent white
+                    getLineWidth: 1
+                }});
+
                 const trips = new deck.TripsLayer({{
                     id: 'trips',
                     data: processTrips(frame),
@@ -151,7 +166,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
                 }});
                 
                 deckgl.setProps({{
-                    layers: [trips]
+                    layers: [modelOutline, trips]  // Add outline layer
                 }});
                 
                 requestAnimationFrame(animate);
@@ -309,11 +324,19 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
 
 def load_model_outline(shapefile_path):
     """Load model outline and convert to web mercator projection"""
-    model = gpd.read_file(shapefile_path)
-    if model.crs != 'EPSG:4326':
-        model = model.to_crs('EPSG:4326')
-    bounds = model.geometry.iloc[0].bounds
-    return model.geometry.iloc[0], bounds
+    try:
+        model = gpd.read_file(shapefile_path)
+        if model.crs != 'EPSG:4326':
+            model = model.to_crs('EPSG:4326')
+        
+        # Get the first geometry and its bounds
+        geometry = model.geometry.iloc[0]
+        bounds = geometry.bounds  # This returns (minx, miny, maxx, maxy)
+        
+        return geometry, bounds
+    except Exception as e:
+        logger.error(f"Error loading model outline: {str(e)}")
+        raise
 
 def get_optimal_viewport(bounds):
     """Calculate optimal viewport settings based on geometry bounds"""
@@ -329,7 +352,7 @@ def get_optimal_viewport(bounds):
         'longitude': center_lon,
         'latitude': center_lat,
         'zoom': zoom,
-        'pitch': 45,
+        'pitch': 0,
         'bearing': 0
     }
 
@@ -406,13 +429,20 @@ def main():
         for direction in directions:
             try:
                 # Load trip data
-                routes_data, animation_duration, poi_colors = load_trip_data(mode, direction)
+                logger.info(f"Loading trip data for {mode}-{direction}")
+                trip_data = load_trip_data(mode, direction)
+                logger.info(f"Trip data loaded, got {len(trip_data)} values")
+                routes_data, animation_duration, poi_colors = trip_data
                 
                 for model_size in models:
                     # Load model outline and create viewport
-                    model_outline, bounds = load_model_outline(
-                        f'data-viz/data/model_outline/{model_size} model.shp'
-                    )
+                    logger.info(f"Loading model outline for {model_size}")
+                    model_path = f'data-viz/data/model_outline/{model_size} model.shp'
+                    outline_data = load_model_outline(model_path)
+                    logger.info(f"Model outline loaded, got {len(outline_data)} values")
+                    model_outline, bounds = outline_data
+                    
+                    logger.info("Creating viewport")
                     viewport = get_optimal_viewport(bounds)
                     
                     # Generate output filename
@@ -421,6 +451,7 @@ def main():
                         f"projection_animation_{model_size}_{mode}_{direction}.html"
                     )
                     
+                    logger.info(f"Creating HTML content for {html_path}")
                     # Create HTML content
                     html_content = create_deck_html(
                         routes_data,
@@ -428,7 +459,8 @@ def main():
                         poi_colors,
                         viewport,
                         mode,
-                        direction
+                        direction,
+                        model_outline
                     )
                     
                     # Save HTML file
@@ -439,6 +471,7 @@ def main():
                     
             except Exception as e:
                 logger.error(f"Error processing {mode}-{direction}: {str(e)}")
+                logger.error(f"Error details:", exc_info=True)  # This will print the full traceback
                 continue
 
 if __name__ == "__main__":
