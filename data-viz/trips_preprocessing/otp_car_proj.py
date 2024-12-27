@@ -9,46 +9,101 @@ import time
 from tqdm import tqdm
 import os
 import sys
-# Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
 from pyproj import Transformer
-from config import BASE_DIR, OUTPUT_DIR, FINAL_ZONES_FILE, POI_FILE, FINAL_TRIPS_PATTERN, BUILDINGS_FILE
-import polyline  # Add this import at the top
-from rtree import index
-from scipy.spatial import cKDTree
+from config import BASE_DIR, OUTPUT_DIR
+import polyline
 import logging
-
-
-#    Bash Commands to Launch the OTP server on my local machine:
-#    cd /Users/noamgal/Downloads/NUR/otp_project
-#    java -Xmx8G -jar otp-2.5.0-shaded.jar --load --serve graphs
+from coordinate_utils import CoordinateValidator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class OTPClient:
-    def __init__(self, base_url="http://localhost:8080/otp/routers/default", max_retries=3, retry_delay=0.5):
+    def __init__(self, base_url="http://localhost:8080/otp/routers/default", max_retries=5, retry_delay=0.5):
         self.base_url = base_url
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.session = requests.Session()
         
-        # Verify OTP server is running and get graph bounds
+        # Beer Sheva region bounds (slightly expanded)
+        self.bounds = {
+            'minLat': 31.15,
+            'maxLat': 31.35,
+            'minLon': 34.70,
+            'maxLon': 34.90
+        }
+        
+        # Load and store POI polygons
+        attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # BGU and Soroka
+        if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
+            self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
+            
+        # Verify OTP server and log bounds
         try:
             response = self.session.get(f"{self.base_url}/serverinfo", timeout=5)
             if response.status_code == 200:
                 logger.info("Successfully connected to OTP server")
-                # Log server bounds if available
-                server_info = response.json()
-                if 'bounds' in server_info:
-                    logger.info(f"OTP Graph bounds: {server_info['bounds']}")
+                logger.info(f"Using bounds: {self.bounds}")
         except Exception as e:
             logger.error(f"Failed to connect to OTP server: {str(e)}")
-    
-    def get_car_route(self, from_lat, from_lon, to_lat, to_lon):
-        """Query OTP for a driving route with retries and detailed logging"""
+
+    def _validate_coordinates(self, lat, lon):
+        """Validate and adjust coordinates to be within bounds"""
+        if not (self.bounds['minLat'] <= lat <= self.bounds['maxLat']):
+            lat = np.clip(lat, self.bounds['minLat'], self.bounds['maxLat'])
+            logger.debug(f"Latitude adjusted to: {lat}")
+            
+        if not (self.bounds['minLon'] <= lon <= self.bounds['maxLon']):
+            lon = np.clip(lon, self.bounds['minLon'], self.bounds['maxLon'])
+            logger.debug(f"Longitude adjusted to: {lon}")
+            
+        return lat, lon
+    def get_car_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
+        """
+        Query OTP for a driving route with retries.
+        
+        Parameters:
+        - from_lat, from_lon: Origin coordinates
+        - to_lat, to_lon: Destination coordinates
+        - destination_poi: Name of destination POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
+        """
+        # Add debug logging for the problematic coordinates
+        logger.debug(f"Attempting route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
+        
+        # Validate and adjust coordinates
+        from_lat, from_lon = self._validate_coordinates(from_lat, from_lon)
+        to_lat, to_lon = self._validate_coordinates(to_lat, to_lon)
+        
+        point_origin = Point(from_lon, from_lat)
+        point_dest = Point(to_lon, to_lat)
+        
+        # Map POI names to IDs
+        poi_name_to_id = {
+            'Ben-Gurion-University': 11,
+            'Soroka-Medical-Center': 7
+        }
+        
+        # Determine which polygons to avoid based on origin/destination containment
+        avoid_polygons = []
+        for _, poi in self.poi_polygons.iterrows():
+            # If this POI contains either the origin or destination, allow routing through it
+            if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
+                continue
+                
+            # If this is destination POI's entrance point, allow routing through it
+            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
+                continue
+                
+            # Otherwise, prevent routing through this POI
+            avoid_polygons.append(poi.geometry.wkt)
+            
+        # Create avoidance string if needed
+        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
@@ -58,7 +113,14 @@ class OTPClient:
             'arriveBy': 'false'
         }
         
-        logger.info(f"Requesting route: from=({from_lat},{from_lon}) to=({to_lat},{to_lon})")
+        # Add polygon avoidance if needed
+        if avoid_str:
+            params['walkReluctance'] = 20  # Keep these car-specific parameters
+            params['triangleTimeFactor'] = 0
+            params['walkOnStreetReluctance'] = 5
+            params['avoid'] = avoid_str
+        
+        logger.debug(f"Requesting route with params: {params}")
         
         for attempt in range(self.max_retries):
             try:
@@ -74,42 +136,25 @@ class OTPClient:
                         error_msg = data.get('error', {}).get('msg', 'Unknown error')
                         logger.warning(f"OTP Error (attempt {attempt + 1}): {error_msg}")
                         
-                        if 'OUTSIDE_BOUNDS' in error_msg:
-                            # Try with adjusted coordinates
-                            adjusted_params = self._adjust_coordinates(params)
-                            if adjusted_params:
-                                logger.info("Trying with adjusted coordinates")
-                                adjusted_response = self.session.get(
-                                    f"{self.base_url}/plan",
-                                    params=adjusted_params,
-                                    timeout=10
-                                )
-                                if adjusted_response.status_code == 200:
-                                    adjusted_data = adjusted_response.json()
-                                    if 'plan' in adjusted_data:
-                                        return adjusted_data
+                        if attempt == self.max_retries - 1:  # On last attempt
+                            logger.warning(f"Failed to find route after {self.max_retries} attempts. Skipping route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
                         
                         time.sleep(self.retry_delay)
                         continue
                     
                     if 'plan' in data:
                         return data
-                    else:
-                        logger.warning(f"No plan in response (attempt {attempt + 1})")
-                        
-                elif response.status_code == 500:
-                    logger.warning(f"OTP server error (500) on attempt {attempt + 1}")
-                    
+                
                 time.sleep(self.retry_delay)
                     
             except Exception as e:
                 logger.error(f"Error getting route (attempt {attempt + 1}): {str(e)}")
                 time.sleep(self.retry_delay)
                 
-        return None
+        return None  # Return None after all retries failed
 
     def _adjust_coordinates(self, params):
-        """Adjust coordinates slightly to find a valid route"""
+        """Adjust coordinates to be within Israel bounds"""
         try:
             from_coords = params['fromPlace'].split(',')
             to_coords = params['toPlace'].split(',')
@@ -119,23 +164,21 @@ class OTPClient:
             to_lat = float(to_coords[0])
             to_lon = float(to_coords[1])
             
-            # Use Israel bounds
+            # Israel bounds
             MIN_LAT = 29.5
             MAX_LAT = 33.3
             MIN_LON = 34.2
             MAX_LON = 35.9
             
-            # Adjust coordinates to nearest valid point if outside bounds
             def adjust_point(lat, lon):
                 lat = np.clip(lat, MIN_LAT, MAX_LAT)
                 lon = np.clip(lon, MIN_LON, MAX_LON)
                 return lat, lon
             
-            # Check if points are far outside bounds before adjusting
-            if not self.is_within_bounds(from_lat, from_lon):
+            if not (MIN_LAT <= from_lat <= MAX_LAT and MIN_LON <= from_lon <= MAX_LON):
                 from_lat, from_lon = adjust_point(from_lat, from_lon)
                 
-            if not self.is_within_bounds(to_lat, to_lon):
+            if not (MIN_LAT <= to_lat <= MAX_LAT and MIN_LON <= to_lon <= MAX_LON):
                 to_lat, to_lon = adjust_point(to_lat, to_lon)
             
             return {
@@ -153,289 +196,87 @@ class RouteModeler:
         self.base_dir = BASE_DIR
         self.output_dir = OUTPUT_DIR
         self.transformer = Transformer.from_crs("EPSG:2039", "EPSG:4326", always_xy=True)
-        self.otp_url = "http://localhost:8080/otp/routers/default"
-        self.otp_client = OTPClient(base_url=self.otp_url)
-        self.zone_used_points = {}
+        self.otp_client = OTPClient(base_url="http://localhost:8080/otp/routers/default")
         self.load_data()
         
     def load_data(self):
-        """Load and process all required data"""
+        """Load and process required data"""
         loader = DataLoader()
         self.zones = loader.load_zones()
         self.poi_df = loader.load_poi_data()
-        
-        # Debug POI coordinates
-        print("\nPOI Coordinates:")
-        for _, row in self.poi_df.iterrows():
-            print(f"{row['name']}: lat={row['lat']}, lon={row['lon']}")
-            if not self.is_within_bounds(row['lat'], row['lon']):
-                logger.warning(f"POI {row['name']} coordinates outside bounds: lat={row['lat']}, lon={row['lon']}")
-        
         self.trip_data = loader.load_trip_data()
-        
-        # Load amenities and ensure correct CRS
-        amenities_path = "/Users/noamgal/DSProjects/BeerShevaMobility/shapes/data/output/points_within_buffer.shp"
-        self.amenities = gpd.read_file(amenities_path)
-        
-        # Ensure amenities are in WGS84 (EPSG:4326)
-        if self.amenities.crs != "EPSG:4326":
-            self.amenities = self.amenities.to_crs("EPSG:4326")
-        
-        # Validate amenity coordinates
-        invalid_amenities = self.amenities[~self.amenities.apply(
-            lambda x: self.is_within_bounds(x.geometry.y, x.geometry.x), axis=1
-        )]
-        if not invalid_amenities.empty:
-            logger.warning(f"Found {len(invalid_amenities)} amenities outside bounds")
-        
-        self.amenities = self._filter_clustered_amenities(self.amenities)
         
         # Clean POI names
         self.poi_df, self.trip_data = loader.clean_poi_names(self.poi_df, self.trip_data)
         
-    def _filter_clustered_amenities(self, amenities_gdf, distance_threshold=25):
-        """Filter amenities to keep only those that are part of clusters"""
-        logger.info(f"Filtering {len(amenities_gdf)} amenities for clusters...")
-        
-        coords = np.column_stack((
-            amenities_gdf.geometry.x.values,
-            amenities_gdf.geometry.y.values
-        ))
-        tree = cKDTree(coords)
-        pairs = tree.query_pairs(r=distance_threshold/111000)
-        
-        clustered_indices = set()
-        for i, j in pairs:
-            clustered_indices.add(i)
-            clustered_indices.add(j)
-        
-        filtered_amenities = amenities_gdf.iloc[list(clustered_indices)].copy()
-        logger.info(f"Found {len(filtered_amenities)} amenities in clusters")
-        return filtered_amenities
+        # Debug POI coordinates
+        for _, row in self.poi_df.iterrows():
+            if not self.is_within_bounds(row['lat'], row['lon']):
+                logger.warning(f"POI {row['name']} coordinates outside bounds: lat={row['lat']}, lon={row['lon']}")
 
     def is_within_bounds(self, lat, lon):
-        """Check if coordinates are within reasonable bounds for Israel"""
-        # Israel approximate bounds
-        MIN_LAT = 29.5  # Southern tip of Israel
-        MAX_LAT = 33.3  # Northern tip of Israel
-        MIN_LON = 34.2  # Western border
-        MAX_LON = 35.9  # Eastern border
-        
+        """Check if coordinates are within Israel bounds"""
+        MIN_LAT, MAX_LAT = 29.5, 33.3
+        MIN_LON, MAX_LON = 34.2, 35.9
         return (MIN_LAT <= lat <= MAX_LAT) and (MIN_LON <= lon <= MAX_LON)
-
-    def is_near_destination(self, amenity_lat, amenity_lon, dest_lat, dest_lon, max_distance_km=2.0):
-        """Check if amenity is within max_distance_km of destination"""
-        # Convert lat/lon to approximate kilometers (rough approximation)
-        lat_diff = abs(amenity_lat - dest_lat) * 111  # 1 degree lat ≈ 111 km
-        lon_diff = abs(amenity_lon - dest_lon) * 111 * np.cos(np.radians(dest_lat))
-        
-        distance = np.sqrt(lat_diff**2 + lon_diff**2)
-        return distance <= max_distance_km
-
-    def load_model_boundary(self):
-        """Load the model boundary from shapefile"""
-        model = gpd.read_file('data-viz/data/model_outline/big model.shp')
-        if model.crs != 'EPSG:4326':
-            model = model.to_crs('EPSG:4326')
-        return model.geometry.iloc[0]
-
-    def _find_suitable_amenity(self, origin_point, destination_point, max_detour_factor=1.3):
-        """Find a suitable amenity that doesn't create too much of a detour"""
-        if self.amenities.empty:
-            return None
-        
-        # Load model boundary if not already loaded
-        if not hasattr(self, 'model_boundary'):
-            self.model_boundary = self.load_model_boundary()
-        
-        # Filter amenities to only those within model boundary
-        valid_amenities = self.amenities[self.amenities.geometry.within(self.model_boundary)]
-        
-        if valid_amenities.empty:
-            return None
-        
-        direct_distance = origin_point.distance(destination_point)
-        
-        # Ensure consistent coordinate order (lon, lat) for calculations
-        origin_arr = np.array([origin_point.x, origin_point.y])  # x=lon, y=lat
-        dest_arr = np.array([destination_point.x, destination_point.y])
-        
-        amenity_coords = np.column_stack((
-            valid_amenities.geometry.x.values,  # lon
-            valid_amenities.geometry.y.values   # lat
-        ))
-        
-        # Calculate total distances through each amenity
-        total_distances = (
-            np.sqrt(np.sum((amenity_coords - origin_arr)**2, axis=1)) +
-            np.sqrt(np.sum((amenity_coords - dest_arr)**2, axis=1))
-        )
-        
-        # Filter by total route distance
-        detour_mask = total_distances <= (direct_distance * max_detour_factor)
-        
-        if np.any(detour_mask):
-            valid_indices = np.where(detour_mask)[0]
-            chosen_idx = np.random.choice(valid_indices)
-            chosen_amenity = valid_amenities.iloc[chosen_idx]
-            
-            return {
-                'geometry': Point(amenity_coords[chosen_idx]),
-                'amenity_id': chosen_amenity.name,
-                'amenity_type': chosen_amenity['top_classi']
-            }
-        
-        return None
-
-    def _get_valid_route(self, origin_point, destination_point, amenity_stop=None):
-        """Get a valid driving route, optionally including an amenity stop"""
-        # Add debug logging for input coordinates
-        logger.info(f"Route request - Origin: lat={origin_point.y}, lon={origin_point.x}")
-        logger.info(f"Route request - Destination: lat={destination_point.y}, lon={destination_point.x}")
-        
-        # Create new points with adjusted coordinates if needed
-        origin_y = origin_point.y
-        origin_x = origin_point.x
-        dest_y = destination_point.y
-        dest_x = destination_point.x
-        
-        # Validate input coordinates before making request
-        if not self.is_within_bounds(origin_y, origin_x):
-            logger.warning("Origin coordinates out of bounds, adjusting...")
-            origin_y = np.clip(origin_y, 31.0, 31.5)
-            origin_x = np.clip(origin_x, 34.6, 35.0)
-            origin_point = Point(origin_x, origin_y)
-            
-        if not self.is_within_bounds(dest_y, dest_x):
-            logger.warning("Destination coordinates out of bounds, adjusting...")
-            dest_y = np.clip(dest_y, 31.0, 31.5)
-            dest_x = np.clip(dest_x, 34.6, 35.0)
-            destination_point = Point(dest_x, dest_y)
-        
-        if amenity_stop:
-            # Get route segments with detailed logging
-            logger.info("Attempting route with amenity stop...")
-            route1 = self.otp_client.get_car_route(
-                origin_point.y, origin_point.x,
-                amenity_stop['geometry'].y, amenity_stop['geometry'].x
-            )
-            if not route1 or 'plan' not in route1:
-                logger.warning("Failed to get first route segment")
-                if 'error' in route1:
-                    logger.warning(f"OTP Error: {route1['error']}")
-                return None
-            
-            route2 = self.otp_client.get_car_route(
-                amenity_stop['geometry'].y, amenity_stop['geometry'].x,
-                destination_point.y, destination_point.x
-            )
-            if not route2 or 'plan' not in route2:
-                logger.warning("Failed to get second route segment")
-                if 'error' in route2:
-                    logger.warning(f"OTP Error: {route2['error']}")
-                return None
-            
-            try:
-                leg1 = route1['plan']['itineraries'][0]['legs'][0]
-                leg2 = route2['plan']['itineraries'][0]['legs'][0]
-                
-                points1 = polyline.decode(leg1['legGeometry']['points'])
-                points2 = polyline.decode(leg2['legGeometry']['points'])
-                
-                return {
-                    'points': points1 + points2[1:],
-                    'duration': leg1['duration'] + leg2['duration'],
-                    'amenity_info': amenity_stop
-                }
-            except (KeyError, IndexError) as e:
-                logger.warning(f"Error processing route segments: {str(e)}")
-                return None
-            
-        else:
-            # Add retry logic for direct routes
-            max_retries = 3
-            for attempt in range(max_retries):
-                route = self.otp_client.get_car_route(
-                    origin_point.y, origin_point.x,
-                    destination_point.y, destination_point.x
-                )
-                
-                if route and 'plan' in route and route['plan'].get('itineraries'):
-                    try:
-                        leg = route['plan']['itineraries'][0]['legs'][0]
-                        return {
-                            'points': polyline.decode(leg['legGeometry']['points']),
-                            'duration': leg['duration'],
-                            'amenity_info': None
-                        }
-                    except (KeyError, IndexError) as e:
-                        logger.warning(f"Error processing route on attempt {attempt + 1}: {str(e)}")
-                else:
-                    logger.warning(f"Route attempt {attempt + 1} failed")
-                    if route and 'error' in route:
-                        logger.warning(f"OTP Error: {route['error']}")
-                    if attempt < max_retries - 1:
-                        time.sleep(1)  # Wait before retry
-                        
-            return None
 
     def transform_coords(self, x, y):
         """Transform coordinates from ITM to WGS84"""
         try:
-            # Add detailed debug print before transformation
-            logger.info(f"Input ITM coordinates: x={x}, y={y}")
+            # Validate ITM coordinates first
+            x, y, itm_valid = CoordinateValidator.validate_itm(x, y)
+            if not itm_valid:
+                logger.debug("Using adjusted ITM coordinates for transformation")
             
-            # Validate input coordinates
-            if not (120000 <= x <= 250000) or not (500000 <= y <= 700000):
-                logger.warning(f"ITM coordinates appear to be out of expected range: x={x}, y={y}")
-            
-            # Note: transformer expects (x,y) but returns (lon,lat)
+            # Transform to WGS84
             lon, lat = self.transformer.transform(x, y)
             
-            # Add detailed debug print after transformation
-            logger.info(f"Transformed to WGS84: lat={lat}, lon={lon}")
+            # Validate transformed coordinates against Israel bounds
+            lat, lon, wgs_valid = CoordinateValidator.validate_wgs84(lat, lon, use_beer_sheva_bounds=False)
             
-            # Validate the transformed coordinates
-            if not (29.5 <= lat <= 33.3) or not (34.2 <= lon <= 35.9):
-                logger.warning(f"Transformed coordinates outside Israel bounds: lat={lat}, lon={lon}")
-                
-                # Only adjust if coordinates are wildly off
-                if abs(lat - 31.25) > 2 or abs(lon - 34.75) > 2:
-                    logger.info("Coordinates far from Beer Sheva area, attempting adjustment")
-                    # Center coordinates around Beer Sheva if they're way off
-                    lat = np.clip(lat, 31.0, 31.5)
-                    lon = np.clip(lon, 34.6, 35.0)
-                    logger.info(f"Adjusted coordinates to: lat={lat}, lon={lon}")
+            if not wgs_valid:
+                logger.debug("Using adjusted WGS84 coordinates")
             
-            return lat, lon  # Return in lat,lon order for OTP
+            return lat, lon
             
         except Exception as e:
             logger.error(f"Error in coordinate transformation: {str(e)}")
             return None, None
 
+    def get_route(self, origin_lat, origin_lon, dest_lat, dest_lon):
+        """Get a direct route between two points"""
+        route = self.otp_client.get_car_route(
+            origin_lat, origin_lon,
+            dest_lat, dest_lon
+        )
+        
+        if route and 'plan' in route and route['plan'].get('itineraries'):
+            try:
+                leg = route['plan']['itineraries'][0]['legs'][0]
+                return {
+                    'points': polyline.decode(leg['legGeometry']['points']),
+                    'duration': leg['duration']
+                }
+            except (KeyError, IndexError) as e:
+                logger.warning(f"Error processing route: {str(e)}")
+        
+        return None
+
     def process_routes(self):
         """Process routes for all zones to each POI"""
-        trips = []  # Define trips list
+        trips = []
         route_cache = {}
         departure_time = datetime.now().replace(hour=8, minute=0, second=0)
         
-        main_pois = [
-            'Ben-Gurion-University',
-            'Soroka-Medical-Center'
-        ]
+        main_pois = ['Ben-Gurion-University', 'Soroka-Medical-Center']
         
         for poi_name in main_pois:
             logger.info(f"\nProcessing routes for {poi_name}")
             
-            # Get POI coordinates
             poi_coords = self.poi_df[self.poi_df['name'] == poi_name]
             if len(poi_coords) == 0:
                 logger.warning(f"No coordinates found for {poi_name}")
                 continue
-            
-            # Debug POI data
-            print(f"\nPOI data for {poi_name}:")
-            print(f"Coordinates: {poi_coords[['name', 'lon', 'lat']].iloc[0].to_dict()}")
             
             try:
                 poi_lat = float(poi_coords['lat'].iloc[0])
@@ -443,8 +284,6 @@ class RouteModeler:
             except (KeyError, ValueError) as e:
                 logger.error(f"Error getting POI coordinates: {e}")
                 continue
-                
-            print(f"Using POI coordinates: lat={poi_lat}, lon={poi_lon}")
             
             for direction in ['inbound', 'outbound']:
                 if (poi_name, direction) not in self.trip_data:
@@ -461,7 +300,6 @@ class RouteModeler:
                 total_car_trips = (trip_df['total_trips'] * trip_df['mode_car'] / 100).sum()
                 logger.info(f"Processing {int(total_car_trips)} car trips for {poi_name} - {direction}")
                 
-                # Process zones
                 for _, zone_data in tqdm(trip_df.iterrows(), total=len(trip_df)):
                     zone_id = zone_data['tract']
                     car_trips = zone_data['total_trips'] * (zone_data['mode_car'] / 100)
@@ -475,75 +313,30 @@ class RouteModeler:
                     if len(zone) == 0:
                         continue
                     
-                    # Use zone centroid
                     centroid = zone.geometry.iloc[0].centroid
-                    print(f"\nProcessing zone {zone_id}:")
-                    print(f"Zone centroid (ITM): x={centroid.x}, y={centroid.y}")
                     
                     if direction == 'inbound':
-                        # Transform from ITM to WGS84
                         origin_lat, origin_lon = self.transform_coords(centroid.x, centroid.y)
-                        if origin_lat is None or origin_lon is None:
-                            logger.warning(f"Skipping zone {zone_id} - coordinates out of bounds")
+                        if origin_lat is None:
                             continue
-                        dest_lat = poi_lat
-                        dest_lon = poi_lon
-                        print(f"Inbound route:")
-                        print(f"From: lat={origin_lat}, lon={origin_lon}")
-                        print(f"To: lat={dest_lat}, lon={dest_lon}")
+                        dest_lat, dest_lon = poi_lat, poi_lon
                     else:
-                        # For outbound, origin is POI and destination needs transformation
-                        origin_lat = poi_lat
-                        origin_lon = poi_lon
+                        origin_lat, origin_lon = poi_lat, poi_lon
                         dest_lat, dest_lon = self.transform_coords(centroid.x, centroid.y)
-                        if dest_lat is None or dest_lon is None:
-                            logger.warning(f"Skipping zone {zone_id} - coordinates out of bounds")
+                        if dest_lat is None:
                             continue
-                        print(f"Outbound route:")
-                        print(f"From: lat={origin_lat}, lon={origin_lon}")
-                        print(f"To: lat={dest_lat}, lon={dest_lon}")
                     
-                    # Debug coordinate transformation
-                    logger.debug(f"Zone {zone_id} coordinates:")
-                    logger.debug(f"Origin: lat={origin_lat}, lon={origin_lon}")
-                    logger.debug(f"Destination: lat={dest_lat}, lon={dest_lon}")
+                    cache_key = f"{origin_lat},{origin_lon}-{dest_lat},{dest_lon}"
                     
-                    # Try to get route with amenity stop
-                    route_data = None
-                    if np.random.random() < 0.3:  # 30% chance of amenity stop
-                        amenity_stop = self._find_suitable_amenity(
-                            Point(origin_lon, origin_lat),
-                            Point(dest_lon, dest_lat)
-                        )
-                        if amenity_stop:
-                            route_data = self._get_valid_route(
-                                Point(origin_lat, origin_lon),
-                                Point(dest_lat, dest_lon),
-                                amenity_stop
-                            )
+                    if cache_key not in route_cache:
+                        route_data = self.get_route(origin_lat, origin_lon, dest_lat, dest_lon)
+                        if route_data:
+                            route_cache[cache_key] = route_data
+                        time.sleep(0.1)  # Rate limiting
                     
-                    # If no amenity route, try direct route
-                    if not route_data:
-                        cache_key = f"{origin_lat},{origin_lon}-{dest_lat},{dest_lon}"
-                        if cache_key not in route_cache:
-                            route = self.otp_client.get_car_route(
-                                origin_lat, origin_lon,
-                                dest_lat, dest_lon
-                            )
-                            
-                            if route and 'plan' in route and route['plan']['itineraries']:
-                                leg = route['plan']['itineraries'][0]['legs'][0]
-                                route_cache[cache_key] = {
-                                    'points': polyline.decode(leg['legGeometry']['points']),
-                                    'duration': leg['duration']
-                                }
-                            
-                            time.sleep(0.1)  # Rate limiting
+                    if cache_key in route_cache:
+                        route_data = route_cache[cache_key]
                         
-                        if cache_key in route_cache:
-                            route_data = route_cache[cache_key]
-                    
-                    if route_data:
                         trip_info = {
                             'geometry': LineString([(lon, lat) for lat, lon in route_data['points']]),
                             'departure_time': departure_time,
@@ -552,23 +345,14 @@ class RouteModeler:
                             'destination': poi_name if direction == 'inbound' else zone_id,
                             'route_id': f"{zone_id}-{poi_name}-{direction}-{len(trips)}",
                             'num_trips': num_trips,
-                            'direction': direction,
-                            'has_amenity_stop': bool(route_data.get('amenity_info'))
+                            'direction': direction
                         }
-                        
-                        if route_data.get('amenity_info'):
-                            trip_info.update({
-                                'amenity_id': route_data['amenity_info']['amenity_id'],
-                                'amenity_type': route_data['amenity_info']['amenity_type']
-                            })
                         
                         trips.append(trip_info)
         
-        # Save results
         if trips:
             trips_gdf = gpd.GeoDataFrame(trips, crs="EPSG:4326")
             
-            # Split and save inbound/outbound
             for direction in ['inbound', 'outbound']:
                 direction_gdf = trips_gdf[trips_gdf['direction'] == direction]
                 output_file = os.path.join(self.output_dir, f"car_routes_{direction}.geojson")
@@ -576,9 +360,168 @@ class RouteModeler:
                 logger.info(f"Saved {len(direction_gdf)} {direction} routes to {output_file}")
             
             return trips_gdf
-        else:
-            logger.warning("No routes were generated!")
-            return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        
+        logger.warning("No routes were generated!")
+        return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+
+    def _generate_unique_point(self, zone_id, geometry, max_attempts=500):  # Increased attempts
+        """Generate a unique random point within a geometry with more attempts and edge buffering"""
+        used_points = self._get_used_points(zone_id)
+        
+        # Buffer the geometry slightly inward to avoid edge cases
+        buffered_geometry = geometry.buffer(-0.0001)  # About 10m buffer
+        if buffered_geometry.is_empty:
+            buffered_geometry = geometry  # Fall back to original if buffer makes it empty
+        
+        minx, miny, maxx, maxy = buffered_geometry.bounds
+        
+        # Create a list to store failed points for debugging
+        failed_points = []
+        
+        # Try different sampling strategies
+        strategies = [
+            ('random', int(max_attempts * 0.6)),  # 60% random sampling
+            ('grid', int(max_attempts * 0.3)),    # 30% grid sampling
+            ('edge', int(max_attempts * 0.1))     # 10% edge sampling
+        ]
+        
+        for strategy, attempts in strategies:
+            logger.debug(f"Trying {strategy} sampling for zone {zone_id}")
+            
+            for attempt in range(attempts):
+                if strategy == 'random':
+                    point = Point(
+                        np.random.uniform(minx, maxx),
+                        np.random.uniform(miny, maxy)
+                    )
+                elif strategy == 'grid':
+                    # Create a grid of points
+                    grid_size = int(np.sqrt(attempts))
+                    x_points = np.linspace(minx, maxx, grid_size)
+                    y_points = np.linspace(miny, maxy, grid_size)
+                    grid_x = x_points[attempt % grid_size]
+                    grid_y = y_points[(attempt // grid_size) % grid_size]
+                    point = Point(grid_x, grid_y)
+                else:  # edge sampling
+                    # Sample points along the geometry's boundary
+                    boundary_point = geometry.boundary.interpolate(
+                        np.random.random(), normalized=True
+                    )
+                    # Move slightly inward
+                    point = Point(
+                        boundary_point.x + np.random.uniform(-0.0005, 0.0005),
+                        boundary_point.y + np.random.uniform(-0.0005, 0.0005)
+                    )
+                
+                if buffered_geometry.contains(point):
+                    # Check if point is sufficiently far from used points (10 meters ≈ 0.0001 degrees)
+                    if all(point.distance(p) > 0.0001 for p in used_points):
+                        # Verify the point has graph access
+                        lat, lon = point.y, point.x
+                        if self.otp_client.test_point_access(lat, lon):
+                            logger.debug(f"Found valid point using {strategy} sampling: ({lat}, {lon})")
+                            return point
+                        else:
+                            failed_points.append((point, f"No graph access ({strategy})"))
+                    else:
+                        failed_points.append((point, f"Too close to used points ({strategy})"))
+                
+                if attempt % 50 == 0:  # Log progress periodically
+                    logger.debug(f"Tried {attempt} points with {strategy} sampling")
+        
+        # If we get here, we failed to find a valid point
+        logger.warning(f"Failed to find valid point in zone {zone_id} after trying multiple strategies")
+        logger.debug(f"Failed points: {len(failed_points)} total")
+        
+        # Try points near the centroid as a last resort
+        centroid = geometry.centroid
+        for offset in [(0,0), (0.001,0), (0,-0.001), (0.001,0.001), (-0.001,-0.001)]:
+            point = Point(centroid.x + offset[0], centroid.y + offset[1])
+            if buffered_geometry.contains(point):
+                lat, lon = point.y, point.x
+                if self.otp_client.test_point_access(lat, lon):
+                    logger.warning(f"Falling back to adjusted centroid point: ({lat}, {lon})")
+                    return point
+        
+        # Absolute last resort - return centroid even if it might not work
+        logger.error(f"All point generation strategies failed for zone {zone_id}, using raw centroid")
+        return Point(centroid.x, centroid.y)
+
+    def process_zone_trips(self, zone_id, num_trips, poi_name, entrances, zone_data, direction='inbound', fixed_origin=None):
+        """Process all trips for a single zone"""
+        zone = self.zones[self.zones['YISHUV_STAT11'] == zone_id]
+        if len(zone) == 0:
+            return []
+        
+        zone_geometry = zone.geometry.iloc[0]
+        successful_routes = []
+        departure_time = datetime.now().replace(hour=8, minute=0, second=0)
+        
+        max_point_attempts = 5  # Try up to 5 different points before giving up
+        
+        with tqdm(total=num_trips, desc=f"Zone {zone_id} {direction}") as pbar:
+            trips_remaining = num_trips
+            while trips_remaining > 0:
+                route_found = False
+                
+                # Try different points within the zone
+                for point_attempt in range(max_point_attempts):
+                    if direction == 'inbound':
+                        origin_point = self._generate_unique_point(zone_id, zone_geometry)
+                        if not origin_point:
+                            logger.warning(f"Could not generate unique point for zone {zone_id}")
+                            break
+                        best_entrance = self._find_closest_entrance(origin_point, entrances)
+                        destination_point = best_entrance.geometry
+                    else:  # outbound
+                        destination_point = self._generate_unique_point(zone_id, zone_geometry)
+                        if not destination_point:
+                            logger.warning(f"Could not generate unique point for zone {zone_id}")
+                            break
+                        origin_point = fixed_origin.geometry
+                    
+                    route_data = self._get_valid_route(
+                        origin_point,
+                        destination_point
+                    )
+                    
+                    if route_data:
+                        route_found = True
+                        route_info = {
+                            'geometry': LineString([(lon, lat) for lat, lon in route_data['points']]),
+                            'departure_time': departure_time,
+                            'arrival_time': departure_time + pd.Timedelta(seconds=route_data['duration']),
+                            'origin_zone': zone_id if direction == 'inbound' else poi_name,
+                            'destination': poi_name if direction == 'inbound' else zone_id,
+                            'entrance': fixed_origin['Name'] if direction == 'outbound' else best_entrance['Name'],
+                            'route_id': f"{zone_id}-{poi_name}-{direction}-{len(successful_routes)}",
+                            'num_trips': 1,
+                            'origin_x': origin_point.x,
+                            'origin_y': origin_point.y,
+                            'direction': direction,
+                            'zone_total_trips': zone_data['total_trips'],
+                            'zone_ped_trips': zone_data['ped_trips']
+                        }
+                        
+                        successful_routes.append(route_info)
+                        if direction == 'inbound':
+                            self._get_used_points(zone_id).add(origin_point)
+                        else:
+                            self._get_used_points(zone_id).add(destination_point)
+                        trips_remaining -= 1
+                        pbar.update(1)
+                        break  # Exit point attempt loop if route is found
+                    
+                    else:
+                        logger.debug(f"Failed to find route with point attempt {point_attempt + 1}/{max_point_attempts}")
+                
+                if not route_found:
+                    logger.warning(f"Failed to find valid route after {max_point_attempts} point attempts for zone {zone_id}")
+                    break  # Exit trip generation for this zone if we can't find any valid points
+                
+                time.sleep(0.05)  # Sleep time between successful routes
+            
+        return successful_routes
 
 if __name__ == "__main__":
     modeler = RouteModeler()

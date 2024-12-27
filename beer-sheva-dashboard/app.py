@@ -1,7 +1,7 @@
 # Main dashboard script
 
 import dash
-from dash import html, dcc
+from dash import html, dcc, Input, Output
 import dash_bootstrap_components as dbc
 from flask_caching import Cache
 from data_loader import DataLoader
@@ -12,8 +12,6 @@ import logging
 import traceback
 import plotly.graph_objects as go
 from dash.exceptions import PreventUpdate
-
-
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -27,7 +25,6 @@ class DashboardApp:
         )
         self.cache = Cache(self.app.server, config={'CACHE_TYPE': 'SimpleCache'})
         
-        # Updated DataLoader initialization - no arguments needed
         self.data_loader = DataLoader()
         self.chart_creator = ChartCreator(COLOR_SCHEME, CHART_COLORS)
         self.map_creator = MapCreator(COLOR_SCHEME)
@@ -36,39 +33,87 @@ class DashboardApp:
         self.poi_df = self.data_loader.load_poi_data()
         self.trip_data = self.data_loader.load_trip_data()
         
-        # Clean POI names and update trip_data keys
         self.poi_df, self.trip_data = self.data_loader.clean_poi_names(self.poi_df, self.trip_data)
-        
-        # Update dropdown options with cleaned names
-        self.poi_options = [{'label': row['name'], 'value': row['name']} 
-                           for _, row in self.poi_df.iterrows()]
         self.poi_coordinates = dict(zip(self.poi_df['name'], 
                                       zip(self.poi_df['lat'], self.poi_df['lon'])))
         
         self.setup_layout()
         self.setup_callbacks()
 
- 
+    def create_chart_container(self, title, id_prefix):
+        return dbc.Card([
+            dbc.CardHeader(
+                title,
+                className="bg-dark text-white py-1 border-secondary"
+            ),
+            dbc.CardBody([
+                dbc.Row([
+                    # Donut chart column (60% width)
+                    dbc.Col([
+                        html.Div([
+                            html.Img(
+                                id=f'{id_prefix}-donut',
+                                className="w-100 h-100",
+                                style={
+                                    'objectFit': 'cover',
+                                    'backgroundColor': '#2d2d2d'
+                                }
+                            )
+                        ], style={'height': '170px'})
+                    ], width=7, className="pe-0"),
+                    
+                    # Legend column (40% width)
+                    dbc.Col([
+                        html.Div([
+                            html.Img(
+                                id=f'{id_prefix}-legend',
+                                className="w-100 h-100",
+                                style={
+                                    'objectFit': 'cover',
+                                    'backgroundColor': '#2d2d2d'
+                                }
+                            )
+                        ], style={'height': '170px'})
+                    ], width=5, className="ps-0")
+                ], className="g-0 h-100")
+            ], className="bg-dark p-1", style={'height': '170px'})
+        ], className="bg-dark border-secondary mb-3")
+
     def setup_layout(self):
         self.app.layout = dbc.Container([
-            dbc.Row([
-                dbc.Col(html.H1("Beer Sheva Mobility Dashboard", 
-                               className="text-center mb-4", 
-                               style={'font-size': '3rem'}), 
-                       width=12)
-            ], justify="center", className="mb-4"),
-            
-            # Center the controls with less width
+            # Debug info row
             dbc.Row([
                 dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            dcc.Dropdown(
-                                id='poi-selector',
-                                options=self.poi_options,
-                                value=self.poi_options[0]['value'],
-                                className="mb-3 text-center"
-                            ),
+                    html.Div(id='debug-info', 
+                        className="text-muted",
+                        style={
+                            'position': 'fixed', 
+                            'top': '0', 
+                            'right': '0', 
+                            'zIndex': 1000,
+                            'backgroundColor': '#2d2d2d',
+                            'color': '#fff',
+                            'padding': '4px 8px',
+                            'fontSize': '12px'
+                        })
+                ])
+            ]),
+            
+            # Header Row with integrated controls
+            dbc.Row([
+                dbc.Col([
+                    html.Div([
+                        html.H1("Beer Sheva Mobility Dashboard", 
+                            style={
+                                'fontSize': '2rem', 
+                                'color': '#fff',
+                                'display': 'inline-block',
+                                'marginRight': '2rem',
+                                'width': '100%',
+                                'textAlign': 'center'
+                            }
+                        ),
+                        html.Div([
                             dbc.RadioItems(
                                 id='trip-type-selector',
                                 options=[
@@ -76,142 +121,93 @@ class DashboardApp:
                                     {'label': 'Outbound', 'value': 'outbound'}
                                 ],
                                 value='inbound',
-                                inline=True,
-                                className="text-center"
+                                inline=False,
+                                style={
+                                    'color': 'white',
+                                    'fontSize': '1rem'
+                                },
+                                inputStyle={
+                                    'marginRight': '5px'
+                                },
+                                labelStyle={
+                                    'marginBottom': '2px',
+                                    'fontWeight': '300'
+                                }
                             )
-                        ])
-                    ], className="mb-4")
-                ], width={"size": 4, "offset": 4})  
-            ], justify="start"),
+                        ], style={
+                            'position': 'absolute',
+                            'right': '0',
+                            'top': '8px',
+                            'display': 'inline-block',
+                            'verticalAlign': 'top'
+                        })
+                    ], className="d-flex align-items-start justify-content-between position-relative")
+                ], width=12)
+            ], className="mb-3"),
             
-            # Add padding to main content
+            # Main Content Row
             dbc.Row([
-                dbc.Col([], width=1),  # Left buffer
+                # Map Column (65% width)
                 dbc.Col([
-                    # Map
-                    dbc.Row([
-                        dbc.Col(dcc.Graph(id='map'), width=12)
-                    ], className="mb-4"),
-                    
-                    # Charts
-                    dbc.Row([
-                        dbc.Col(html.Img(id='frequency-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4),
-                        dbc.Col(html.Img(id='mode-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4),
-                        dbc.Col(html.Img(id='purpose-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4)
-                    ], className="mb-4"),
-                ], width=10),  # Main content
-                dbc.Col([], width=1)  # Right buffer
-            ])
+                    dbc.Card([
+                        dbc.CardHeader("Interactive Map", 
+                                    className="bg-dark text-white py-1 border-secondary"),
+                        dbc.CardBody([
+                            dcc.Graph(
+                                id='map',
+                                className="h-100 w-100",
+                                config={
+                                    'displayModeBar': True,
+                                    'scrollZoom': True,
+                                    'responsive': True
+                                },
+                                figure={
+                                    'layout': {
+                                        'template': 'plotly_dark',
+                                        'paper_bgcolor': '#2d2d2d',
+                                        'plot_bgcolor': '#2d2d2d',
+                                        'margin': {"r":0,"t":0,"l":0,"b":0},
+                                        'height': 600
+                                    }
+                                }
+                            )
+                        ], className="bg-dark p-0")
+                    ], className="bg-dark h-100 border-secondary")
+                ], width=7, className="pe-2"),
+                
+                # Charts Column (35% width)
+                dbc.Col([
+                    self.create_chart_container("Trip Frequency", "frequency"),
+                    self.create_chart_container("Travel Mode", "mode"),
+                    self.create_chart_container("Trip Purpose", "purpose")
+                ], width=5, className="ps-2")
+                
+            ], className="g-2")
         ], fluid=True, 
-        style={'backgroundColor': COLOR_SCHEME['background'], 
-               'color': COLOR_SCHEME['text'], 
-               'font-size': '1.5rem',
-               'padding': '20px'})
-
-        # Add custom CSS for dark dropdown
-        self.app.index_string = self.app.index_string.replace(
-            '</head>',
-            '''
-            <style>
-            body { font-size: 1.5rem; }
-            
-            /* Card styling */
-            .card { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important;
-            }
-            
-            /* Dropdown styling */
-            .Select-control { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important; 
-            }
-            .Select-menu-outer { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important;
-                color: white !important;
-            }
-            .Select-option { 
-                background-color: #333333 !important; 
-                color: white !important;
-            }
-            .Select-option:hover { 
-                background-color: #444444 !important; 
-                color: white !important;
-            }
-            .VirtualizedSelectOption {
-                color: white !important;
-            }
-            .VirtualizedSelectFocusedOption {
-                background-color: #444444 !important;
-                color: white !important;
-            }
-            .Select-value-label { 
-                color: white !important; 
-                font-size: 1.5rem; 
-            }
-            .Select-placeholder { 
-                color: #999999 !important; 
-            }
-            .Select.is-focused > .Select-control { 
-                border-color: #007BFF !important; 
-            }
-            .Select-menu { 
-                background-color: #333333 !important; 
-            }
-            
-            /* Radio buttons styling */
-            .form-check-label { 
-                color: white !important; 
-            }
-            .form-check-input:checked { 
-                background-color: #007BFF !important; 
-                border-color: #007BFF !important; 
-            }
-            .form-check-input { 
-                background-color: #444444 !important; 
-                border-color: #666666 !important; 
-            }
-            
-            /* Radio button text color */
-            .form-check-inline .form-check-label {
-                color: white !important;
-            }
-            .form-check-inline {
-                color: white !important;
-            }
-            </style>
-            </head>
-            '''
-        )
+        className="p-2",
+        style={'backgroundColor': '#1a1a1a'})
 
     def setup_callbacks(self):
         @self.app.callback(
             [dash.Output('map', 'figure'),
-             dash.Output('mode-chart', 'src'),
-             dash.Output('purpose-chart', 'src'),
-             dash.Output('frequency-chart', 'src'),
-             dash.Output('poi-selector', 'value')],
-            [dash.Input('poi-selector', 'value'),
-             dash.Input('trip-type-selector', 'value'),
+             dash.Output('mode-donut', 'src'),
+             dash.Output('mode-legend', 'src'),
+             dash.Output('purpose-donut', 'src'),
+             dash.Output('purpose-legend', 'src'),
+             dash.Output('frequency-donut', 'src'),
+             dash.Output('frequency-legend', 'src')],
+            [dash.Input('trip-type-selector', 'value'),
              dash.Input('map', 'clickData')]
         )
-        def update_dashboard(selected_poi, trip_type, click_data):
-            ctx = dash.callback_context
-            trigger = ctx.triggered[0]['prop_id'].split('.')[0]
-
-            if trigger == 'map' and click_data and 'points' in click_data:
+        def update_dashboard(trip_type, click_data):
+            # Initialize with first POI if no click data
+            if not click_data or 'points' not in click_data:
+                selected_poi = self.poi_df['name'].iloc[0]
+            else:
                 clicked_poi = click_data['points'][0].get('customdata')
-                if clicked_poi and clicked_poi in self.poi_df['name'].values:
-                    selected_poi = clicked_poi
-                else:
+                if not clicked_poi or clicked_poi not in self.poi_df['name'].values:
                     raise PreventUpdate()
+                selected_poi = clicked_poi
 
             try:
                 logger.info(f"Updating dashboard for {selected_poi} ({trip_type})")
@@ -219,30 +215,28 @@ class DashboardApp:
                 
                 map_fig = self.map_creator.create_map(df, selected_poi, trip_type, self.zones, self.poi_coordinates)
                 
-                # Generate charts on-demand
-                self.create_and_save_pie_charts(selected_poi, df)
+                # Generate charts
+                self.chart_creator.create_and_save_charts(selected_poi, df)
                 
-                mode_chart_src = self.chart_creator.load_pie_chart(selected_poi.replace(' ', '_'), 'avg_trip_mode')
-                purpose_chart_src = self.chart_creator.load_pie_chart(selected_poi.replace(' ', '_'), 'avg_trip_purpose')
-                frequency_chart_src = self.chart_creator.load_pie_chart(selected_poi.replace(' ', '_'), 'avg_trip_frequency')
+                # Load all chart pairs
+                mode_donut, mode_legend = self.chart_creator.load_chart_pair(
+                    selected_poi.replace(' ', '_'), 'avg_trip_mode')
+                purpose_donut, purpose_legend = self.chart_creator.load_chart_pair(
+                    selected_poi.replace(' ', '_'), 'avg_trip_purpose')
+                frequency_donut, frequency_legend = self.chart_creator.load_chart_pair(
+                    selected_poi.replace(' ', '_'), 'avg_trip_frequency')
                 
-                logger.info("Dashboard update completed successfully")
-                return map_fig, mode_chart_src, purpose_chart_src, frequency_chart_src, selected_poi
+                return (map_fig,
+                       mode_donut, mode_legend,
+                       purpose_donut, purpose_legend,
+                       frequency_donut, frequency_legend)
             except Exception as e:
                 logger.error(f"Error updating dashboard: {str(e)}")
                 logger.error(traceback.format_exc())
-                # Return empty figures/charts in case of error
-                return go.Figure(), '', '', '', selected_poi
+                return go.Figure(), '', '', '', '', '', ''
 
     def run_server(self, debug=True):
         self.app.run_server(debug=debug)
-
-    def create_and_save_pie_charts(self, poi_name, df):
-        for category, title in [('mode', 'Average Trip Modes'), 
-                                ('purpose', 'Average Trip Purposes'), 
-                                ('frequency', 'Average Trip Frequencies')]:
-            fig = self.chart_creator.create_pie_chart(df, category, f'{poi_name} - {title}')
-            self.chart_creator.save_pie_chart(fig, poi_name.replace(' ', '_'), f'avg_trip_{category}')
 
 if __name__ == '__main__':
     dashboard = DashboardApp()
