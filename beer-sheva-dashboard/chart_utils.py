@@ -27,19 +27,15 @@ class ChartCreator:
         return percentages.mean()
 
     def clean_category_name(self, category):
-        # Remove prefixes like 'mode_', 'purpose_', 'frequency_'
         if '_' in category:
             category = category.split('_', 1)[1]
+        return ' '.join(word.capitalize() for word in category.replace('_', ' ').split())
+   
+    def create_chart_pair(self, df, category, title):
+        """Creates both a donut chart and its legend as separate images"""
+        logger.info(f"Creating chart pair for {category}")
         
-        # Replace underscores with spaces and capitalize each word
-        category = ' '.join(word.capitalize() for word in category.replace('_', ' ').split())
-        
-        return category
-    # In ChartCreator class, update create_pie_chart method
-
-    def create_pie_chart(self, df, category, title):
-        logger.info(f"Creating pie chart for {category}")
-        
+        # Get the correct columns based on category
         if category == 'frequency':
             columns = [col for col in df.columns if col.startswith('frequency_')]
         elif category == 'mode':
@@ -48,81 +44,138 @@ class ChartCreator:
             columns = [col for col in df.columns if col.startswith('purpose_')]
         else:
             logger.warning(f"Invalid category: {category}")
-            return None
+            return None, None
 
+        # Calculate percentages
         data = self.calculate_mean_percentages(df, columns)
         nonzero_data = data[data > 0.05]
         nonzero_data.index = nonzero_data.index.map(self.clean_category_name)
-        
-        # Adjusted figure size to match dashboard layout better
-        fig = plt.figure(figsize=(8, 6), dpi=100)  # Smaller size, higher DPI
-        ax = fig.add_subplot(111)
-        
-        colors = [self.color_scheme['primary'], self.color_scheme['secondary']] + ['#28A745', '#FFC107', '#17A2B8', '#6C757D']
         sorted_data = nonzero_data.sort_values(ascending=False)
         
-        wedges, texts, autotexts = ax.pie(sorted_data.values, 
-                                        labels=None,
-                                        colors=colors[:len(sorted_data)],
-                                        autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
-                                        pctdistance=0.85,
-                                        startangle=90,
-                                        wedgeprops=dict(width=0.5))
-        
-        # Adjusted text sizes
-        for autotext in autotexts:
-            autotext.set_color(self.color_scheme['text'])
-            autotext.set_fontsize(10)  # Smaller font size
-        
-        # Adjusted legend
-        legend_labels = [f'{label}: {value:.1f}%' for label, value in sorted_data.items()]
-        ax.legend(wedges, legend_labels, 
-                title=category.capitalize(), 
-                loc="center left", 
-                bbox_to_anchor=(1, 0.5),
-                fontsize=9,  # Smaller font size
-                title_fontsize=10)
-        
-        ax.set_title(category.capitalize(), 
-                    color=self.color_scheme['text'], 
-                    fontsize=12,  # Smaller font size
-                    pad=10)
-        
-        fig.patch.set_facecolor(self.color_scheme['background'])
-        ax.set_facecolor(self.color_scheme['background'])
-        
-        plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to prevent legend cutoff
-        
-        return fig
+        # Colors
+        colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-    def save_pie_chart(self, fig, poi_name, chart_type):
-        if fig is None:
+        # Create donut chart
+        donut_fig = plt.figure(figsize=(6, 6), dpi=100)
+        ax = donut_fig.add_subplot(111)
+        
+        wedges, _, _ = ax.pie(sorted_data.values,
+                            labels=None,
+                            colors=colors[:len(sorted_data)],
+                            autopct='',
+                            pctdistance=0.75,
+                            wedgeprops=dict(width=0.5))
+        
+        centre_circle = plt.Circle((0,0), 0.45, fc=self.color_scheme['background'])
+        ax.add_artist(centre_circle)
+        
+        primary_value = sorted_data.values[0]
+        ax.text(0, 0, f"{primary_value:.1f}%",
+                ha='center', va='center',
+                fontsize=24, color='white',
+                fontweight='bold')
+        
+        ax.set_facecolor(self.color_scheme['background'])
+        donut_fig.patch.set_facecolor(self.color_scheme['background'])
+        plt.tight_layout(pad=0.3)
+
+        # Create legend with proven styling
+        legend_fig = plt.figure(figsize=(4, 6), dpi=100)
+        legend_ax = legend_fig.add_subplot(111)
+        
+        # Create proxy artists for legend
+        legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i]) 
+                        for i in range(len(sorted_data))]
+
+        # Create legend with custom styling
+        legend = legend_ax.legend(legend_elements,
+                                [f'{label} ({value:.1f}%)' for label, value in sorted_data.items()],
+                                loc='center',
+                                frameon=True,
+                                framealpha=1,
+                                facecolor='#333333',  # Slightly lighter than background
+                                edgecolor='#444444',  # Subtle border
+                                fontsize=16,
+                                labelcolor='white',
+                                borderpad=1,
+                                handletextpad=1.5,
+                                handlelength=1.2,
+                                handleheight=0.8,
+                                borderaxespad=0,
+                                ncol=1,
+                                mode="expand",
+                                title_fontsize=0)
+
+        # Adjust legend box appearance
+        legend.get_frame().set_linewidth(1)
+        
+        # Fine-tune the spacing between items
+        plt.setp(legend.get_texts(), linespacing=1.5)
+        
+        # Hide axis and set background
+        legend_ax.set_axis_off()
+        legend_ax.set_facecolor(self.color_scheme['background'])
+        legend_fig.patch.set_facecolor(self.color_scheme['background'])
+
+        # Ensure legend fills the figure
+        legend_fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
+        
+        return donut_fig, legend_fig
+
+    def save_chart_pair(self, donut_fig, legend_fig, poi_name, chart_type):
+        """Saves both the donut chart and legend as separate files with proper DPI"""
+        if donut_fig is None or legend_fig is None:
             return
 
         chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
         os.makedirs(chart_dir, exist_ok=True)
         
-        filename = f"{poi_name}_{chart_type}.png"
-        filepath = os.path.join(chart_dir, filename)
+        # Save donut chart
+        donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
+        donut_fig.savefig(donut_path,
+                        facecolor=self.color_scheme['background'],
+                        edgecolor='none',
+                        dpi=150,  # Increased DPI for sharper rendering
+                        bbox_inches='tight',
+                        pad_inches=0.2)
+        plt.close(donut_fig)
         
-        # Save with fixed dimensions and no bbox_inches adjustment
-        fig.savefig(filepath, 
-                    facecolor=self.color_scheme['background'],
-                    edgecolor='none',
-                    dpi=100,  # Consistent DPI
-                    pad_inches=0.1)  # Small padding
-        plt.close(fig)
+        # Save legend with higher DPI
+        legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
+        legend_fig.savefig(legend_path,
+                        facecolor=self.color_scheme['background'],
+                        edgecolor='none',
+                        dpi=150,  # Increased DPI for sharper rendering
+                        bbox_inches='tight',
+                        pad_inches=0.2)
+        plt.close(legend_fig)
 
-    def load_pie_chart(self, poi_name, chart_type):
-        image_path = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts", f"{poi_name}_{chart_type}.png")
-        print(f"Attempting to load chart from: {image_path}")
+    def create_and_save_charts(self, poi_name, df):
+        """Creates and saves all chart pairs"""
+        for category, title in [('mode', 'Travel Modes'), 
+                              ('purpose', 'Trip Purposes'), 
+                              ('frequency', 'Trip Frequencies')]:
+            donut_fig, legend_fig = self.create_chart_pair(df, category, title)
+            self.save_chart_pair(donut_fig, legend_fig, poi_name.replace(' ', '_'), f'avg_trip_{category}')
+
+
+    def load_chart_pair(self, poi_name, chart_type):
+        """Loads both donut and legend images and returns their encoded versions"""
+        chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
+        
+        # Load donut chart
+        donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
+        legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
+        
         try:
-            with open(image_path, 'rb') as image_file:
-                encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
-            return f'data:image/png;base64,{encoded_image}'
-        except FileNotFoundError:
-            print(f"Warning: Chart image not found: {image_path}")
-            return ''
+            with open(donut_path, 'rb') as donut_file:
+                donut_encoded = base64.b64encode(donut_file.read()).decode('utf-8')
+            with open(legend_path, 'rb') as legend_file:
+                legend_encoded = base64.b64encode(legend_file.read()).decode('utf-8')
+            return f'data:image/png;base64,{donut_encoded}', f'data:image/png;base64,{legend_encoded}'
+        except FileNotFoundError as e:
+            logger.warning(f"Chart image not found: {e}")
+            return '', ''
 
 def test_chart_creator():
     from data_loader import DataLoader

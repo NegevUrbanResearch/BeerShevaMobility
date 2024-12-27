@@ -132,7 +132,7 @@ class MapCreator:
                 marker_opacity=0.7,
                 marker_line_width=0,
                 colorbar=dict(
-                    title="Number of Trips",
+                    title="Trips",
                     tickmode='array',
                     tickvals=np.linspace(vmin, vmax, 6),  # Position of ticks
                     ticktext=[f"{int(np.expm1(val))}" for val in np.linspace(vmin, vmax, 6)],  # Text to display
@@ -178,31 +178,53 @@ class MapCreator:
             # Set the center and zoom based on the selected POI
             center_lat, center_lon = poi_coordinates[selected_poi]
 
-            # Update the layout configuration
+            # Update the layout configuration with adjusted zoom and text sizes
             fig.update_layout(
                 mapbox_style="carto-darkmatter",
                 mapbox=dict(
                     center=dict(lat=center_lat, lon=center_lon),
-                    zoom=11
+                    zoom=10  # Decreased from 11 to show more context
                 ),
                 margin={"r":0,"t":0,"l":0,"b":0},
                 title=f'{trip_type.capitalize()} Trips to {selected_poi}',
-                font=dict(size=12, color="white"),  # Smaller font size
+                font=dict(size=24, color="white"),  # Doubled from 12
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                height=650,  # Fixed height to match container
-                autosize=True
+                height=650
             )
 
-            fig.update_layout(
-                clickmode='event+select'
+            # Update colorbar styling
+            fig.update_traces(
+                selector=dict(type='choroplethmapbox'),
+                colorbar=dict(
+                    title="Trips",
+                    titlefont=dict(size=24),  # Doubled from 12
+                    tickfont=dict(size=20),   # Doubled from 10
+                    tickmode='array',
+                    tickvals=np.linspace(vmin, vmax, 6),
+                    ticktext=[f"{int(np.expm1(val))}" for val in np.linspace(vmin, vmax, 6)],
+                    len=0.9,  # Adjusted length
+                    thickness=25  # Increased thickness
+                )
             )
+
+            # Update annotation font size
+            fig.update_annotations(
+                font=dict(size=24, color="white")  # Doubled from 12
+            )
+
+            # Update marker sizes for POIs
+            for trace in fig.data:
+                if isinstance(trace, go.Scattermapbox):
+                    trace.marker.size = 20  # Increased from 15
+                    trace.hoverlabel = dict(font=dict(size=20))  # Increased hover text size
 
             return fig
         except Exception as e:
             logger.error(f"Error in create_map: {str(e)}")
             logger.error(traceback.format_exc())
             return go.Figure()
+
 
     def filter_and_clip_zones(self, zones, trip_data):
         logger.info(f"Number of zones before filtering: {len(zones)}")
