@@ -48,7 +48,7 @@ class ChartCreator:
 
         # Calculate percentages
         data = self.calculate_mean_percentages(df, columns)
-        nonzero_data = data[data > 0.05]
+        nonzero_data = data[data >= 1.0]  # Only keep values >= 1%
         nonzero_data.index = nonzero_data.index.map(self.clean_category_name)
         sorted_data = nonzero_data.sort_values(ascending=False)
         
@@ -62,17 +62,39 @@ class ChartCreator:
         wedges, texts, autotexts = ax.pie(sorted_data.values,
                                         labels=None,
                                         colors=colors[:len(sorted_data)],
-                                        autopct='%1.0f%%',  # Add percentage labels
-                                        pctdistance=0.75,
+                                        autopct='%1.0f%%',
+                                        pctdistance=0.65,
                                         wedgeprops=dict(width=0.5),
                                         center=(0.1, 0),
                                         textprops={'color': 'white', 'fontsize': 10, 'weight': 'bold'},
-                                        radius=0.62)  # Reduced radius to zoom out
-        
-        # Adjust position of percentage labels
-        for autotext in autotexts:
-            autotext.set_position((autotext.get_position()[0], 
-                                autotext.get_position()[1]))
+                                        radius=0.62)
+
+        # Adjust position of percentage labels and add leader lines for small values
+        for i, (wedge, autotext) in enumerate(zip(wedges, autotexts)):
+            ang = (wedge.theta2 - wedge.theta1) / 2. + wedge.theta1
+            y = np.sin(np.deg2rad(ang))
+            x = np.cos(np.deg2rad(ang))
+
+            if sorted_data.values[i] < 5:  # For very small values
+                # Convert to black text and place outside
+                autotext.set_color('white')
+                
+                # Calculate position outside the donut
+                outside_dist = 0.9
+                connected_dist = 0.8
+                
+                # Set the text position
+                autotext.set_position((x * outside_dist, y * outside_dist))
+                
+                # Draw a line from the segment to the label
+                ax.plot([x * 0.7, x * connected_dist, x * outside_dist],
+                       [y * 0.7, y * connected_dist, y * outside_dist],
+                       color='gray', linewidth=0.5)
+            else:
+                # Adjust vertical position slightly based on angle
+                vertical_offset = 0.1 * np.sin(np.deg2rad(ang))
+                current_pos = autotext.get_position()
+                autotext.set_position((current_pos[0], current_pos[1] + vertical_offset))
         
         centre_circle = plt.Circle((0.1, 0), 0.3, fc=self.color_scheme['background'])
         ax.add_artist(centre_circle)
@@ -98,7 +120,7 @@ class ChartCreator:
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=24,  # Increased font size
+                                fontsize=22,  # Increased font size
                                 labelcolor='white',
                                 borderpad=0.3,
                                 handletextpad=1.0,
