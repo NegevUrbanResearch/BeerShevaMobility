@@ -144,9 +144,9 @@ class MapCreator:
             fig.add_annotation(
                 text="*Color intensity uses logarithmic scale",
                 xref="paper", yref="paper",
-                x=0.95, y=0.04,
+                x=0.95, y=0.055,
                 showarrow=False,
-                font=dict(size=12, color="white"),
+                font=dict(size=9, color="white"),
                 align="right",
                 yanchor='top'
             )
