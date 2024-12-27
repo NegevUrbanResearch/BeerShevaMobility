@@ -1,7 +1,7 @@
 # Main dashboard script
 
 import dash
-from dash import html, dcc
+from dash import html, dcc, Input, Output
 import dash_bootstrap_components as dbc
 from flask_caching import Cache
 from data_loader import DataLoader
@@ -48,17 +48,35 @@ class DashboardApp:
         self.setup_layout()
         self.setup_callbacks()
 
- 
     def setup_layout(self):
         self.app.layout = dbc.Container([
+            # Debug info row - Updated selector
+            dbc.Row([
+                dbc.Col([
+                    html.Div(id='debug-info', 
+                        className="text-muted",
+                        style={
+                            'position': 'fixed', 
+                            'top': '0', 
+                            'right': '0', 
+                            'zIndex': 1000,
+                            'backgroundColor': '#2d2d2d',
+                            'color': '#fff',
+                            'padding': '4px 8px',
+                            'fontSize': '12px'
+                        })
+                ])
+            ]),
+            
+            # Header Row
             dbc.Row([
                 dbc.Col(html.H1("Beer Sheva Mobility Dashboard", 
-                               className="text-center mb-4", 
-                               style={'font-size': '3rem'}), 
-                       width=12)
-            ], justify="center", className="mb-4"),
+                            className="text-center mb-2", 
+                            style={'fontSize': '2rem', 'color': '#fff'}), 
+                    width=12)
+            ], justify="center", className="mb-2"),
             
-            # Center the controls with less width
+            # Controls Row
             dbc.Row([
                 dbc.Col([
                     dbc.Card([
@@ -67,7 +85,7 @@ class DashboardApp:
                                 id='poi-selector',
                                 options=self.poi_options,
                                 value=self.poi_options[0]['value'],
-                                className="mb-3 text-center"
+                                className="mb-1"
                             ),
                             dbc.RadioItems(
                                 id='trip-type-selector',
@@ -77,119 +95,196 @@ class DashboardApp:
                                 ],
                                 value='inbound',
                                 inline=True,
-                                className="text-center"
+                                className="d-flex justify-content-center"
                             )
                         ])
-                    ], className="mb-4")
-                ], width={"size": 4, "offset": 4})  
-            ], justify="start"),
+                    ], className="bg-dark border-secondary")
+                ], width={"size": 6, "offset": 3}, className="mb-2")
+            ]),
             
-            # Add padding to main content
+            # Main Content Row
             dbc.Row([
-                dbc.Col([], width=1),  # Left buffer
+                # Map Column (65% width)
                 dbc.Col([
-                    # Map
-                    dbc.Row([
-                        dbc.Col(dcc.Graph(id='map'), width=12)
-                    ], className="mb-4"),
-                    
-                    # Charts
-                    dbc.Row([
-                        dbc.Col(html.Img(id='frequency-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4),
-                        dbc.Col(html.Img(id='mode-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4),
-                        dbc.Col(html.Img(id='purpose-chart', src='', 
-                                       style={'width': '100%', 'height': 'auto'}), 
-                               width=4)
-                    ], className="mb-4"),
-                ], width=10),  # Main content
-                dbc.Col([], width=1)  # Right buffer
-            ])
+                    dbc.Card([
+                        dbc.CardHeader("Interactive Map", 
+                                    className="bg-dark text-white py-1 border-secondary"),
+                        dbc.CardBody([
+                            dcc.Graph(
+                                id='map',
+                                className="h-100 w-100",
+                                config={
+                                    'displayModeBar': True,
+                                    'scrollZoom': True,
+                                    'responsive': True
+                                },
+                                figure={
+                                    'layout': {
+                                        'template': 'plotly_dark',
+                                        'paper_bgcolor': '#2d2d2d',
+                                        'plot_bgcolor': '#2d2d2d',
+                                        'margin': {"r":0,"t":0,"l":0,"b":0},
+                                        'height': 600
+                                    }
+                                }
+                            )
+                        ], className="bg-dark p-0")
+                    ], className="bg-dark h-100 border-secondary")
+                ], width=7, className="pe-2"),
+                
+                # Charts Column (35% width)
+                dbc.Col([
+                    *[dbc.Card([
+                        dbc.CardHeader(title, 
+                                    className="bg-dark text-white py-1 border-secondary"),
+                        dbc.CardBody([
+                            html.Div([
+                                html.Img(
+                                    id=f'{id_prefix}-chart',
+                                    className="w-100 h-100",
+                                    style={
+                                        'objectFit': 'contain',
+                                        'maxHeight': '180px'
+                                    }
+                                )
+                            ], className="d-flex align-items-center justify-content-center bg-dark")
+                        ], className="bg-dark p-2")
+                    ], className="bg-dark border-secondary mb-3")
+                    for title, id_prefix in [
+                        ("Trip Frequency", "frequency"),
+                        ("Travel Mode", "mode"),
+                        ("Trip Purpose", "purpose")
+                    ]]
+                ], width=5, className="ps-2")
+            ], className="g-2")
         ], fluid=True, 
-        style={'backgroundColor': COLOR_SCHEME['background'], 
-               'color': COLOR_SCHEME['text'], 
-               'font-size': '1.5rem',
-               'padding': '20px'})
+        className="p-2",
+        style={'backgroundColor': '#1a1a1a'})
 
-        # Add custom CSS for dark dropdown
+        # Add window size debug callback with defensive checks
+        self.app.clientside_callback(
+            """
+            function updateDebugInfo(figure) {
+                const width = window.innerWidth;
+                const height = window.innerHeight;
+                
+                // Only try to measure elements that exist
+                let containerWidth = 'N/A';
+                let mapHeight = 'N/A';
+                
+                const container = document.querySelector('.container-fluid');
+                if (container) {
+                    containerWidth = container.offsetWidth;
+                }
+                
+                const mapElem = document.getElementById('map');
+                if (mapElem) {
+                    mapHeight = mapElem.offsetHeight;
+                }
+                
+                return `Window: ${width}x${height}px | Container: ${containerWidth}px | Map: ${mapHeight}px`;
+            }
+            """,
+            Output('debug-info', 'children'),
+            Input('map', 'figure')
+        )
+
+        # Updated CSS with proper dark theme classes
         self.app.index_string = self.app.index_string.replace(
             '</head>',
             '''
             <style>
-            body { font-size: 1.5rem; }
+            body { 
+                background-color: #1a1a1a !important;
+                color: #ffffff;
+                margin: 0;
+                padding: 0;
+            }
             
-            /* Card styling */
-            .card { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important;
+            .bg-dark {
+                background-color: #2d2d2d !important;
+            }
+            
+            .border-secondary {
+                border: 1px solid #404040 !important;
             }
             
             /* Dropdown styling */
             .Select-control { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important; 
+                background-color: #383838 !important; 
+                border-color: #404040 !important;
+                color: white !important;
             }
+            
             .Select-menu-outer { 
-                background-color: #333333 !important; 
-                border-color: #666666 !important;
+                background-color: #383838 !important; 
+                border-color: #404040 !important;
                 color: white !important;
+                z-index: 1000;
             }
-            .Select-option { 
-                background-color: #333333 !important; 
-                color: white !important;
-            }
-            .Select-option:hover { 
-                background-color: #444444 !important; 
-                color: white !important;
-            }
-            .VirtualizedSelectOption {
-                color: white !important;
-            }
-            .VirtualizedSelectFocusedOption {
-                background-color: #444444 !important;
-                color: white !important;
-            }
+            
             .Select-value-label { 
                 color: white !important; 
-                font-size: 1.5rem; 
-            }
-            .Select-placeholder { 
-                color: #999999 !important; 
-            }
-            .Select.is-focused > .Select-control { 
-                border-color: #007BFF !important; 
-            }
-            .Select-menu { 
-                background-color: #333333 !important; 
             }
             
-            /* Radio buttons styling */
+            .Select-option { 
+                background-color: #383838 !important; 
+                color: white !important;
+                padding: 8px;
+            }
+            
+            .Select-option:hover { 
+                background-color: #454545 !important; 
+            }
+            
+            /* Radio button styling */
             .form-check-label { 
-                color: white !important; 
-            }
-            .form-check-input:checked { 
-                background-color: #007BFF !important; 
-                border-color: #007BFF !important; 
-            }
-            .form-check-input { 
-                background-color: #444444 !important; 
-                border-color: #666666 !important; 
+                color: #ffffff !important;
+                margin-left: 8px;
             }
             
-            /* Radio button text color */
-            .form-check-inline .form-check-label {
-                color: white !important;
+            .form-check-input { 
+                background-color: #383838 !important;
+                border-color: #404040 !important;
             }
-            .form-check-inline {
-                color: white !important;
+            
+            .form-check-input:checked { 
+                background-color: #0d6efd !important;
+                border-color: #0d6efd !important;
+            }
+            
+            /* Card styling */
+            .card {
+                background-color: #2d2d2d !important;
+                border: 1px solid #404040 !important;
+            }
+            
+            .card-header {
+                background-color: #383838 !important;
+                border-bottom: 1px solid #404040 !important;
+                padding: 8px 16px;
+            }
+            
+            .card-body {
+                background-color: #2d2d2d !important;
+                padding: 8px;
+            }
+            
+            /* Plot styling */
+            .js-plotly-plot {
+                background-color: #2d2d2d !important;
+            }
+            
+            .modebar {
+                background-color: rgba(45, 45, 45, 0.8) !important;
+            }
+            
+            .modebar-btn {
+                color: #fff !important;
             }
             </style>
             </head>
-            '''
-        )
+            ''')
 
     def setup_callbacks(self):
         @self.app.callback(

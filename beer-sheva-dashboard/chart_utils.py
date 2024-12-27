@@ -35,6 +35,7 @@ class ChartCreator:
         category = ' '.join(word.capitalize() for word in category.replace('_', ' ').split())
         
         return category
+    # In ChartCreator class, update create_pie_chart method
 
     def create_pie_chart(self, df, category, title):
         logger.info(f"Creating pie chart for {category}")
@@ -50,52 +51,47 @@ class ChartCreator:
             return None
 
         data = self.calculate_mean_percentages(df, columns)
-        
-        # Filter out values less than 0.04% and log the results
         nonzero_data = data[data > 0.05]
-        logger.info(f"Original categories: {len(data)}, Categories > 0.1%: {len(nonzero_data)}")
-        logger.debug(f"Category percentages: {nonzero_data.to_dict()}")
-
-        # Clean category names
         nonzero_data.index = nonzero_data.index.map(self.clean_category_name)
         
-        fig, ax = plt.subplots(figsize=(12, 8))
-        colors = [self.color_scheme['primary'], self.color_scheme['secondary']] + ['#28A745', '#FFC107', '#17A2B8', '#6C757D']
+        # Adjusted figure size to match dashboard layout better
+        fig = plt.figure(figsize=(8, 6), dpi=100)  # Smaller size, higher DPI
+        ax = fig.add_subplot(111)
         
+        colors = [self.color_scheme['primary'], self.color_scheme['secondary']] + ['#28A745', '#FFC107', '#17A2B8', '#6C757D']
         sorted_data = nonzero_data.sort_values(ascending=False)
         
         wedges, texts, autotexts = ax.pie(sorted_data.values, 
-                                          labels=None,
-                                          colors=colors[:len(sorted_data)],
-                                          autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
-                                          pctdistance=0.8,
-                                          startangle=90,
-                                          wedgeprops=dict(width=0.5))
+                                        labels=None,
+                                        colors=colors[:len(sorted_data)],
+                                        autopct=lambda pct: f'{pct:.1f}%' if pct > 3 else '',
+                                        pctdistance=0.85,
+                                        startangle=90,
+                                        wedgeprops=dict(width=0.5))
         
-        # Adjust autotext sizes
+        # Adjusted text sizes
         for autotext in autotexts:
             autotext.set_color(self.color_scheme['text'])
-            autotext.set_fontsize(22)
+            autotext.set_fontsize(10)  # Smaller font size
         
-        # Add a legend with increased font size and moved to upper right
+        # Adjusted legend
         legend_labels = [f'{label}: {value:.1f}%' for label, value in sorted_data.items()]
         ax.legend(wedges, legend_labels, 
-                 title=category.capitalize(), 
-                 loc="upper right", 
-                 bbox_to_anchor=(1.3, 1.1), 
-                 fontsize=22,
-                 title_fontsize=24)
+                title=category.capitalize(), 
+                loc="center left", 
+                bbox_to_anchor=(1, 0.5),
+                fontsize=9,  # Smaller font size
+                title_fontsize=10)
         
-        # Title
         ax.set_title(category.capitalize(), 
                     color=self.color_scheme['text'], 
-                    fontsize=26,
-                    pad=20)
+                    fontsize=12,  # Smaller font size
+                    pad=10)
         
         fig.patch.set_facecolor(self.color_scheme['background'])
         ax.set_facecolor(self.color_scheme['background'])
         
-        plt.tight_layout()
+        plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to prevent legend cutoff
         
         return fig
 
@@ -109,8 +105,12 @@ class ChartCreator:
         filename = f"{poi_name}_{chart_type}.png"
         filepath = os.path.join(chart_dir, filename)
         
-        print(f"Saving chart at: {filepath}")
-        fig.savefig(filepath, facecolor=self.color_scheme['background'], edgecolor='none', bbox_inches='tight', dpi=300)
+        # Save with fixed dimensions and no bbox_inches adjustment
+        fig.savefig(filepath, 
+                    facecolor=self.color_scheme['background'],
+                    edgecolor='none',
+                    dpi=100,  # Consistent DPI
+                    pad_inches=0.1)  # Small padding
         plt.close(fig)
 
     def load_pie_chart(self, poi_name, chart_type):
