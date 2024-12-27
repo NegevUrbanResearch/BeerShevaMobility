@@ -35,7 +35,7 @@ class ChartCreator:
         """Creates both a donut chart and its legend as separate images"""
         logger.info(f"Creating chart pair for {category}")
         
-        # Get the correct columns based on category
+        # Get the correct columns and calculate data
         if category == 'frequency':
             columns = [col for col in df.columns if col.startswith('frequency_')]
         elif category == 'mode':
@@ -52,69 +52,73 @@ class ChartCreator:
         nonzero_data.index = nonzero_data.index.map(self.clean_category_name)
         sorted_data = nonzero_data.sort_values(ascending=False)
         
-        # Colors
         colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-        # Create donut chart with adjusted size and simplified design
-        donut_fig = plt.figure(figsize=(4, 4), dpi=100)  # Reduced figure size
+        # Create donut chart with more zoom out
+        donut_fig = plt.figure(figsize=(5.5, 3.4), dpi=100)
         ax = donut_fig.add_subplot(111)
         
-        wedges, _, _ = ax.pie(sorted_data.values,
-                            labels=None,
-                            colors=colors[:len(sorted_data)],
-                            autopct='',
-                            pctdistance=0.75,
-                            wedgeprops=dict(width=0.5))
+        # Create pie chart with percentage labels inside
+        wedges, texts, autotexts = ax.pie(sorted_data.values,
+                                        labels=None,
+                                        colors=colors[:len(sorted_data)],
+                                        autopct='%1.0f%%',  # Add percentage labels
+                                        pctdistance=0.75,
+                                        wedgeprops=dict(width=0.5),
+                                        center=(0.1, 0),
+                                        textprops={'color': 'white', 'fontsize': 10, 'weight': 'bold'},
+                                        radius=0.62)  # Reduced radius to zoom out
         
-        # Add center circle for donut effect
-        centre_circle = plt.Circle((0,0), 0.45, fc=self.color_scheme['background'])
+        # Adjust position of percentage labels
+        for autotext in autotexts:
+            autotext.set_position((autotext.get_position()[0], 
+                                autotext.get_position()[1]))
+        
+        centre_circle = plt.Circle((0.1, 0), 0.3, fc=self.color_scheme['background'])
         ax.add_artist(centre_circle)
-        
-        # Removed percentage text from center
         
         ax.set_facecolor(self.color_scheme['background'])
         donut_fig.patch.set_facecolor(self.color_scheme['background'])
-        plt.tight_layout(pad=0.1)  # Reduced padding
-
-        # Create legend with optimized spacing and larger elements
-        legend_fig = plt.figure(figsize=(4, 6), dpi=100)
+        
+        # Maximize chart area with some padding
+        plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+        
+        # Create legend with larger text and no percentages
+        legend_fig = plt.figure(figsize=(3.4, 3.4), dpi=100)
         legend_ax = legend_fig.add_subplot(111)
         
-        # Create larger proxy artists for legend
-        legend_elements = [plt.Rectangle((0, 0), 1, 1.5, facecolor=colors[i])  # Increased size
+        legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i])
                         for i in range(len(sorted_data))]
 
-        # Create legend with optimized styling
+        # Simplified legend with larger text
         legend = legend_ax.legend(legend_elements,
-                                [f'{label} ({value:.1f}%)' for label, value in sorted_data.items()],
+                                sorted_data.index,  # Only category names, no percentages
                                 loc='center',
                                 frameon=True,
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=18,  # Increased font size
+                                fontsize=24,  # Increased font size
                                 labelcolor='white',
-                                borderpad=0.5,  # Reduced padding
-                                handletextpad=1.0,  # Reduced padding between handle and text
-                                handlelength=1.5,  # Increased handle size
-                                handleheight=1.2,  # Increased handle height
+                                borderpad=0.3,
+                                handletextpad=1.0,
+                                handlelength=1.5,
+                                handleheight=1.0,
                                 borderaxespad=0,
                                 ncol=1,
                                 mode="expand")
 
-        # Adjust legend box appearance
         legend.get_frame().set_linewidth(1)
         
-        # Optimize spacing between items
-        plt.setp(legend.get_texts(), linespacing=1.2)  # Reduced line spacing
+        # Optimize legend spacing
+        plt.setp(legend.get_texts(), linespacing=1.2)
         
-        # Hide axis and set background
         legend_ax.set_axis_off()
         legend_ax.set_facecolor(self.color_scheme['background'])
         legend_fig.patch.set_facecolor(self.color_scheme['background'])
-
-        # Maximize legend size within figure
-        legend_fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+        
+        # Maximize legend area
+        legend_fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
         
         return donut_fig, legend_fig
 
@@ -170,33 +174,3 @@ class ChartCreator:
         except FileNotFoundError as e:
             logger.warning(f"Chart image not found: {e}")
             return '', ''
-
-def test_chart_creator():
-    from data_loader import DataLoader
-    
-    loader = DataLoader(BASE_DIR, OUTPUT_DIR)
-    poi_df = loader.load_poi_data()
-    trip_data = loader.load_trip_data()
-    
-    chart_creator = ChartCreator(COLOR_SCHEME, CHART_COLORS)
-    
-    # Test with the first POI and trip type
-    test_poi = poi_df['name'].iloc[0]
-    test_trip_type = 'inbound'
-    test_df = trip_data[(test_poi, test_trip_type)]
-    
-    print("\nTesting create_pie_chart() and save_pie_chart():")
-    for category, title in [('mode', 'Average Trip Modes'), 
-                            ('purpose', 'Average Trip Purposes'), 
-                            ('frequency', 'Average Trip Frequencies')]:
-        fig = chart_creator.create_pie_chart(test_df, category, f'{test_poi} - {title}')
-        chart_creator.save_pie_chart(fig, test_poi.replace(' ', '_'), f'avg_trip_{category}')
-        print(f"Created and saved {category} chart")
-    
-    print("\nTesting load_pie_chart():")
-    for chart_type in ['avg_trip_mode', 'avg_trip_purpose', 'avg_trip_frequency']:
-        src = chart_creator.load_pie_chart(test_poi.replace(' ', '_'), chart_type)
-        print(f"Loaded {chart_type} chart: {'Success' if src else 'Failed'}")
-
-if __name__ == "__main__":
-    test_chart_creator()
