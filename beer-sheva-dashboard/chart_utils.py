@@ -55,8 +55,8 @@ class ChartCreator:
         # Colors
         colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-        # Create donut chart
-        donut_fig = plt.figure(figsize=(6, 6), dpi=100)
+        # Create donut chart with adjusted size and simplified design
+        donut_fig = plt.figure(figsize=(4, 4), dpi=100)  # Reduced figure size
         ax = donut_fig.add_subplot(111)
         
         wedges, _, _ = ax.pie(sorted_data.values,
@@ -66,59 +66,55 @@ class ChartCreator:
                             pctdistance=0.75,
                             wedgeprops=dict(width=0.5))
         
+        # Add center circle for donut effect
         centre_circle = plt.Circle((0,0), 0.45, fc=self.color_scheme['background'])
         ax.add_artist(centre_circle)
         
-        primary_value = sorted_data.values[0]
-        ax.text(0, 0, f"{primary_value:.1f}%",
-                ha='center', va='center',
-                fontsize=24, color='white',
-                fontweight='bold')
+        # Removed percentage text from center
         
         ax.set_facecolor(self.color_scheme['background'])
         donut_fig.patch.set_facecolor(self.color_scheme['background'])
-        plt.tight_layout(pad=0.3)
+        plt.tight_layout(pad=0.1)  # Reduced padding
 
-        # Create legend with proven styling
+        # Create legend with optimized spacing and larger elements
         legend_fig = plt.figure(figsize=(4, 6), dpi=100)
         legend_ax = legend_fig.add_subplot(111)
         
-        # Create proxy artists for legend
-        legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i]) 
+        # Create larger proxy artists for legend
+        legend_elements = [plt.Rectangle((0, 0), 1, 1.5, facecolor=colors[i])  # Increased size
                         for i in range(len(sorted_data))]
 
-        # Create legend with custom styling
+        # Create legend with optimized styling
         legend = legend_ax.legend(legend_elements,
                                 [f'{label} ({value:.1f}%)' for label, value in sorted_data.items()],
                                 loc='center',
                                 frameon=True,
                                 framealpha=1,
-                                facecolor='#333333',  # Slightly lighter than background
-                                edgecolor='#444444',  # Subtle border
-                                fontsize=16,
+                                facecolor='#333333',
+                                edgecolor='#444444',
+                                fontsize=18,  # Increased font size
                                 labelcolor='white',
-                                borderpad=1,
-                                handletextpad=1.5,
-                                handlelength=1.2,
-                                handleheight=0.8,
+                                borderpad=0.5,  # Reduced padding
+                                handletextpad=1.0,  # Reduced padding between handle and text
+                                handlelength=1.5,  # Increased handle size
+                                handleheight=1.2,  # Increased handle height
                                 borderaxespad=0,
                                 ncol=1,
-                                mode="expand",
-                                title_fontsize=0)
+                                mode="expand")
 
         # Adjust legend box appearance
         legend.get_frame().set_linewidth(1)
         
-        # Fine-tune the spacing between items
-        plt.setp(legend.get_texts(), linespacing=1.5)
+        # Optimize spacing between items
+        plt.setp(legend.get_texts(), linespacing=1.2)  # Reduced line spacing
         
         # Hide axis and set background
         legend_ax.set_axis_off()
         legend_ax.set_facecolor(self.color_scheme['background'])
         legend_fig.patch.set_facecolor(self.color_scheme['background'])
 
-        # Ensure legend fills the figure
-        legend_fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
+        # Maximize legend size within figure
+        legend_fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
         
         return donut_fig, legend_fig
 
@@ -130,24 +126,24 @@ class ChartCreator:
         chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
         os.makedirs(chart_dir, exist_ok=True)
         
-        # Save donut chart
+        # Save donut chart with adjusted padding
         donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
         donut_fig.savefig(donut_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
-                        dpi=150,  # Increased DPI for sharper rendering
+                        dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0.2)
+                        pad_inches=0.1)  # Reduced padding
         plt.close(donut_fig)
         
-        # Save legend with higher DPI
+        # Save legend with adjusted padding
         legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
         legend_fig.savefig(legend_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
-                        dpi=150,  # Increased DPI for sharper rendering
+                        dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0.2)
+                        pad_inches=0.1)  # Reduced padding
         plt.close(legend_fig)
 
     def create_and_save_charts(self, poi_name, df):
@@ -158,12 +154,10 @@ class ChartCreator:
             donut_fig, legend_fig = self.create_chart_pair(df, category, title)
             self.save_chart_pair(donut_fig, legend_fig, poi_name.replace(' ', '_'), f'avg_trip_{category}')
 
-
     def load_chart_pair(self, poi_name, chart_type):
         """Loads both donut and legend images and returns their encoded versions"""
         chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
         
-        # Load donut chart
         donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
         legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
         
