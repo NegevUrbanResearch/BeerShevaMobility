@@ -25,6 +25,6 @@ Dashboard/output/*
 *.env
 *json
 *maps*
-*/data*
+*/data
 *filtered-entrances*
 data-viz/data/
