@@ -19,6 +19,8 @@ class ChartCreator:
         self.color_scheme = color_scheme
         self.chart_colors = chart_colors
         self.output_dir = OUTPUT_DIR
+        plt.rcParams['figure.facecolor'] = color_scheme['background']
+        plt.rcParams['savefig.facecolor'] = color_scheme['background']
 
     def calculate_mean_percentages(self, df, columns):
         data = df[columns]
@@ -32,7 +34,7 @@ class ChartCreator:
         return ' '.join(word.capitalize() for word in category.replace('_', ' ').split())
    
     def create_chart_pair(self, df, category, title):
-        """Creates both a donut chart and its legend as separate images"""
+        """Creates both a donut chart and its legend as separate images with optimized space usage"""
         logger.info(f"Creating chart pair for {category}")
         
         # Get the correct columns and calculate data
@@ -54,122 +56,101 @@ class ChartCreator:
         
         colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-        # Create donut chart with more zoom out
-        donut_fig = plt.figure(figsize=(5.5, 3.4), dpi=100)
+        # Create donut chart with minimal padding
+        donut_fig = plt.figure(figsize=(3, 3), dpi=100)
         ax = donut_fig.add_subplot(111)
         
-        # Create pie chart with percentage labels inside
         wedges, texts, autotexts = ax.pie(sorted_data.values,
                                         labels=None,
                                         colors=colors[:len(sorted_data)],
                                         autopct='%1.0f%%',
-                                        pctdistance=0.65,
+                                        pctdistance=0.75,
                                         wedgeprops=dict(width=0.5),
-                                        center=(0.1, 0),
                                         textprops={'color': 'white', 'fontsize': 10, 'weight': 'bold'},
-                                        radius=0.62)
+                                        radius=1.0)  # Maximize the donut size
 
-        # Adjust position of percentage labels and add leader lines for small values
+        # Optimize label placement
         for i, (wedge, autotext) in enumerate(zip(wedges, autotexts)):
             ang = (wedge.theta2 - wedge.theta1) / 2. + wedge.theta1
             y = np.sin(np.deg2rad(ang))
             x = np.cos(np.deg2rad(ang))
 
-            if sorted_data.values[i] < 5:  # For very small values
-                # Convert to black text and place outside
+            if sorted_data.values[i] < 5:  # For small values
                 autotext.set_color('white')
+                outside_dist = 1.1
+                connected_dist = 1.0
                 
-                # Calculate position outside the donut
-                outside_dist = 0.9
-                connected_dist = 0.8
-                
-                # Set the text position
                 autotext.set_position((x * outside_dist, y * outside_dist))
-                
-                # Draw a line from the segment to the label
-                ax.plot([x * 0.7, x * connected_dist, x * outside_dist],
-                       [y * 0.7, y * connected_dist, y * outside_dist],
+                ax.plot([x * 0.75, x * connected_dist, x * outside_dist],
+                       [y * 0.75, y * connected_dist, y * outside_dist],
                        color='gray', linewidth=0.5)
             else:
-                # Adjust vertical position slightly based on angle
-                vertical_offset = 0.1 * np.sin(np.deg2rad(ang))
-                current_pos = autotext.get_position()
-                autotext.set_position((current_pos[0], current_pos[1] + vertical_offset))
-        
-        centre_circle = plt.Circle((0.1, 0), 0.3, fc=self.color_scheme['background'])
+                # Adjust position within the donut
+                autotext.set_position((x * 0.65, y * 0.65))
+
+        # Add center circle with exact size match
+        centre_circle = plt.Circle((0, 0), 0.5, fc=self.color_scheme['background'])
         ax.add_artist(centre_circle)
         
-        ax.set_facecolor(self.color_scheme['background'])
-        donut_fig.patch.set_facecolor(self.color_scheme['background'])
+        ax.set_aspect('equal')  # Ensure perfect circle
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove all padding
         
-        # Maximize chart area with some padding
-        plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
-        
-        # Create legend with larger text and no percentages
-        legend_fig = plt.figure(figsize=(3.4, 3.4), dpi=100)
+        # Create compact legend
+        legend_fig = plt.figure(figsize=(2, 3), dpi=100)
         legend_ax = legend_fig.add_subplot(111)
         
         legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i])
                         for i in range(len(sorted_data))]
 
-        # Simplified legend with larger text
         legend = legend_ax.legend(legend_elements,
-                                sorted_data.index,  # Only category names, no percentages
+                                sorted_data.index,
                                 loc='center',
                                 frameon=True,
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=22,  # Increased font size
+                                fontsize=18,  # Adjusted for compact size
                                 labelcolor='white',
-                                borderpad=0.3,
-                                handletextpad=1.0,
-                                handlelength=1.5,
-                                handleheight=1.0,
-                                borderaxespad=0,
-                                ncol=1,
-                                mode="expand")
+                                borderpad=0.2,
+                                handletextpad=0.8,
+                                handlelength=1.2,
+                                handleheight=0.8,
+                                borderaxespad=0)
 
         legend.get_frame().set_linewidth(1)
-        
-        # Optimize legend spacing
-        plt.setp(legend.get_texts(), linespacing=1.2)
+        plt.setp(legend.get_texts(), linespacing=1.1)  # Tighter line spacing
         
         legend_ax.set_axis_off()
-        legend_ax.set_facecolor(self.color_scheme['background'])
-        legend_fig.patch.set_facecolor(self.color_scheme['background'])
-        
-        # Maximize legend area
-        legend_fig.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
+        plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove all padding
         
         return donut_fig, legend_fig
 
     def save_chart_pair(self, donut_fig, legend_fig, poi_name, chart_type):
-        """Saves both the donut chart and legend as separate files with proper DPI"""
+        """Saves both the donut chart and legend with minimal padding"""
         if donut_fig is None or legend_fig is None:
             return
 
         chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
         os.makedirs(chart_dir, exist_ok=True)
         
-        # Save donut chart with adjusted padding
+        # Save donut chart with zero padding
         donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
         donut_fig.savefig(donut_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
                         dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0.1)  # Reduced padding
+                        pad_inches=0)  # No padding
         plt.close(donut_fig)
         
-        # Save legend with adjusted padding
+        # Save legend with minimal padding
         legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
         legend_fig.savefig(legend_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
                         dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0.1)  # Reduced padding
+                        pad_inches=0)  # No padding
         plt.close(legend_fig)
 
     def create_and_save_charts(self, poi_name, df):

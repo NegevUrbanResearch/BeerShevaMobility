@@ -21,7 +21,26 @@ class DashboardApp:
         self.app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
         self.app.index_string = self.app.index_string.replace(
             '</head>',
-            '<style>body { font-size: 1.5rem; } .Select-value-label { color: black !important; font-size: 1.5rem; }</style></head>'
+            '''
+            <style>
+                body { 
+                    font-size: 1.5rem;
+                    background-color: #1a1a1a !important;
+                    min-height: 100vh;
+                    margin: 0;
+                    padding: 0;
+                }
+                .Select-value-label { 
+                    color: black !important;
+                    font-size: 1.5rem;
+                }
+                #root {
+                    min-height: 100vh;
+                    background-color: #1a1a1a;
+                }
+            </style>
+            </head>
+            '''
         )
         self.cache = Cache(self.app.server, config={'CACHE_TYPE': 'SimpleCache'})
         
@@ -44,40 +63,46 @@ class DashboardApp:
         return dbc.Card([
             dbc.CardHeader(
                 title,
-                className="bg-dark text-white py-1 border-secondary"
+                className="bg-dark text-white py-1 border-secondary",
+                style={'fontSize': '1.2rem'}
             ),
             dbc.CardBody([
-                dbc.Row([
-                    # Donut chart column (60% width)
-                    dbc.Col([
-                        html.Div([
-                            html.Img(
-                                id=f'{id_prefix}-donut',
-                                className="w-100 h-100",
-                                style={
-                                    'objectFit': 'cover',
-                                    'backgroundColor': '#2d2d2d'
-                                }
-                            )
-                        ], style={'height': '170px'})
-                    ], width=7, className="pe-0"),
-                    
-                    # Legend column (40% width)
-                    dbc.Col([
-                        html.Div([
-                            html.Img(
-                                id=f'{id_prefix}-legend',
-                                className="w-100 h-100",
-                                style={
-                                    'objectFit': 'cover',
-                                    'backgroundColor': '#2d2d2d'
-                                }
-                            )
-                        ], style={'height': '170px'})
-                    ], width=5, className="ps-0")
-                ], className="g-0 h-100")
-            ], className="bg-dark p-1", style={'height': '170px'})
-        ], className="bg-dark border-secondary mb-3")
+                html.Div([
+                    # Donut chart
+                    html.Img(
+                        id=f'{id_prefix}-donut',
+                        className="h-100",
+                        style={
+                            'position': 'absolute',
+                            'left': '0',
+                            'top': '0',
+                            'objectFit': 'contain',
+                            'backgroundColor': '#2d2d2d',
+                            'width': '60%',
+                            'maxHeight': '160px'
+                        }
+                    ),
+                    # Legend
+                    html.Img(
+                        id=f'{id_prefix}-legend',
+                        className="h-100",
+                        style={
+                            'position': 'absolute',
+                            'right': '0',
+                            'top': '0',
+                            'objectFit': 'contain',
+                            'backgroundColor': '#2d2d2d',
+                            'width': '40%',
+                            'maxHeight': '160px'
+                        }
+                    )
+                ], style={
+                    'height': '160px',
+                    'position': 'relative',
+                    'backgroundColor': '#2d2d2d'
+                })
+            ], className="bg-dark p-1", style={'height': '160px'})
+        ], className="bg-dark border-secondary mb-2")
 
     def setup_layout(self):
         self.app.layout = dbc.Container([
@@ -107,9 +132,8 @@ class DashboardApp:
                             style={
                                 'fontSize': '2rem', 
                                 'color': '#fff',
-                                'display': 'inline-block',
                                 'marginRight': '2rem',
-                                'width': '100%',
+                                'marginBottom': '0.5rem',
                                 'textAlign': 'center'
                             }
                         ),
@@ -121,7 +145,7 @@ class DashboardApp:
                                     {'label': 'Outbound', 'value': 'outbound'}
                                 ],
                                 value='inbound',
-                                inline=False,
+                                inline=True,
                                 style={
                                     'color': 'white',
                                     'fontSize': '1rem'
@@ -130,28 +154,28 @@ class DashboardApp:
                                     'marginRight': '5px'
                                 },
                                 labelStyle={
-                                    'marginBottom': '2px',
+                                    'marginRight': '15px',
                                     'fontWeight': '300'
                                 }
                             )
                         ], style={
-                            'position': 'absolute',
-                            'right': '0',
-                            'top': '8px',
-                            'display': 'inline-block',
-                            'verticalAlign': 'top'
+                            'textAlign': 'center',
+                            'marginBottom': '1rem'
                         })
-                    ], className="d-flex align-items-start justify-content-between position-relative")
+                    ])
                 ], width=12)
             ], className="mb-3"),
             
             # Main Content Row
             dbc.Row([
-                # Map Column (65% width)
+                # Map Column (70% width)
                 dbc.Col([
                     dbc.Card([
-                        dbc.CardHeader("Interactive Map", 
-                                    className="bg-dark text-white py-1 border-secondary"),
+                        dbc.CardHeader(
+                            "Interactive Map", 
+                            className="bg-dark text-white py-1 border-secondary",
+                            style={'fontSize': '1.2rem'}
+                        ),
                         dbc.CardBody([
                             dcc.Graph(
                                 id='map',
@@ -171,21 +195,25 @@ class DashboardApp:
                                     }
                                 }
                             )
-                        ], className="bg-dark p-0")
+                        ], className="bg-dark p-0", style={'height': '600px'})
                     ], className="bg-dark h-100 border-secondary")
-                ], width=7, className="pe-2"),
+                ], width=8, className="pe-2"),
                 
-                # Charts Column (35% width)
+                # Charts Column (30% width)
                 dbc.Col([
                     self.create_chart_container("Trip Frequency", "frequency"),
                     self.create_chart_container("Travel Mode", "mode"),
                     self.create_chart_container("Trip Purpose", "purpose")
-                ], width=5, className="ps-2")
+                ], width=4, className="ps-2")
                 
-            ], className="g-2")
+            ], className="g-2", style={'marginBottom': '2rem'})
         ], fluid=True, 
-        className="p-2",
-        style={'backgroundColor': '#1a1a1a'})
+        className="p-3",
+        style={
+            'backgroundColor': '#1a1a1a',
+            'minHeight': '100vh',
+            'height': '100%'
+        })
 
     def setup_callbacks(self):
         @self.app.callback(
@@ -199,6 +227,7 @@ class DashboardApp:
             [dash.Input('trip-type-selector', 'value'),
              dash.Input('map', 'clickData')]
         )
+
         def update_dashboard(trip_type, click_data):
             # Initialize with first POI if no click data
             if not click_data or 'points' not in click_data:
