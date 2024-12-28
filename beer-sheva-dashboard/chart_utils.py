@@ -7,6 +7,7 @@ import numpy as np
 import base64
 import os
 import logging
+from PIL import Image
 
 from config import OUTPUT_DIR, COLOR_SCHEME, CHART_COLORS, BASE_DIR
 
@@ -91,8 +92,8 @@ class ChartCreator:
         ax.set_aspect('equal')  # Ensure perfect circle
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove all padding
         
-        # Create compact legend with larger font
-        legend_fig = plt.figure(figsize=(1.8, 3), dpi=100)
+        # Create wider legend with larger font
+        legend_fig = plt.figure(figsize=(2.2, 3), dpi=100)  # Increased width from 1.8 to 2.2
         legend_ax = legend_fig.add_subplot(111)
         
         legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i])
@@ -105,7 +106,7 @@ class ChartCreator:
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=27,  # Keeping legend size the same
+                                fontsize=27,
                                 labelcolor='white',
                                 borderpad=0.2,
                                 handletextpad=0.8,
@@ -129,24 +130,31 @@ class ChartCreator:
         chart_dir = os.path.join(self.output_dir, 'poi_charts', f"{poi_name}-charts")
         os.makedirs(chart_dir, exist_ok=True)
         
-        # Save donut chart with zero padding
+        # Save donut chart
         donut_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_donut.png")
         donut_fig.savefig(donut_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
                         dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0)  # No padding
-        plt.close(donut_fig)
+                        pad_inches=0)
         
-        # Save legend with minimal padding
+        # Save legend
         legend_path = os.path.join(chart_dir, f"{poi_name}_{chart_type}_legend.png")
         legend_fig.savefig(legend_path,
                         facecolor=self.color_scheme['background'],
                         edgecolor='none',
                         dpi=150,
                         bbox_inches='tight',
-                        pad_inches=0)  # No padding
+                        pad_inches=0)
+        
+        # Log image dimensions
+        with Image.open(donut_path) as img:
+            logger.info(f"{chart_type} donut dimensions: {img.size}")
+        with Image.open(legend_path) as img:
+            logger.info(f"{chart_type} legend dimensions: {img.size}")
+        
+        plt.close(donut_fig)
         plt.close(legend_fig)
 
     def create_and_save_charts(self, poi_name, df):

@@ -58,9 +58,9 @@ class DashboardApp:
         
         self.setup_layout()
         self.setup_callbacks()
-
+        
     def create_chart_container(self, title, id_prefix):
-        return dbc.Card([
+        container = dbc.Card([
             dbc.CardHeader(
                 title,
                 className="bg-dark text-white py-1 border-secondary",
@@ -78,10 +78,11 @@ class DashboardApp:
                             'objectFit': 'contain',
                             'backgroundColor': '#2d2d2d',
                             'width': '160px',
-                            'height': '160px'
+                            'height': '160px',
+                            'display': 'block'
                         }
                     ),
-                    # Legend
+                    # Legend - wider for frequency chart
                     html.Img(
                         id=f'{id_prefix}-legend',
                         style={
@@ -90,25 +91,53 @@ class DashboardApp:
                             'top': '0',
                             'objectFit': 'contain',
                             'backgroundColor': '#2d2d2d',
-                            'width': '90px',
-                            'height': '160px'
+                            'width': '140px' if id_prefix == 'frequency' else '110px',
+                            'height': '160px',
+                            'display': 'block'
                         }
                     )
-                ], style={
+                ], id=f'{id_prefix}-container', style={
                     'height': '160px',
-                    'width': '250px',
+                    'width': '300px' if id_prefix == 'frequency' else '270px',
                     'position': 'relative',
                     'backgroundColor': '#2d2d2d',
                     'overflow': 'hidden',
-                    'margin': '0 auto'
+                    'margin': '0 auto',
+                    'fontSize': '0'
                 })
             ], className="bg-dark p-0", style={
                 'height': '160px',
                 'display': 'flex',
                 'justifyContent': 'center',
-                'padding': '0 !important'
+                'alignItems': 'center',
+                'padding': '0 !important',
+                'backgroundColor': '#2d2d2d'
             })
         ], className="bg-dark border-secondary mb-2")
+
+        # Add clientside callback to log container dimensions
+        self.app.clientside_callback(
+            """
+            function(n) {
+                const container = document.getElementById(n);
+                if (container) {
+                    const rect = container.getBoundingClientRect();
+                    console.log(`Container ${n} dimensions:`, {
+                        width: rect.width,
+                        height: rect.height,
+                        top: rect.top,
+                        left: rect.left
+                    });
+                }
+                return window.dash_clientside.no_update;
+            }
+            """,
+            dash.Output(f'{id_prefix}-container', 'data-dimensions', allow_duplicate=True),
+            dash.Input(f'{id_prefix}-container', 'id'),
+            prevent_initial_call=True
+        )
+
+        return container
 
     def setup_layout(self):
         self.app.layout = dbc.Container([
