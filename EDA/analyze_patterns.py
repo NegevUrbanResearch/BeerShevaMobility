@@ -6,6 +6,7 @@ from utils.data_standards import DataStandardizer
 from utils.zone_utils import get_zone_type
 import logging
 import json
+from scipy.spatial.distance import cosine
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,13 @@ class MobilityPatternAnalyzer:
         os.makedirs(self.stats_dir, exist_ok=True)
         self.standardizer = DataStandardizer()
 
-        # Get list of standard POI names we want to analyze
+        # Define focus POIs and all POIs
+        self.focus_pois = [
+            'Ben-Gurion-University',
+            'Soroka-Medical-Center',
+            'Gav-Yam-High-Tech-Park'
+        ]
+        
         self.analysis_pois = [
             'Ben-Gurion-University',
             'Soroka-Medical-Center',
@@ -33,6 +40,8 @@ class MobilityPatternAnalyzer:
             'SCE',
             'Grand-Kenyon'
         ]
+        
+        self.other_pois = [poi for poi in self.analysis_pois if poi not in self.focus_pois]
         
         # POI coordinates
         self.poi_locations = {
@@ -74,13 +83,6 @@ class MobilityPatternAnalyzer:
         logger.error(error_msg)
         raise FileNotFoundError(error_msg)
 
-    def get_poi_location(self, poi_name: str) -> dict:
-        """Get POI coordinates"""
-        std_poi_name = self.standardizer.standardize_poi_name(poi_name)
-        if std_poi_name not in self.poi_locations:
-            raise ValueError(f"Location not defined for POI: {poi_name}")
-        return self.poi_locations[std_poi_name]
-
     def analyze_temporal_patterns(self):
         """Analyze temporal patterns across POIs"""
         patterns = {}
@@ -120,7 +122,6 @@ class MobilityPatternAnalyzer:
                     mode_split = (df[mode_cols].multiply(df['total_trips'], axis=0).sum() / 
                                 df['total_trips'].sum())
                     
-                    # Use standardized POI name in the key
                     mode_patterns[f"{poi}_{trip_type}"] = mode_split
                     
                 except FileNotFoundError as e:
@@ -147,7 +148,8 @@ class MobilityPatternAnalyzer:
                 
                 # Calculate cumulative percentage
                 df_sorted['cumulative_trips'] = df_sorted['total_trips'].cumsum()
-                df_sorted['cumulative_percentage'] = (df_sorted['cumulative_trips'] / df_sorted['total_trips'].sum()) * 100
+                df_sorted['cumulative_percentage'] = (df_sorted['cumulative_trips'] / 
+                                                    df_sorted['total_trips'].sum()) * 100
                 
                 # Find zones that make up 80% of trips
                 zones_80 = df_sorted[df_sorted['cumulative_percentage'] <= 80]
@@ -185,140 +187,6 @@ class MobilityPatternAnalyzer:
             json.dump(catchment_areas, f, indent=2)
         
         return catchment_areas
-
-    def calculate_distance(self, lat1, lon1, lat2, lon2):
-        """Calculate the Haversine distance between two points"""
-        from math import radians, sin, cos, sqrt, atan2
-        
-        R = 6371  # Earth's radius in kilometers
-        
-        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        
-        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        distance = R * c
-        
-        return distance
-
-    def analyze_directional_patterns(self, df, poi_location):
-        """Analyze the directional distribution of trips"""
-        from math import degrees, atan2
-        
-        df = df.copy()
-        
-        # Calculate bearing from POI to each zone
-        df['bearing'] = df.apply(
-            lambda row: degrees(atan2(
-                row['zone_lon'] - poi_location['lon'],
-                row['zone_lat'] - poi_location['lat']
-            )) % 360, axis=1
-        )
-        
-        # Define direction sectors
-        sectors = {
-            'North': (315, 45),
-            'East': (45, 135),
-            'South': (135, 225),
-            'West': (225, 315)
-        }
-        
-        # Calculate trips by direction
-        direction_patterns = {}
-        for direction, (start, end) in sectors.items():
-            if start < end:
-                mask = (df['bearing'] >= start) & (df['bearing'] < end)
-            else:
-                mask = (df['bearing'] >= start) | (df['bearing'] < end)
-            
-            direction_patterns[direction] = {
-                'total_trips': df[mask]['total_trips'].sum(),
-                'percentage': (df[mask]['total_trips'].sum() / df['total_trips'].sum()) * 100,
-                'top_zones': df[mask].nlargest(3, 'total_trips')[['zone_id', 'total_trips']].to_dict('records')
-            }
-        
-        return direction_patterns
-
-    def analyze_purpose_patterns(self):
-        """Analyze trip purpose patterns"""
-        purpose_patterns = {}
-        
-        for poi in ['Ben-Gurion-University', 'Soroka-Medical-Center']:
-            for trip_type in ['inbound', 'outbound']:
-                df = self.load_poi_data(poi, trip_type)
-                
-                # Get purpose columns
-                purpose_cols = [col for col in df.columns if col.startswith('purpose_')]
-                
-                # Calculate weighted average purpose split
-                purpose_split = (df[purpose_cols].multiply(df['total_trips'], axis=0).sum() / 
-                               df['total_trips'].sum())
-                
-                purpose_patterns[f"{poi}_{trip_type}"] = purpose_split
-        
-        return purpose_patterns
-
-    def generate_insights_report(self):
-        """Generate comprehensive insights report"""
-        print("=== Mobility Pattern Analysis Report ===\n")
-        
-        # 1. Temporal patterns
-        print("1. Peak Hour Comparison")
-        print("--------------------------")
-        temporal_patterns = self.analyze_temporal_patterns()
-        for poi_direction, pattern in temporal_patterns.items():
-            peak_hour = pattern.idxmax()
-            peak_pct = pattern.max() * 100
-            print(f"{poi_direction}:")
-            print(f"  Peak hour: {peak_hour}")
-            print(f"  Peak percentage: {peak_pct:.1f}%\n")
-        
-        # 2. Mode differences
-        print("\n2. Mode Share Insights")
-        print("----------------------")
-        modes = self.analyze_mode_differences()
-        
-        for poi in self.analysis_pois:
-            try:
-                inbound = modes.get(f"{poi}_inbound", pd.Series())
-                if not inbound.empty:
-                    print(f"\n{poi}:")
-                    top_modes = inbound.sort_values(ascending=False).head(3)
-                    print("  Top 3 modes (inbound):")
-                    for mode, share in top_modes.items():
-                        mode_name = mode.replace('mode_', '')
-                        print(f"    - {mode_name}: {share*100:.1f}%")
-            except Exception as e:
-                logger.error(f"Error processing mode data for {poi}: {str(e)}")
-                continue
-        
-        # 3. Catchment areas
-        print("\n\n3. Catchment Area Analysis")
-        print("-------------------------\n")
-        catchment = self.analyze_catchment_areas()
-        
-        for poi, data in catchment.items():
-            try:
-                print(f"\n{poi}:")
-                # Use .get() with default values for optional fields
-                print(f"  Total trips: {data.get('total_trips', 0):,.1f}")
-                if data.get('active_zones'):
-                    print(f"  Active zones: {data.get('active_zones', 0)}")
-                if data.get('zones_80_percent'):
-                    print(f"  Zones for 80% of trips: {data.get('zones_80_percent', 0)}")
-                if data.get('concentration_index'):
-                    print(f"  Concentration index: {data.get('concentration_index', 0):.2f}")
-                
-                # Print top zones if available
-                top_zones = data.get('top_zones', [])
-                if top_zones:
-                    print("\n  Top zones by trip volume:")
-                    for zone in top_zones[:5]:  # Show top 5 zones
-                        print(f"    - Zone {zone['tract']}: {zone['total_trips']:.1f} trips")
-            except Exception as e:
-                logger.error(f"Error processing catchment data for {poi}: {str(e)}")
-                continue
 
     def generate_poi_statistics(self):
         """Generate comprehensive statistics for each POI"""
@@ -367,31 +235,6 @@ class MobilityPatternAnalyzer:
             zone_cols = [col for col in df.columns if 'zone' in col.lower() or 'tract' in col.lower()]
             print("\nPossible zone columns:", zone_cols)
             
-            # Distance statistics (if available)
-            if 'distance' in df.columns:
-                print("\nDistance column found")
-                distance_stats = df.assign(
-                    weighted_distance=df['distance'] * df['total_trips']
-                ).agg({
-                    'weighted_distance': lambda x: x.sum() / df['total_trips'].sum(),
-                    'distance': ['min', 'max', 'median']
-                })
-                stats.update({
-                    'avg_distance_km': distance_stats['weighted_distance'],
-                    'min_distance_km': distance_stats['distance']['min'],
-                    'max_distance_km': distance_stats['distance']['max'],
-                    'median_distance_km': distance_stats['distance']['median']
-                })
-            
-            # Temporal patterns
-            time_cols = [col for col in df.columns if col.startswith('arrival_')]
-            print("\nTemporal columns:", time_cols)
-            
-            if time_cols:
-                temporal_dist = df[time_cols].multiply(df['total_trips'], axis=0).sum() / df['total_trips'].sum()
-                stats['peak_hour'] = temporal_dist.idxmax().replace('arrival_', '')
-                stats['peak_hour_percentage'] = temporal_dist.max()
-            
             # Mode split
             mode_cols = [col for col in df.columns if col.startswith('mode_')]
             print("\nMode columns:", mode_cols)
@@ -435,12 +278,303 @@ class MobilityPatternAnalyzer:
             logger.error("Stack trace:", exc_info=True)
             return {}
 
+    def calculate_poi_similarity(self, poi1_data: dict, poi2_data: dict) -> float:
+        """Calculate similarity between two POIs based on their characteristics"""
+        features = []
+        weights = {
+            'mode_split': 0.4,
+            'catchment': 0.3,
+            'total_trips': 0.2,
+            'purpose_split': 0.1
+        }
+        
+        # Mode split similarity
+        if 'mode_split' in poi1_data and 'mode_split' in poi2_data:
+            # Get all unique modes
+            all_modes = set(poi1_data['mode_split'].keys()) | set(poi2_data['mode_split'].keys())
+            
+            # Create vectors with 0s for missing modes
+            vec1 = [poi1_data['mode_split'].get(mode, 0) for mode in all_modes]
+            vec2 = [poi2_data['mode_split'].get(mode, 0) for mode in all_modes]
+            
+            if vec1 and vec2:  # Check if vectors are non-empty
+                mode_sim = 1 - cosine(vec1, vec2)
+                features.append(mode_sim * weights['mode_split'])
+        
+        # Purpose split similarity
+        if 'purpose_split' in poi1_data and 'purpose_split' in poi2_data:
+            # Get all unique purposes
+            all_purposes = set(poi1_data['purpose_split'].keys()) | set(poi2_data['purpose_split'].keys())
+            
+            # Create vectors with 0s for missing purposes
+            vec1 = [poi1_data['purpose_split'].get(purpose, 0) for purpose in all_purposes]
+            vec2 = [poi2_data['purpose_split'].get(purpose, 0) for purpose in all_purposes]
+            
+            if vec1 and vec2:  # Check if vectors are non-empty
+                purpose_sim = 1 - cosine(vec1, vec2)
+                features.append(purpose_sim * weights['purpose_split'])
+        
+        # Catchment area similarity
+        if 'top_5_concentration' in poi1_data and 'top_5_concentration' in poi2_data:
+            catchment_sim = 1 - abs(
+                poi1_data['top_5_concentration'] - poi2_data['top_5_concentration']
+            ) / 100
+            features.append(catchment_sim * weights['catchment'])
+            
+        # Trip volume similarity
+        if 'total_trips' in poi1_data and 'total_trips' in poi2_data:
+            volume_ratio = min(
+                poi1_data['total_trips'],
+                poi2_data['total_trips']
+            ) / max(
+                poi1_data['total_trips'],
+                poi2_data['total_trips']
+            )
+            features.append(volume_ratio * weights['total_trips'])
+        
+        return np.mean(features)
+
+    def find_most_similar_pois(self):
+        """Find the most similar non-focus POI for each focus POI"""
+        similarities = {}
+        all_poi_stats = self.generate_poi_statistics()
+        
+        for focus_poi in self.focus_pois:
+            focus_stats = all_poi_stats[focus_poi]['inbound']
+            poi_similarities = {}
+            
+            for other_poi in self.other_pois:
+                if other_poi not in self.focus_pois:
+                    other_stats = all_poi_stats[other_poi]['inbound']
+                    similarity = self.calculate_poi_similarity(focus_stats, other_stats)
+                    poi_similarities[other_poi] = similarity
+            
+            most_similar = max(poi_similarities.items(), key=lambda x: x[1])
+            similarities[focus_poi] = {
+                'most_similar_poi': most_similar[0],
+                'similarity_score': most_similar[1]
+            }
+        
+        return similarities
+
+    def calculate_aggregate_metrics(self):
+        """Calculate aggregate metrics for non-focus POIs"""
+        all_poi_stats = self.generate_poi_statistics()
+        
+        # Initialize aggregates
+        aggregates = {
+            'total_trips': [],
+            'concentration_index': [],
+            'mode_split': {},
+            'purpose_split': {},
+            'zones_80_percent': []
+        }
+        
+        # Collect metrics from other POIs
+        for poi in self.other_pois:
+            stats = all_poi_stats[poi]['inbound']
+            
+            if 'total_trips' in stats:
+                aggregates['total_trips'].append(stats['total_trips'])
+            
+            if 'top_5_concentration' in stats:
+                aggregates['concentration_index'].append(stats['top_5_concentration'])
+            
+            if 'mode_split' in stats:
+                for mode, share in stats['mode_split'].items():
+                    if mode not in aggregates['mode_split']:
+                        aggregates['mode_split'][mode] = []
+                    aggregates['mode_split'][mode].append(share)
+            
+            if 'purpose_split' in stats:
+                for purpose, share in stats['purpose_split'].items():
+                    if purpose not in aggregates['purpose_split']:
+                        aggregates['purpose_split'][purpose] = []
+                    aggregates['purpose_split'][purpose].append(share)
+        
+        # Calculate averages and standard deviations
+        average_metrics = {
+            'avg_total_trips': np.mean(aggregates['total_trips']),
+            'avg_concentration_index': np.mean(aggregates['concentration_index']),
+            'avg_mode_split': {mode: np.mean(shares) for mode, shares in aggregates['mode_split'].items()},
+            'avg_purpose_split': {purpose: np.mean(shares) for purpose, shares in aggregates['purpose_split'].items()},
+            'std_total_trips': np.std(aggregates['total_trips']),
+            'std_concentration_index': np.std(aggregates['concentration_index']),
+            'std_mode_split': {mode: np.std(shares) for mode, shares in aggregates['mode_split'].items()},
+            'std_purpose_split': {purpose: np.std(shares) for purpose, shares in aggregates['purpose_split'].items()}
+        }
+        
+        return average_metrics
+
+    def calculate_innovation_district_metrics(self):
+        """Calculate aggregate metrics for the innovation district POIs"""
+        all_poi_stats = self.generate_poi_statistics()
+        
+        innovation_metrics = {
+            'total_trips': 0,
+            'mode_split': {},
+            'purpose_split': {},
+            'weighted_concentration': 0
+        }
+        
+        total_district_trips = 0
+        
+        for poi in self.focus_pois:
+            stats = all_poi_stats[poi]['inbound']
+            trips = stats.get('total_trips', 0)
+            total_district_trips += trips
+            
+            # Weighted mode split
+            if 'mode_split' in stats:
+                for mode, share in stats['mode_split'].items():
+                    if mode not in innovation_metrics['mode_split']:
+                        innovation_metrics['mode_split'][mode] = 0
+                    innovation_metrics['mode_split'][mode] += share * trips
+            
+            # Weighted purpose split
+            if 'purpose_split' in stats:
+                for purpose, share in stats['purpose_split'].items():
+                    if purpose not in innovation_metrics['purpose_split']:
+                        innovation_metrics['purpose_split'][purpose] = 0
+                    innovation_metrics['purpose_split'][purpose] += share * trips
+            
+            # Weighted concentration
+            if 'top_5_concentration' in stats:
+                innovation_metrics['weighted_concentration'] += stats['top_5_concentration'] * trips
+        
+        # Normalize weighted metrics
+        if total_district_trips > 0:
+            innovation_metrics['mode_split'] = {
+                mode: share / total_district_trips 
+                for mode, share in innovation_metrics['mode_split'].items()
+            }
+            
+            innovation_metrics['purpose_split'] = {
+                purpose: share / total_district_trips 
+                for purpose, share in innovation_metrics['purpose_split'].items()
+            }
+            
+            innovation_metrics['weighted_concentration'] /= total_district_trips
+        
+        innovation_metrics['total_trips'] = total_district_trips
+        
+        return innovation_metrics
+
+    def generate_insights_report(self):
+        """Generate a comprehensive insights report"""
+        print("=== Mobility Pattern Analysis Report ===\n")
+        
+        # 1. Temporal patterns
+        print("1. Peak Hour Comparison")
+        print("--------------------------")
+        temporal_patterns = self.analyze_temporal_patterns()
+        for poi_direction, pattern in temporal_patterns.items():
+            peak_hour = pattern.idxmax()
+            peak_pct = pattern.max() * 100
+            print(f"{poi_direction}:")
+            print(f"  Peak hour: {peak_hour}")
+            print(f"  Peak percentage: {peak_pct:.1f}%\n")
+        
+        # 2. Mode differences
+        print("\n2. Mode Share Insights")
+        print("----------------------")
+        modes = self.analyze_mode_differences()
+        
+        for poi in self.analysis_pois:
+            try:
+                inbound = modes.get(f"{poi}_inbound", pd.Series())
+                if not inbound.empty:
+                    print(f"\n{poi}:")
+                    top_modes = inbound.sort_values(ascending=False).head(3)
+                    print("  Top 3 modes (inbound):")
+                    for mode, share in top_modes.items():
+                        mode_name = mode.replace('mode_', '')
+                        print(f"    - {mode_name}: {share*100:.1f}%")
+            except Exception as e:
+                logger.error(f"Error processing mode data for {poi}: {str(e)}")
+                continue
+        
+        # 3. Catchment areas
+        print("\n\n3. Catchment Area Analysis")
+        print("-------------------------\n")
+        catchment = self.analyze_catchment_areas()
+        
+        for poi, data in catchment.items():
+            try:
+                print(f"\n{poi}:")
+                print(f"  Total trips: {data.get('total_trips', 0):,.1f}")
+                if data.get('zones_80_percent'):
+                    print(f"  Zones for 80% of trips: {data.get('zones_80_percent', 0)}")
+                if data.get('concentration_index'):
+                    print(f"  Concentration index: {data.get('concentration_index', 0):.2f}")
+                
+                top_zones = data.get('top_zones', [])
+                if top_zones:
+                    print("\n  Top zones by trip volume:")
+                    for zone in top_zones[:5]:
+                        print(f"    - Zone {zone['tract']}: {zone['total_trips']:.1f} trips")
+            except Exception as e:
+                logger.error(f"Error processing catchment data for {poi}: {str(e)}")
+                continue
+
+    def generate_comparative_report(self):
+        """Generate a comparative analysis report"""
+        print("\n=== Comparative Mobility Pattern Analysis Report ===\n")
+        
+        # Find most similar POIs
+        similarities = self.find_most_similar_pois()
+        print("1. Most Similar POIs to Innovation District Components")
+        print("------------------------------------------------")
+        for focus_poi, similar in similarities.items():
+            print(f"\n{focus_poi}:")
+            print(f"  Most similar to: {similar['most_similar_poi']}")
+            print(f"  Similarity score: {similar['similarity_score']:.2f}")
+        
+        # Aggregate metrics for non-focus POIs
+        print("\n2. Comparison with City Averages")
+        print("------------------------------")
+        avg_metrics = self.calculate_aggregate_metrics()
+        print("\nAverage metrics for non-innovation district POIs:")
+        print(f"  Average total trips: {avg_metrics['avg_total_trips']:.1f} (±{avg_metrics['std_total_trips']:.1f})")
+        print(f"  Average concentration index: {avg_metrics['avg_concentration_index']:.2f} (±{avg_metrics['std_concentration_index']:.2f})")
+        
+        print("\nMode split averages:")
+        for mode, share in avg_metrics['avg_mode_split'].items():
+            std = avg_metrics['std_mode_split'][mode]
+            mode_name = mode.replace('mode_', '')
+            print(f"  - {mode_name}: {share*100:.1f}% (±{std*100:.1f}%)")
+        
+        # Innovation district metrics
+        print("\n3. Innovation District Aggregate Analysis")
+        print("--------------------------------------")
+        district_metrics = self.calculate_innovation_district_metrics()
+        print(f"\nTotal district trips: {district_metrics['total_trips']:.1f}")
+        print(f"Weighted concentration index: {district_metrics['weighted_concentration']:.2f}")
+        
+        print("\nDistrict-wide mode split:")
+        for mode, share in district_metrics['mode_split'].items():
+            mode_name = mode.replace('mode_', '')
+            print(f"  - {mode_name}: {share*100:.1f}%")
+        
+        # Compare with city averages
+        print("\n4. Innovation District vs City Average Comparisons")
+        print("---------------------------------------------")
+        for mode, district_share in district_metrics['mode_split'].items():
+            mode_name = mode.replace('mode_', '')
+            city_share = avg_metrics['avg_mode_split'].get(mode, 0)
+            difference = (district_share - city_share) * 100
+            print(f"\n{mode_name}:")
+            print(f"  District: {district_share*100:.1f}%")
+            print(f"  City Average: {city_share*100:.1f}%")
+            print(f"  Difference: {difference:+.1f} percentage points")
+
 if __name__ == "__main__":
     analyzer = MobilityPatternAnalyzer()
     
-    # Generate statistics
+    # Generate all analyses
     stats = analyzer.generate_poi_statistics()
     print("\nStatistics generated and saved to:", analyzer.stats_dir)
     
-    # Generate insights report
-    analyzer.generate_insights_report() 
+    # Generate both reports
+    analyzer.generate_insights_report()
+    analyzer.generate_comparative_report()
