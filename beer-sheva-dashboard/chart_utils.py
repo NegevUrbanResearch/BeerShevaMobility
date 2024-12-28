@@ -56,8 +56,8 @@ class ChartCreator:
         
         colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-        # Create donut chart with minimal padding
-        donut_fig = plt.figure(figsize=(3, 3), dpi=100)
+        # Create donut chart with adjusted text positioning
+        donut_fig = plt.figure(figsize=(4, 4), dpi=100)
         ax = donut_fig.add_subplot(111)
         
         wedges, texts, autotexts = ax.pie(sorted_data.values,
@@ -65,11 +65,11 @@ class ChartCreator:
                                         colors=colors[:len(sorted_data)],
                                         autopct='%1.0f%%',
                                         pctdistance=0.75,
-                                        wedgeprops=dict(width=0.5),
-                                        textprops={'color': 'white', 'fontsize': 10, 'weight': 'bold'},
-                                        radius=1.0)  # Maximize the donut size
+                                        wedgeprops=dict(width=0.6),
+                                        textprops={'color': 'white', 'fontsize': 25},  # Increased from 21
+                                        radius=1.2)
 
-        # Optimize label placement
+        # Optimize label placement with adjusted positions
         for i, (wedge, autotext) in enumerate(zip(wedges, autotexts)):
             ang = (wedge.theta2 - wedge.theta1) / 2. + wedge.theta1
             y = np.sin(np.deg2rad(ang))
@@ -77,16 +77,12 @@ class ChartCreator:
 
             if sorted_data.values[i] < 5:  # For small values
                 autotext.set_color('white')
-                outside_dist = 1.1
-                connected_dist = 1.0
-                
+                autotext.set_fontsize(22)  # Increased from 18
+                outside_dist = 1.2
                 autotext.set_position((x * outside_dist, y * outside_dist))
-                ax.plot([x * 0.75, x * connected_dist, x * outside_dist],
-                       [y * 0.75, y * connected_dist, y * outside_dist],
-                       color='gray', linewidth=0.5)
             else:
-                # Adjust position within the donut
-                autotext.set_position((x * 0.65, y * 0.65))
+                autotext.set_fontsize(25)  # Increased from 21
+                autotext.set_position((x * 0.85, y * 0.85))
 
         # Add center circle with exact size match
         centre_circle = plt.Circle((0, 0), 0.5, fc=self.color_scheme['background'])
@@ -95,8 +91,8 @@ class ChartCreator:
         ax.set_aspect('equal')  # Ensure perfect circle
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove all padding
         
-        # Create compact legend
-        legend_fig = plt.figure(figsize=(2, 3), dpi=100)
+        # Create compact legend with larger font
+        legend_fig = plt.figure(figsize=(1.8, 3), dpi=100)
         legend_ax = legend_fig.add_subplot(111)
         
         legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i])
@@ -109,7 +105,7 @@ class ChartCreator:
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=18,  # Adjusted for compact size
+                                fontsize=27,  # Keeping legend size the same
                                 labelcolor='white',
                                 borderpad=0.2,
                                 handletextpad=0.8,

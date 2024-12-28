@@ -71,37 +71,43 @@ class DashboardApp:
                     # Donut chart
                     html.Img(
                         id=f'{id_prefix}-donut',
-                        className="h-100",
                         style={
                             'position': 'absolute',
                             'left': '0',
                             'top': '0',
                             'objectFit': 'contain',
                             'backgroundColor': '#2d2d2d',
-                            'width': '60%',
-                            'maxHeight': '160px'
+                            'width': '160px',
+                            'height': '160px'
                         }
                     ),
                     # Legend
                     html.Img(
                         id=f'{id_prefix}-legend',
-                        className="h-100",
                         style={
                             'position': 'absolute',
-                            'right': '0',
+                            'left': '160px',
                             'top': '0',
                             'objectFit': 'contain',
                             'backgroundColor': '#2d2d2d',
-                            'width': '40%',
-                            'maxHeight': '160px'
+                            'width': '90px',
+                            'height': '160px'
                         }
                     )
                 ], style={
                     'height': '160px',
+                    'width': '250px',
                     'position': 'relative',
-                    'backgroundColor': '#2d2d2d'
+                    'backgroundColor': '#2d2d2d',
+                    'overflow': 'hidden',
+                    'margin': '0 auto'
                 })
-            ], className="bg-dark p-1", style={'height': '160px'})
+            ], className="bg-dark p-0", style={
+                'height': '160px',
+                'display': 'flex',
+                'justifyContent': 'center',
+                'padding': '0 !important'
+            })
         ], className="bg-dark border-secondary mb-2")
 
     def setup_layout(self):
@@ -168,7 +174,7 @@ class DashboardApp:
             
             # Main Content Row
             dbc.Row([
-                # Map Column (70% width)
+                # Map Column
                 dbc.Col([
                     dbc.Card([
                         dbc.CardHeader(
@@ -179,41 +185,32 @@ class DashboardApp:
                         dbc.CardBody([
                             dcc.Graph(
                                 id='map',
-                                className="h-100 w-100",
                                 config={
                                     'displayModeBar': True,
                                     'scrollZoom': True,
                                     'responsive': True
                                 },
-                                figure={
-                                    'layout': {
-                                        'template': 'plotly_dark',
-                                        'paper_bgcolor': '#2d2d2d',
-                                        'plot_bgcolor': '#2d2d2d',
-                                        'margin': {"r":0,"t":0,"l":0,"b":0},
-                                        'height': 600
-                                    }
+                                style={
+                                    'height': '600px',
+                                    'width': '100%'
                                 }
                             )
-                        ], className="bg-dark p-0", style={'height': '600px'})
-                    ], className="bg-dark h-100 border-secondary")
+                        ], className="bg-dark p-0")
+                    ], className="bg-dark border-secondary h-100")
                 ], width=8, className="pe-2"),
                 
-                # Charts Column (30% width)
+                # Charts Column
                 dbc.Col([
-                    self.create_chart_container("Trip Frequency", "frequency"),
-                    self.create_chart_container("Travel Mode", "mode"),
-                    self.create_chart_container("Trip Purpose", "purpose")
+                    html.Div([
+                        self.create_chart_container("Trip Frequency", "frequency"),
+                        self.create_chart_container("Travel Mode", "mode"),
+                        self.create_chart_container("Trip Purpose", "purpose")
+                    ], style={'maxWidth': '340px', 'margin': '0 auto'})  # Constrain width
                 ], width=4, className="ps-2")
                 
-            ], className="g-2", style={'marginBottom': '2rem'})
-        ], fluid=True, 
-        className="p-3",
-        style={
-            'backgroundColor': '#1a1a1a',
-            'minHeight': '100vh',
-            'height': '100%'
-        })
+            ], className="g-2 mb-4")
+            
+        ], fluid=True, className="p-3", style={'backgroundColor': '#1a1a1a', 'minHeight': '100vh'})
 
     def setup_callbacks(self):
         @self.app.callback(
