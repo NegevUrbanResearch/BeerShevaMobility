@@ -18,11 +18,20 @@ class MobilityPatternAnalyzer:
         self.output_dir = self.data_dir
         os.makedirs(self.stats_dir, exist_ok=True)
         self.standardizer = DataStandardizer()
-        
+
         # Get list of standard POI names we want to analyze
         self.analysis_pois = [
             'Ben-Gurion-University',
-            'Soroka-Medical-Center'
+            'Soroka-Medical-Center',
+            'Emek-Sara-Industrial-Area',
+            'Omer-Industrial-Area',
+            'HaNegev-Mall',
+            'BIG',
+            'Assuta-Hospital',
+            'Gav-Yam-High-Tech-Park',
+            'Ramat-Hovav-Industrial-Zone',
+            'SCE',
+            'Grand-Kenyon'
         ]
         
         # POI coordinates
