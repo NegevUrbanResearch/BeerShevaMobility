@@ -58,7 +58,7 @@ class DashboardApp:
         
         self.setup_layout()
         self.setup_callbacks()
-        
+
     def create_chart_container(self, title, id_prefix):
         container = dbc.Card([
             dbc.CardHeader(
@@ -140,107 +140,163 @@ class DashboardApp:
         return container
 
     def setup_layout(self):
-        self.app.layout = dbc.Container([
-            # Debug info row
-            dbc.Row([
-                dbc.Col([
-                    html.Div(id='debug-info', 
-                        className="text-muted",
-                        style={
-                            'position': 'fixed', 
-                            'top': '0', 
-                            'right': '0', 
-                            'zIndex': 1000,
-                            'backgroundColor': '#2d2d2d',
-                            'color': '#fff',
-                            'padding': '4px 8px',
-                            'fontSize': '12px'
-                        })
-                ])
-            ]),
-            
-            # Header Row with integrated controls
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        html.H1("Beer Sheva Mobility Dashboard", 
+            self.app.layout = dbc.Container([
+                # Debug info row
+                dbc.Row([
+                    dbc.Col([
+                        html.Div(id='debug-info', 
+                            className="text-muted",
                             style={
-                                'fontSize': '2rem', 
+                                'position': 'fixed', 
+                                'top': '0', 
+                                'right': '0', 
+                                'zIndex': 1000,
+                                'backgroundColor': '#2d2d2d',
                                 'color': '#fff',
-                                'marginRight': '2rem',
-                                'marginBottom': '0.5rem',
-                                'textAlign': 'center'
-                            }
-                        ),
-                        html.Div([
-                            dbc.RadioItems(
-                                id='trip-type-selector',
-                                options=[
-                                    {'label': 'Inbound', 'value': 'inbound'},
-                                    {'label': 'Outbound', 'value': 'outbound'}
-                                ],
-                                value='inbound',
-                                inline=True,
-                                style={
-                                    'color': 'white',
-                                    'fontSize': '1rem'
-                                },
-                                inputStyle={
-                                    'marginRight': '5px'
-                                },
-                                labelStyle={
-                                    'marginRight': '15px',
-                                    'fontWeight': '300'
-                                }
-                            )
-                        ], style={
-                            'textAlign': 'center',
-                            'marginBottom': '1rem'
-                        })
+                                'padding': '4px 8px',
+                                'fontSize': '12px'
+                            }),
+                        # Add a div to store map dimensions
+                        html.Div(id='map-debug-info', style={'display': 'none'})
                     ])
-                ], width=12)
-            ], className="mb-3"),
-            
-            # Main Content Row
-            dbc.Row([
-                # Map Column
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader(
-                            "Interactive Map", 
-                            className="bg-dark text-white py-1 border-secondary",
-                            style={'fontSize': '1.2rem'}
-                        ),
-                        dbc.CardBody([
-                            dcc.Graph(
-                                id='map',
-                                config={
-                                    'displayModeBar': True,
-                                    'scrollZoom': True,
-                                    'responsive': True
-                                },
+                ]),
+                
+                # Header Row with integrated controls
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.H1("Beer Sheva Mobility Dashboard", 
                                 style={
-                                    'height': '600px',
-                                    'width': '100%'
+                                    'fontSize': '2rem', 
+                                    'color': '#fff',
+                                    'marginRight': '2rem',
+                                    'marginBottom': '0.5rem',
+                                    'textAlign': 'center'
                                 }
-                            )
-                        ], className="bg-dark p-0")
-                    ], className="bg-dark border-secondary h-100")
-                ], width=8, className="pe-2"),
+                            ),
+                            html.Div([
+                                dbc.RadioItems(
+                                    id='trip-type-selector',
+                                    options=[
+                                        {'label': 'Inbound', 'value': 'inbound'},
+                                        {'label': 'Outbound', 'value': 'outbound'}
+                                    ],
+                                    value='inbound',
+                                    inline=True,
+                                    style={
+                                        'color': 'white',
+                                        'fontSize': '1rem'
+                                    },
+                                    inputStyle={
+                                        'marginRight': '5px'
+                                    },
+                                    labelStyle={
+                                        'marginRight': '15px',
+                                        'fontWeight': '300'
+                                    }
+                                )
+                            ], style={
+                                'textAlign': 'center',
+                                'marginBottom': '1rem'
+                            })
+                        ])
+                    ], width=12)
+                ], className="mb-3"),
                 
-                # Charts Column
-                dbc.Col([
-                    html.Div([
-                        self.create_chart_container("Trip Frequency", "frequency"),
-                        self.create_chart_container("Travel Mode", "mode"),
-                        self.create_chart_container("Trip Purpose", "purpose")
-                    ], style={'maxWidth': '340px', 'margin': '0 auto'})  # Constrain width
-                ], width=4, className="ps-2")
+                # Main Content Row
+                dbc.Row([
+                    # Map Column
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader(
+                                "Interactive Map", 
+                                className="bg-dark text-white py-1 border-secondary",
+                                style={'fontSize': '1.2rem'}
+                            ),
+                            dbc.CardBody([
+                                # Container div with debug ID
+                                html.Div([
+                                    dcc.Graph(
+                                        id='map',
+                                        config={
+                                            'displayModeBar': True,
+                                            'scrollZoom': True,
+                                            'responsive': True
+                                        },
+                                        style={
+                                            'height': '100%',
+                                            'width': '100%'
+                                        }
+                                    )
+                                ], id='map-container', style={
+                                    'height': '600px',
+                                    'width': '100%',
+                                    'position': 'relative'
+                                })
+                            ], className="bg-dark p-0", id='map-card-body')
+                        ], className="bg-dark border-secondary h-100", id='map-card')
+                    ], width=8, className="pe-2"),
+                    
+                    # Charts Column
+                    dbc.Col([
+                        html.Div([
+                            self.create_chart_container("Trip Frequency", "frequency"),
+                            self.create_chart_container("Travel Mode", "mode"),
+                            self.create_chart_container("Trip Purpose", "purpose")
+                        ], style={'maxWidth': '340px', 'margin': '0 auto'})  # Constrain width
+                    ], width=4, className="ps-2")
+                    
+                ], className="g-2 mb-4")
                 
-            ], className="g-2 mb-4")
-            
-        ], fluid=True, className="p-3", style={'backgroundColor': '#1a1a1a', 'minHeight': '100vh'})
+            ], fluid=True, className="p-3", style={'backgroundColor': '#1a1a1a', 'minHeight': '100vh'})
 
+            # Enhanced debug callbacks
+            self.app.clientside_callback(
+                """
+                function(n) {
+                    function logDimensions(element, label) {
+                        if (element) {
+                            const rect = element.getBoundingClientRect();
+                            console.log(`${label} dimensions:`, {
+                                width: rect.width,
+                                height: rect.height,
+                                top: rect.top,
+                                left: rect.left,
+                                timestamp: new Date().getTime()
+                            });
+                        }
+                    }
+
+                    // Log dimensions of all relevant containers
+                    logDimensions(document.getElementById('map-container'), 'Map container');
+                    logDimensions(document.getElementById('map-card-body'), 'Map card body');
+                    logDimensions(document.getElementById('map-card'), 'Map card');
+                    
+                    // Log the actual map element
+                    const mapElement = document.querySelector('.js-plotly-plot');
+                    logDimensions(mapElement, 'Plotly map element');
+
+                    if (window.dash_clientside) {
+                        // Trigger resize after a delay
+                        setTimeout(function() {
+                            console.log('Triggering resize event:', new Date().getTime());
+                            window.dispatchEvent(new Event('resize'));
+                            
+                            // Log dimensions again after resize
+                            setTimeout(function() {
+                                console.log('Post-resize dimensions:');
+                                logDimensions(mapElement, 'Plotly map element (post-resize)');
+                            }, 100);
+                        }, 50);
+                    }
+                    return window.dash_clientside.no_update;
+                }
+                """,
+                dash.Output('map-debug-info', 'data-debug'),
+                [dash.Input('map', 'id'),
+                dash.Input('map', 'figure')],
+                prevent_initial_call=False  # Changed to false to catch initial render
+            )
     def setup_callbacks(self):
         @self.app.callback(
             [dash.Output('map', 'figure'),

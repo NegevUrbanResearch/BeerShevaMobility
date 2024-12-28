@@ -142,11 +142,11 @@ class MapCreator:
             ))
             # Add annotation for logarithmic scale
             fig.add_annotation(
-                text="*Color intensity uses logarithmic scale",
+                text="*Color intensity uses capped logarithmic scale",
                 xref="paper", yref="paper",
                 x=0.95, y=0.055,
                 showarrow=False,
-                font=dict(size=9, color="white"),
+                font=dict(size=6, color="white"),
                 align="right",
                 yanchor='top'
             )
