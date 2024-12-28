@@ -4,11 +4,12 @@ A comprehensive mobility data analysis and visualization platform for Beer Sheva
 
 ## Project Components
 
-### 1. POI Maps (@POI-Maps)
+### 1. EDA (@EDA)
 Tools for analyzing and visualizing specific Points of Interest:
+- Utility scripts for loading, preprocessing, and exploring data
 - Geospatial analysis of POIs
 - Static maps of trip patterns
-- Inbound/outbound trip visualization
+- Detecting and summarizing trip patterns
 
 ### 2. Interactive Dashboard (@Dashboard)
 Web interface for exploring mobility data:
@@ -50,8 +51,6 @@ The analysis uses mobility data for Beer Sheva prepared by PGL Transportation En
    - Building footprints (OpenStreetMap)
    - Road network data (OTP model built locally)
    - Statistical area boundaries
-
-
 
 ## Note on Data Privacy
 

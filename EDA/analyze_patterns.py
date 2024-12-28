@@ -5,6 +5,7 @@ import os
 from utils.data_standards import DataStandardizer
 from utils.zone_utils import get_zone_type
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,7 @@ class MobilityPatternAnalyzer:
         self.project_root = Path(__file__).parent
         self.data_dir = self.project_root / "output" / "dashboard_data"
         self.stats_dir = self.project_root / "output" / "statistics"
+        self.output_dir = self.data_dir
         os.makedirs(self.stats_dir, exist_ok=True)
         self.standardizer = DataStandardizer()
         
@@ -30,40 +32,38 @@ class MobilityPatternAnalyzer:
         }
 
     def load_poi_data(self, poi_name: str, trip_type: str) -> pd.DataFrame:
-        """Load data for a specific POI and trip type using standardized names"""
-        # Get the file-format POI name (reverse lookup from standardized name)
-        file_poi_name = None
+        """Load data for a specific POI and trip type using the standardizer"""
+        # Get the original name that maps to this standardized POI name
+        original_name = None
         for key, value in self.standardizer.POI_NAME_MAPPING.items():
             if value == poi_name:
-                file_poi_name = key
+                original_name = key
                 break
         
-        if not file_poi_name:
-            file_poi_name = 'BGU' if poi_name == 'Ben-Gurion-University' else poi_name
+        if original_name is None:
+            logger.warning(f"No original name found for standardized POI: {poi_name}")
+            original_name = poi_name
         
-        # Construct filename
-        filename = f"{file_poi_name}_{trip_type}_trips.csv"
+        # Convert spaces to underscores for filename
+        file_name = original_name.replace(' ', '_')
+        filename = f"{file_name}_{trip_type}_trips.csv"
         file_path = self.data_dir / filename
         
-        if not file_path.exists():
-            # Try alternative filename format
-            alt_filename = f"{poi_name.replace('-', '_')}_{trip_type}_trips.csv"
-            alt_file_path = self.data_dir / alt_filename
-            
-            if not alt_file_path.exists():
-                logger.error(f"Data file not found: {file_path} or {alt_file_path}")
-                raise FileNotFoundError(f"No data file found for {poi_name} {trip_type} trips")
-            file_path = alt_file_path
-
-        try:
-            df = pd.read_csv(file_path)
-            # Standardize zone IDs if present
-            if 'zone_id' in df.columns:
-                df['zone_id'] = df['zone_id'].apply(self.standardizer.standardize_zone_id)
-            return df
-        except Exception as e:
-            logger.error(f"Error loading data for {poi_name}: {str(e)}")
-            raise
+        print(f"\nTrying to load data for {poi_name} ({trip_type})")
+        print(f"Using filename: {filename}")
+        
+        if file_path.exists():
+            print(f"Found file: {file_path}")
+            try:
+                df = pd.read_csv(file_path)
+                return df
+            except Exception as e:
+                logger.error(f"Error reading file {file_path}: {str(e)}")
+                raise
+        
+        error_msg = f"No data file found for {poi_name} {trip_type} trips at {file_path}"
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
 
     def get_poi_location(self, poi_name: str) -> dict:
         """Get POI coordinates"""
@@ -97,90 +97,85 @@ class MobilityPatternAnalyzer:
 
     def analyze_mode_differences(self):
         """Compare transportation mode differences between POIs"""
-        all_pois = [f.replace('_inbound_trips.csv', '') 
-                   for f in os.listdir(self.output_dir) 
-                   if f.endswith('_inbound_trips.csv')]
-        
         mode_patterns = {}
         
-        for poi in all_pois:
+        for poi in self.analysis_pois:
             for trip_type in ['inbound', 'outbound']:
-                df = self.load_poi_data(poi, trip_type)
-                
-                # Get mode columns
-                mode_cols = [col for col in df.columns if col.startswith('mode_')]
-                
-                # Calculate weighted average mode split
-                mode_split = (df[mode_cols].multiply(df['total_trips'], axis=0).sum() / 
-                            df['total_trips'].sum())
-                
-                mode_patterns[f"{poi}_{trip_type}"] = mode_split
+                try:
+                    df = self.load_poi_data(poi, trip_type)
+                    
+                    # Get mode columns
+                    mode_cols = [col for col in df.columns if col.startswith('mode_')]
+                    
+                    # Calculate weighted average mode split
+                    mode_split = (df[mode_cols].multiply(df['total_trips'], axis=0).sum() / 
+                                df['total_trips'].sum())
+                    
+                    # Use standardized POI name in the key
+                    mode_patterns[f"{poi}_{trip_type}"] = mode_split
+                    
+                except FileNotFoundError as e:
+                    logger.warning(f"Skipping {poi} {trip_type}: {str(e)}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error analyzing mode patterns for {poi} {trip_type}: {str(e)}")
+                    logger.error("Stack trace:", exc_info=True)
+                    continue
         
         return mode_patterns
 
     def analyze_catchment_areas(self):
-        """Analyze the geographical reach and key origin/destination patterns of different POIs"""
-        catchment_patterns = {}
+        """Analyze catchment areas for each POI"""
+        catchment_areas = {}
         
-        for poi in ['Ben-Gurion-University', 'Soroka-Medical-Center']:
-            for trip_type in ['inbound', 'outbound']:
-                df = self.load_poi_data(poi, trip_type)
+        for poi in self.analysis_pois:
+            try:
+                # Load inbound trips data
+                df = self.load_poi_data(poi, 'inbound')
                 
-                # Sort zones by trip volume
+                # Sort by total trips
                 df_sorted = df.sort_values('total_trips', ascending=False)
                 
-                # Calculate cumulative percentage of trips
+                # Calculate cumulative percentage
                 df_sorted['cumulative_trips'] = df_sorted['total_trips'].cumsum()
-                df_sorted['cumulative_percentage'] = (df_sorted['cumulative_trips'] / 
-                                                    df_sorted['total_trips'].sum()) * 100
+                df_sorted['cumulative_percentage'] = (df_sorted['cumulative_trips'] / df_sorted['total_trips'].sum()) * 100
                 
-                # Find zones that make up different percentage thresholds
-                thresholds = {
-                    '50%': df_sorted[df_sorted['cumulative_percentage'] <= 50],
-                    '75%': df_sorted[df_sorted['cumulative_percentage'] <= 75],
-                    '90%': df_sorted[df_sorted['cumulative_percentage'] <= 90]
-                }
+                # Find zones that make up 80% of trips
+                zones_80 = df_sorted[df_sorted['cumulative_percentage'] <= 80]
                 
-                # Calculate key metrics
-                catchment_patterns[f"{poi}_{trip_type}"] = {
+                catchment_areas[poi] = {
+                    'total_zones': len(df),
+                    'zones_80_percent': len(zones_80),
                     'total_trips': df['total_trips'].sum(),
-                    'active_zones': len(df[df['total_trips'] > 0]),
-                    'zones_50_percent': len(thresholds['50%']),
-                    'zones_75_percent': len(thresholds['75%']),
-                    'zones_90_percent': len(thresholds['90%']),
-                    'top_5_concentration': (df_sorted['total_trips'].head(5).sum() / 
-                                          df_sorted['total_trips'].sum()) * 100,
-                    'top_10_concentration': (df_sorted['total_trips'].head(10).sum() / 
-                                           df_sorted['total_trips'].sum()) * 100,
-                    'top_zones': df_sorted.head(10)[['zone_id', 'total_trips']].to_dict('records'),
-                    'average_trip_distance': df['distance'].mean() if 'distance' in df.columns else None,
-                    'median_trip_distance': df['distance'].median() if 'distance' in df.columns else None
+                    'top_zones': df_sorted.head(10)[['tract', 'total_trips']].to_dict('records'),
+                    'concentration_index': len(zones_80) / len(df) if len(df) > 0 else 0
                 }
                 
-                # Regional analysis (if coordinates are available)
-                if 'zone_lat' in df.columns and 'zone_lon' in df.columns:
-                    # Calculate distance-based metrics
-                    poi_location = self.get_poi_location(poi)  # You'll need to implement this
-                    df['distance_to_poi'] = df.apply(
-                        lambda row: self.calculate_distance(
-                            row['zone_lat'], row['zone_lon'], 
-                            poi_location['lat'], poi_location['lon']
-                        ), axis=1
-                    )
-                    
-                    # Find radius containing 90% of trips
-                    df_dist_sorted = df.sort_values('distance_to_poi')
-                    df_dist_sorted['cumulative_trips'] = df_dist_sorted['total_trips'].cumsum()
-                    df_dist_sorted['cumulative_percentage'] = (df_dist_sorted['cumulative_trips'] / 
-                                                             df_dist_sorted['total_trips'].sum()) * 100
-                    radius_90 = df_dist_sorted[df_dist_sorted['cumulative_percentage'] <= 90]['distance_to_poi'].max()
-                    
-                    catchment_patterns[f"{poi}_{trip_type}"].update({
-                        'radius_90_percent': radius_90,
-                        'direction_analysis': self.analyze_directional_patterns(df, poi_location)
-                    })
+            except FileNotFoundError:
+                logger.warning(f"No inbound data found for {poi}")
+                catchment_areas[poi] = {
+                    'total_zones': 0,
+                    'zones_80_percent': 0,
+                    'total_trips': 0,
+                    'top_zones': [],
+                    'concentration_index': 0
+                }
+            except Exception as e:
+                logger.error(f"Error analyzing catchment area for {poi}: {str(e)}")
+                logger.error("Stack trace:", exc_info=True)
+                catchment_areas[poi] = {
+                    'total_zones': 0,
+                    'zones_80_percent': 0,
+                    'total_trips': 0,
+                    'top_zones': [],
+                    'concentration_index': 0
+                }
         
-        return catchment_patterns
+        # Save catchment areas analysis
+        with open(self.stats_dir / "catchment_areas.json", 'w') as f:
+            json.dump(catchment_areas, f, indent=2)
+        
+        return catchment_areas
 
     def calculate_distance(self, lat1, lon1, lat2, lon2):
         """Calculate the Haversine distance between two points"""
@@ -256,68 +251,65 @@ class MobilityPatternAnalyzer:
         return purpose_patterns
 
     def generate_insights_report(self):
-        """Generate a report of key insights"""
-        temporal = self.analyze_temporal_patterns()
-        modes = self.analyze_mode_differences()
-        catchment = self.analyze_catchment_areas()
-        purposes = self.analyze_purpose_patterns()
-        
+        """Generate comprehensive insights report"""
         print("=== Mobility Pattern Analysis Report ===\n")
         
+        # 1. Temporal patterns
         print("1. Peak Hour Comparison")
         print("--------------------------")
-        for poi_pattern in temporal.items():
-            peak_hour = pd.Series(poi_pattern[1]).idxmax()
-            peak_percentage = poi_pattern[1].max()
-            print(f"{poi_pattern[0]}:")
+        temporal_patterns = self.analyze_temporal_patterns()
+        for poi_direction, pattern in temporal_patterns.items():
+            peak_hour = pattern.idxmax()
+            peak_pct = pattern.max() * 100
+            print(f"{poi_direction}:")
             print(f"  Peak hour: {peak_hour}")
-            print(f"  Peak percentage: {peak_percentage:.1f}%\n")
+            print(f"  Peak percentage: {peak_pct:.1f}%\n")
         
+        # 2. Mode differences
         print("\n2. Mode Share Insights")
         print("----------------------")
-        for poi in ['Ben-Gurion-University', 'Soroka-Medical-Center']:
-            inbound = modes[f"{poi}_inbound"]
-            print(f"{poi}:")
-            print("  Top 3 modes (inbound):")
-            for mode, share in inbound.nlargest(3).items():
-                print(f"    - {mode.replace('mode_', '')}: {share:.1f}%")
-            print()
+        modes = self.analyze_mode_differences()
         
-        print("\n3. Catchment Area Analysis")
-        print("-------------------------")
-        for poi_data in catchment.items():
-            print(f"\n{poi_data[0]}:")
-            data = poi_data[1]
-            print(f"  Total trips: {data['total_trips']:,}")
-            print(f"  Active zones: {data['active_zones']}")
-            print(f"  Concentration metrics:")
-            print(f"    - Zones for 50% of trips: {data['zones_50_percent']}")
-            print(f"    - Zones for 75% of trips: {data['zones_75_percent']}")
-            print(f"    - Zones for 90% of trips: {data['zones_90_percent']}")
-            print(f"    - Top 5 zones concentration: {data['top_5_concentration']:.1f}%")
-            print(f"    - Top 10 zones concentration: {data['top_10_concentration']:.1f}%")
-            
-            if 'radius_90_percent' in data:
-                print(f"\n  Spatial coverage:")
-                print(f"    - 90% of trips within: {data['radius_90_percent']:.1f} km")
+        for poi in self.analysis_pois:
+            try:
+                inbound = modes.get(f"{poi}_inbound", pd.Series())
+                if not inbound.empty:
+                    print(f"\n{poi}:")
+                    top_modes = inbound.sort_values(ascending=False).head(3)
+                    print("  Top 3 modes (inbound):")
+                    for mode, share in top_modes.items():
+                        mode_name = mode.replace('mode_', '')
+                        print(f"    - {mode_name}: {share*100:.1f}%")
+            except Exception as e:
+                logger.error(f"Error processing mode data for {poi}: {str(e)}")
+                continue
+        
+        # 3. Catchment areas
+        print("\n\n3. Catchment Area Analysis")
+        print("-------------------------\n")
+        catchment = self.analyze_catchment_areas()
+        
+        for poi, data in catchment.items():
+            try:
+                print(f"\n{poi}:")
+                # Use .get() with default values for optional fields
+                print(f"  Total trips: {data.get('total_trips', 0):,.1f}")
+                if data.get('active_zones'):
+                    print(f"  Active zones: {data.get('active_zones', 0)}")
+                if data.get('zones_80_percent'):
+                    print(f"  Zones for 80% of trips: {data.get('zones_80_percent', 0)}")
+                if data.get('concentration_index'):
+                    print(f"  Concentration index: {data.get('concentration_index', 0):.2f}")
                 
-                print("\n  Directional patterns:")
-                for direction, dir_data in data['direction_analysis'].items():
-                    print(f"    - {direction}: {dir_data['percentage']:.1f}% of trips")
-                    if dir_data['percentage'] > 15:  # Only show significant corridors
-                        print(f"      Key zones: {', '.join(str(z['zone_id']) for z in dir_data['top_zones'])}")
-            
-            print("\n  Top 5 origin/destination zones:")
-            for zone in data['top_zones'][:5]:
-                print(f"    - Zone {zone['zone_id']}: {zone['total_trips']:,} trips")
-        
-        print("\n4. Trip Purpose Distribution")
-        print("---------------------------")
-        for poi_purpose in purposes.items():
-            print(f"{poi_purpose[0]}:")
-            for purpose, percentage in poi_purpose[1].nlargest(3).items():
-                print(f"  - {purpose.replace('purpose_', '')}: {percentage:.1f}%")
-            print()
+                # Print top zones if available
+                top_zones = data.get('top_zones', [])
+                if top_zones:
+                    print("\n  Top zones by trip volume:")
+                    for zone in top_zones[:5]:  # Show top 5 zones
+                        print(f"    - Zone {zone['tract']}: {zone['total_trips']:.1f} trips")
+            except Exception as e:
+                logger.error(f"Error processing catchment data for {poi}: {str(e)}")
+                continue
 
     def generate_poi_statistics(self):
         """Generate comprehensive statistics for each POI"""
@@ -415,13 +407,12 @@ class MobilityPatternAnalyzer:
             zone_id_col = next((col for col in ['zone_id', 'tract', 'zone'] if col in df.columns), None)
             print(f"\nUsing zone identifier column: {zone_id_col}")
             
-            if zone_id_col:
-                # Top zones
-                top_zones = df.nlargest(5, 'total_trips')[[zone_id_col, 'total_trips']].to_dict('records')
+            if 'tract' in df.columns:
+                top_zones = df.nlargest(5, 'total_trips')[['tract', 'total_trips']].to_dict('records')
                 stats['top_5_zones'] = top_zones
                 stats['top_5_concentration'] = sum(z['total_trips'] for z in top_zones) / df['total_trips'].sum() * 100
             else:
-                print("WARNING: No zone identifier column found!")
+                print("WARNING: No tract column found!")
                 stats['top_5_zones'] = []
                 stats['top_5_concentration'] = 0
             
