@@ -32,6 +32,11 @@ class ChartCreator:
     def clean_category_name(self, category):
         if '_' in category:
             category = category.split('_', 1)[1]
+            # Add category name mapping
+            if category.lower() == 'infrequent':
+                return 'One-Time'
+            elif category.lower() == 'frequent':
+                return 'Repeat'
         return ' '.join(word.capitalize() for word in category.replace('_', ' ').split())
    
     def create_chart_pair(self, df, category, title):

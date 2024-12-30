@@ -240,7 +240,7 @@ class DashboardApp:
                     # Charts Column
                     dbc.Col([
                         html.Div([
-                            self.create_chart_container("Trip Frequency", "frequency"),
+                            self.create_chart_container("Repeat Trips", "frequency"),
                             self.create_chart_container("Travel Mode", "mode"),
                             self.create_chart_container("Trip Purpose", "purpose")
                         ], style={'maxWidth': '340px', 'margin': '0 auto'})  # Constrain width
