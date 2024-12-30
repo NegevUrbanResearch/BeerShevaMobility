@@ -178,19 +178,19 @@ class MapCreator:
             # Set the center and zoom based on the selected POI
             center_lat, center_lon = poi_coordinates[selected_poi]
 
-            # Update the layout configuration with adjusted zoom and text sizes
+            # Update the layout configuration
             fig.update_layout(
                 mapbox_style="carto-darkmatter",
                 mapbox=dict(
                     center=dict(lat=center_lat, lon=center_lon),
-                    zoom=10  # Decreased from 11 to show more context
+                    zoom=10
                 ),
                 margin={"r":0,"t":0,"l":0,"b":0},
-                title=f'{trip_type.capitalize()} Trips to {selected_poi}',
-                font=dict(size=24, color="white"),  # Doubled from 12
+                font=dict(size=24, color="white"),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                height=650
+                height=600,
+                autosize=True
             )
 
             # Update colorbar styling

@@ -48,8 +48,6 @@ class ChartCreator:
             columns = [col for col in df.columns if col.startswith('frequency_')]
         elif category == 'mode':
             columns = [col for col in df.columns if col.startswith('mode_')]
-        elif category == 'purpose':
-            columns = [col for col in df.columns if col.startswith('purpose_')]
         else:
             logger.warning(f"Invalid category: {category}")
             return None, None
@@ -62,8 +60,8 @@ class ChartCreator:
         
         colors = ['#4A90E2', '#50E3C2', '#F5A623', '#7ED321', '#B8E986', '#9013FE']
 
-        # Create donut chart with adjusted text positioning
-        donut_fig = plt.figure(figsize=(4, 4), dpi=100)
+        # Create larger donut chart with adjusted text positioning
+        donut_fig = plt.figure(figsize=(6, 6), dpi=100)  # Increased from (4, 4)
         ax = donut_fig.add_subplot(111)
         
         wedges, texts, autotexts = ax.pie(sorted_data.values,
@@ -72,7 +70,7 @@ class ChartCreator:
                                         autopct='%1.0f%%',
                                         pctdistance=0.75,
                                         wedgeprops=dict(width=0.6),
-                                        textprops={'color': 'white', 'fontsize': 25},  # Increased from 21
+                                        textprops={'color': 'white', 'fontsize': 32},  # Increased from 25
                                         radius=1.2)
 
         # Optimize label placement with adjusted positions
@@ -83,11 +81,11 @@ class ChartCreator:
 
             if sorted_data.values[i] < 5:  # For small values
                 autotext.set_color('white')
-                autotext.set_fontsize(22)  # Increased from 18
+                autotext.set_fontsize(28)  # Increased from 22
                 outside_dist = 1.2
                 autotext.set_position((x * outside_dist, y * outside_dist))
             else:
-                autotext.set_fontsize(25)  # Increased from 21
+                autotext.set_fontsize(32)  # Increased from 25
                 autotext.set_position((x * 0.85, y * 0.85))
 
         # Add center circle with exact size match
@@ -97,9 +95,15 @@ class ChartCreator:
         ax.set_aspect('equal')  # Ensure perfect circle
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)  # Remove all padding
         
-        # Create wider legend with larger font
-        legend_fig = plt.figure(figsize=(2.2, 3), dpi=100)  # Increased width from 1.8 to 2.2
+        # Create wider legend with larger font and full width
+        if category == 'frequency':
+            legend_fig = plt.figure(figsize=(4.1, 4.5), dpi=100)  # Increased width for frequency legend
+        else:
+            legend_fig = plt.figure(figsize=(3.3, 4.5), dpi=100)  # Original width for mode legend
+        
         legend_ax = legend_fig.add_subplot(111)
+        legend_ax.set_facecolor('#2d2d2d')  # Match the background color
+        legend_fig.patch.set_facecolor('#2d2d2d')  # Set figure background color
         
         legend_elements = [plt.Rectangle((0, 0), 1, 1, facecolor=colors[i])
                         for i in range(len(sorted_data))]
@@ -111,14 +115,14 @@ class ChartCreator:
                                 framealpha=1,
                                 facecolor='#333333',
                                 edgecolor='#444444',
-                                fontsize=27,
+                                fontsize=34,
                                 labelcolor='white',
                                 borderpad=0.2,
                                 handletextpad=0.8,
                                 handlelength=1.2,
                                 handleheight=0.8,
                                 borderaxespad=0)
-
+        
         legend.get_frame().set_linewidth(1)
         plt.setp(legend.get_texts(), linespacing=1.1)  # Tighter line spacing
         
@@ -165,8 +169,7 @@ class ChartCreator:
     def create_and_save_charts(self, poi_name, df):
         """Creates and saves all chart pairs"""
         for category, title in [('mode', 'Travel Modes'), 
-                              ('purpose', 'Trip Purposes'), 
-                              ('frequency', 'Trip Frequencies')]:
+                              ('frequency', 'Trip Frequencies')]:  # Removed purpose
             donut_fig, legend_fig = self.create_chart_pair(df, category, title)
             self.save_chart_pair(donut_fig, legend_fig, poi_name.replace(' ', '_'), f'avg_trip_{category}')
 
