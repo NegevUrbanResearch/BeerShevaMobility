@@ -37,7 +37,7 @@ class OTPClient:
         if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
             self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
     
-    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
+    def get_walking_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None, origin_poi=None):
         """
         Query OTP for a walking route with retries.
         
@@ -45,6 +45,7 @@ class OTPClient:
         - from_lat, from_lon: Origin coordinates
         - to_lat, to_lon: Destination coordinates
         - destination_poi: Name of destination POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
+        - origin_poi: Name of origin POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
         """
         # Validate coordinates before processing
         from_lat, from_lon, valid_origin = CoordinateValidator.validate_wgs84(
@@ -66,15 +67,12 @@ class OTPClient:
             'Soroka-Medical-Center': 7
         }
         
-        # Determine which polygons to avoid based on origin/destination containment
+        # Determine which polygons to avoid
         avoid_polygons = []
         for _, poi in self.poi_polygons.iterrows():
-            # If this POI contains either the origin or destination, allow routing through it
-            if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
-                continue
-                
-            # If this is destination POI's entrance point, allow routing through it
-            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
+            # Only allow routing through POI if it's explicitly the origin or destination POI
+            if (origin_poi and poi_name_to_id.get(origin_poi) == poi['ID']) or \
+               (destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']):
                 continue
                 
             # Otherwise, prevent routing through this POI
@@ -177,7 +175,7 @@ class ImprovedTripGenerator:
         return self.zone_used_points.setdefault(zone_id, set())
     
     def _generate_unique_point(self, zone_id, geometry, max_attempts=100):
-        """Generate a unique random point within a geometry"""
+        """Generate a unique random point within a geometry, avoiding POI polygons"""
         used_points = self._get_used_points(zone_id)
         minx, miny, maxx, maxy = geometry.bounds
         
@@ -187,6 +185,10 @@ class ImprovedTripGenerator:
                 np.random.uniform(miny, maxy)
             )
             if geometry.contains(point):
+                # Check if point is within any POI polygon
+                if any(poi.geometry.contains(point) for _, poi in self.otp_client.poi_polygons.iterrows()):
+                    continue
+                
                 # Check if point is sufficiently far from used points (10 meters ≈ 0.0001 degrees)
                 if not any(point.distance(p) < 0.0001 for p in used_points):
                     return point

@@ -414,6 +414,11 @@ class RouteModeler:
                     )
                 
                 if buffered_geometry.contains(point):
+                    # Check if point is within any POI polygon
+                    if any(poi.geometry.contains(point) for _, poi in self.otp_client.poi_polygons.iterrows()):
+                        failed_points.append((point, f"Inside POI polygon ({strategy})"))
+                        continue
+                    
                     # Check if point is sufficiently far from used points (10 meters ≈ 0.0001 degrees)
                     if all(point.distance(p) > 0.0001 for p in used_points):
                         # Verify the point has graph access
@@ -438,6 +443,10 @@ class RouteModeler:
         for offset in [(0,0), (0.001,0), (0,-0.001), (0.001,0.001), (-0.001,-0.001)]:
             point = Point(centroid.x + offset[0], centroid.y + offset[1])
             if buffered_geometry.contains(point):
+                # Check if point is within any POI polygon
+                if any(poi.geometry.contains(point) for _, poi in self.otp_client.poi_polygons.iterrows()):
+                    continue
+                
                 lat, lon = point.y, point.x
                 if self.otp_client.test_point_access(lat, lon):
                     logger.warning(f"Falling back to adjusted centroid point: ({lat}, {lon})")
