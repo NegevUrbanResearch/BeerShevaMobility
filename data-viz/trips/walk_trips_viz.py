@@ -57,7 +57,7 @@ def normalize_distribution(dist):
 
 def load_trip_data():
     """Load and process walking trip data for animation with time-based distribution"""
-    file_path = os.path.join(OUTPUT_DIR, "walking_routes_inbound.geojson")
+    file_path = os.path.join(OUTPUT_DIR, "walk_routes_inbound.geojson")
     logger.info(f"Loading walking trip data from: {file_path}")
     
     # Define name mappings
