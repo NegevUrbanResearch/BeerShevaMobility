@@ -48,9 +48,26 @@ class DashboardApp:
         
         self.zones = self.data_loader.load_zones()
         self.poi_df = self.data_loader.load_poi_data()
-        self.trip_data = self.data_loader.load_trip_data()
         
+        # Filter out unwanted POIs by coordinates
+        coords_to_exclude = [
+            (31.2244375, 34.8010625),  # Yes Planet
+            (31.2698125, 34.7815625),  # K collage
+            (31.1361875, 34.7898125),  # Ramat Hovav Industry
+        ]
+        
+        # Create mask for filtering (using approximate float comparison)
+        mask = ~self.poi_df.apply(lambda row: any(
+            abs(row['lat'] - lat) < 0.0001 and abs(row['lon'] - lon) < 0.0001
+            for lat, lon in coords_to_exclude
+        ), axis=1)
+        
+        self.poi_df = self.poi_df[mask]
+        
+        # Load trip data after filtering POIs
+        self.trip_data = self.data_loader.load_trip_data()
         self.poi_df, self.trip_data = self.data_loader.clean_poi_names(self.poi_df, self.trip_data)
+        
         self.poi_coordinates = dict(zip(self.poi_df['name'], 
                                       zip(self.poi_df['lat'], self.poi_df['lon'])))
         
