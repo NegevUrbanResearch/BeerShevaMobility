@@ -237,23 +237,24 @@ class MapCreator:
                     showlegend=True
                 ))
 
-            # Add POI markers
-            for poi, coords in poi_coordinates.items():
-                is_selected = poi == selected_poi
-                fig.add_trace(go.Scattermapbox(
-                    lat=[coords[0]],
-                    lon=[coords[1]],
-                    mode='markers',
-                    marker=go.scattermapbox.Marker(
-                        size=20,
-                        color='red' if is_selected else 'yellow',
-                        symbol='circle',
-                    ),
-                    text=[poi],
-                    hoverinfo='text',
-                    showlegend=False,
-                    customdata=[poi],
-                ))
+            # Add POI markers with dynamic sizing
+            fig.add_trace(go.Scattermapbox(
+                lat=[coords[0] for poi, coords in poi_coordinates.items()],
+                lon=[coords[1] for poi, coords in poi_coordinates.items()],
+                mode='markers',
+                marker=go.scattermapbox.Marker(
+                    size=15,  # Base size
+                    sizemin=3,  # Minimum size when zoomed out
+                    sizeref=1,  # Scale factor for size changes
+                    sizemode='area',  # Scale the marker area instead of radius
+                    color=['red' if poi == selected_poi else 'yellow' for poi in poi_coordinates.keys()],
+                    symbol='circle',
+                ),
+                text=[poi.replace('-', ' ') for poi in poi_coordinates.keys()],  # Remove dashes from hover labels
+                hoverinfo='text',
+                showlegend=False,
+                customdata=list(poi_coordinates.keys()),
+            ))
 
             # Set the center and zoom based on the selected POI
             center_lat, center_lon = poi_coordinates[selected_poi]
@@ -269,7 +270,6 @@ class MapCreator:
                 font=dict(size=36, color="white"),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                height=600,
                 autosize=True,
                 showlegend=True,
                 legend=dict(

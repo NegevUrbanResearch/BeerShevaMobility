@@ -157,15 +157,24 @@ class DashboardApp:
             dbc.Row([
                 dbc.Col([
                     html.Div([
-                        html.H1("Beer Sheva Mobility Dashboard", 
-                            style={
-                                'fontSize': '4rem',
-                                'color': '#fff',
-                                'marginRight': '2rem',
-                                'marginBottom': '0.1rem',  # Reduced from 0.5rem
-                                'textAlign': 'center'
-                            }
-                        ),
+                        # Container for centered title
+                        html.Div([
+                            html.H1("Beer Sheva Mobility Dashboard", 
+                                style={
+                                    'fontSize': '4rem',
+                                    'color': '#fff',
+                                    'marginBottom': '0',
+                                    'textAlign': 'center',  # Center the text
+                                    'width': '100%'  # Take full width of container
+                                }
+                            ),
+                        ], style={
+                            'position': 'absolute',  # Position absolutely
+                            'left': '0',
+                            'right': '0',
+                            'zIndex': '0'  # Place behind controls
+                        }),
+                        # Controls on the right
                         html.Div([
                             dbc.RadioItems(
                                 id='trip-type-selector',
@@ -174,37 +183,48 @@ class DashboardApp:
                                     {'label': 'Outbound', 'value': 'outbound'}
                                 ],
                                 value='inbound',
-                                inline=True,
+                                inline=False,
                                 style={
                                     'color': 'white',
-                                    'fontSize': '2rem'  # Doubled from 1rem
+                                    'fontSize': '1.8rem'
                                 },
                                 inputStyle={
-                                    'marginRight': '5px'
+                                    'marginRight': '8px'
                                 },
                                 labelStyle={
-                                    'marginRight': '15px',
+                                    'display': 'block',
+                                    'marginBottom': '5px',
                                     'fontWeight': '300'
                                 }
                             )
                         ], style={
-                            'textAlign': 'center',
-                            'marginBottom': '0.2rem'  # Reduced from 1rem
+                            'display': 'inline-block',
+                            'verticalAlign': 'top',
+                            'marginTop': '0.5rem',
+                            'position': 'relative',  # Position relative to container
+                            'zIndex': '1'  # Place in front of title
                         })
-                    ])
+                    ], style={
+                        'display': 'flex',
+                        'justifyContent': 'flex-end',  # Align controls to the right
+                        'alignItems': 'flex-start',
+                        'maxWidth': '1525px',
+                        'margin': '0 auto',
+                        'padding': '0 15px',
+                        'position': 'relative'  # Enable absolute positioning of children
+                    })
                 ], width=12)
-            ], className="mb-1"),  # Reduced from mb-4
+            ], className="mb-1"),
             
             # Main Content Row - reduce top margin
             dbc.Row([
                 # Map Column - adjusted container height and positioning
                 dbc.Col([
                     dbc.Card([
-                        dbc.CardHeader(
-                            "Interactive Map", 
-                            className="bg-dark text-white py-1 border-secondary",
-                            style={'fontSize': '2.4rem'}
-                        ),
+                        dbc.CardHeader([
+                            html.Span("Interactive Map", id="map-title"),
+                            html.Span(id="selected-poi", style={'marginLeft': '10px', 'fontWeight': 'normal'})
+                        ], className="bg-dark text-white py-1 border-secondary", style={'fontSize': '2.4rem'}),
                         dbc.CardBody([
                             html.Div([
                                 dcc.Graph(
@@ -215,21 +235,22 @@ class DashboardApp:
                                         'responsive': True
                                     },
                                     style={
-                                        'height': '100%',  # Changed from fixed height
+                                        'height': '100%',
                                         'width': '100%'
                                     }
                                 )
-                            ], id='map-container', style={
-                                'height': '100%',  # Changed from fixed height
+                            ], style={
+                                'height': '100%',
                                 'width': '100%',
-                                'position': 'relative',
-                                'overflow': 'hidden'
+                                'position': 'relative'
                             })
-                        ], className="bg-dark p-0", id='map-card-body', style={
-                            'height': '595px',  # This controls the overall map height
-                            'padding': '0 !important'  # Added to remove any padding
+                        ], className="bg-dark p-0", style={
+                            'height': '595px',  # Fixed container height
+                            'padding': '0 !important'
                         })
-                    ], className="bg-dark border-secondary h-100", id='map-card')
+                    ], className="bg-dark border-secondary h-100", style={
+                        'height': '100%'
+                    })
                 ], width=7, className="pe-2"),
                 
                 # Charts Column - adjusted width
@@ -286,6 +307,20 @@ class DashboardApp:
                 logger.error(f"Error updating dashboard: {str(e)}")
                 logger.error(traceback.format_exc())
                 return go.Figure(), '', '', '', ''
+
+        @self.app.callback(
+            dash.Output('selected-poi', 'children'),
+            [dash.Input('map', 'clickData')]
+        )
+        def update_map_title(click_data):
+            if not click_data or 'points' not in click_data:
+                return ""
+            clicked_poi = click_data['points'][0].get('customdata')
+            if not clicked_poi:
+                return ""
+            # Remove dashes and format the POI name
+            formatted_poi = clicked_poi.replace('-', ' ')
+            return f"Selection: {formatted_poi}"
 
     def run_server(self, debug=True):
         self.app.run_server(debug=debug)
