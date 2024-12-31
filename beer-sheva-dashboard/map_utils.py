@@ -172,16 +172,14 @@ class MapCreator:
 
             def get_category_value(x):
                 if x >= percentiles[95]:
-                    return 6
-                elif x >= percentiles[80]:
                     return 5
-                elif x >= percentiles[60]:
+                elif x >= percentiles[80]:
                     return 4
-                elif x >= percentiles[40]:
+                elif x >= percentiles[60]:
                     return 3
-                elif x >= percentiles[20]:
+                elif x >= percentiles[40]:
                     return 2
-                elif x >= percentiles[5]:
+                elif x >= percentiles[20]:
                     return 1
                 else:
                     return 0
@@ -194,25 +192,23 @@ class MapCreator:
                 z=zones_with_trips['category_value'],
                 colorscale=[
                     [0.0, '#7c1d6f'],
-                    [0.143, '#7c1d6f'],  # Very Low
-                    [0.143, '#b9257a'],
-                    [0.286, '#b9257a'],  # Low
-                    [0.286, '#dc3977'],
-                    [0.429, '#dc3977'],  # Moderate-Low
-                    [0.429, '#e34f6f'],
-                    [0.571, '#e34f6f'],  # Moderate
-                    [0.571, '#f0746e'],
-                    [0.714, '#f0746e'],  # Moderate-High
-                    [0.714, '#faa476'],
-                    [0.857, '#faa476'],  # High
-                    [0.857, '#fcde9c'],
-                    [1.0, '#fcde9c']    # Very High
+                    [0.167, '#7c1d6f'],  # Very Low
+                    [0.167, '#dc3977'],
+                    [0.333, '#dc3977'],  # Moderate-Low
+                    [0.333, '#e34f6f'],
+                    [0.5, '#e34f6f'],    # Moderate
+                    [0.5, '#f0746e'],
+                    [0.667, '#f0746e'],  # Moderate-High
+                    [0.667, '#faa476'],
+                    [0.833, '#faa476'],  # High
+                    [0.833, '#fcde9c'],
+                    [1.0, '#fcde9c']     # Very High
                 ],
                 showscale=False,
                 marker_opacity=0.8,
                 marker_line_width=0,
                 zmin=0,
-                zmax=6,
+                zmax=5,
                 hovertemplate=(
                     '<b>Zone:</b> %{location}<br>' +
                     '<b>Trips:</b> %{customdata:,.0f}<br>' +
@@ -223,13 +219,12 @@ class MapCreator:
 
             # Add legend entries (reversed order to show brightest on top)
             legend_items = [
-                (f'95th+ percentile ({percentiles[95]:.0f}+ trips)', '#fcde9c', 95),
-                (f'80-95th percentile ({percentiles[80]:.0f}-{percentiles[95]:.0f} trips)', '#faa476', 80),
-                (f'60-80th percentile ({percentiles[60]:.0f}-{percentiles[80]:.0f} trips)', '#f0746e', 60),
-                (f'40-60th percentile ({percentiles[40]:.0f}-{percentiles[60]:.0f} trips)', '#e34f6f', 40),
-                (f'20-40th percentile ({percentiles[20]:.0f}-{percentiles[40]:.0f} trips)', '#dc3977', 20),
-                (f'5-20th percentile ({percentiles[5]:.0f}-{percentiles[20]:.0f} trips)', '#b9257a', 5),
-                (f'0-5th percentile (0-{percentiles[5]:.0f} trips)', '#7c1d6f', 0)
+                (f'{percentiles[95]:.0f}+ trips', '#fcde9c', 95),
+                (f'{percentiles[80]:.0f}-{percentiles[95]:.0f} trips', '#faa476', 80),
+                (f'{percentiles[60]:.0f}-{percentiles[80]:.0f} trips', '#f0746e', 60),
+                (f'{percentiles[40]:.0f}-{percentiles[60]:.0f} trips', '#e34f6f', 40),
+                (f'{percentiles[20]:.0f}-{percentiles[40]:.0f} trips', '#dc3977', 20),
+                (f'0-{percentiles[20]:.0f} trips', '#7c1d6f', 0)
             ]
 
             for category, color, _ in legend_items:
@@ -271,7 +266,7 @@ class MapCreator:
                     zoom=10
                 ),
                 margin={"r":0,"t":0,"l":0,"b":0},
-                font=dict(size=24, color="white"),
+                font=dict(size=36, color="white"),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 height=600,
@@ -285,7 +280,7 @@ class MapCreator:
                     bgcolor="rgba(0,0,0,0.8)",
                     bordercolor="rgba(255,255,255,0.3)",
                     borderwidth=1,
-                    font=dict(size=14, color="white"),
+                    font=dict(size=21, color="white"),
                     itemsizing='constant'
                 )
             )
@@ -293,7 +288,7 @@ class MapCreator:
             # Update hover label font size
             for trace in fig.data:
                 if isinstance(trace, go.Scattermapbox):
-                    trace.hoverlabel = dict(font=dict(size=20))
+                    trace.hoverlabel = dict(font=dict(size=30))
 
             return fig
 
