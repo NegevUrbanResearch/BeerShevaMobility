@@ -5,16 +5,13 @@ import logging
 import traceback
 import os
 import plotly.io as pio
-
+from config import OUTPUT_DIR
 from utils.zone_utils import (
     standardize_zone_ids, 
     analyze_zone_ids,
     is_valid_zone_id,
     get_zone_type,
     ZONE_FORMATS
-)
-from config import (
-    OUTPUT_DIR
 )
 from utils.data_standards import DataStandardizer
 
@@ -23,8 +20,72 @@ logger = logging.getLogger(__name__)
 
 class MapCreator:
     def __init__(self, color_scheme):
-        self.color_scheme = color_scheme
+        self.color_scheme = {
+            'Very High (95th+ percentile)': '#bd0026',
+            'High (75th-95th percentile)': '#fc4e2a',
+            'Moderate (50th-75th percentile)': '#feb24c',
+            'Low (25th-50th percentile)': '#ffeda0',
+            'Very Low (0-25th percentile)': '#ffffcc'
+        }
 
+    def assign_categories(self, values):
+        """Assign categories based on percentiles"""
+        percentiles = {
+            95: np.percentile(values, 95),
+            75: np.percentile(values, 75),
+            50: np.percentile(values, 50),
+            25: np.percentile(values, 25),
+            0: np.min(values)
+        }
+        
+        def get_category(x):
+            if x >= percentiles[95]:
+                return 'Very High (95th+ percentile)'
+            elif x >= percentiles[75]:
+                return 'High (75th-95th percentile)'
+            elif x >= percentiles[50]:
+                return 'Moderate (50th-75th percentile)'
+            elif x >= percentiles[25]:
+                return 'Low (25th-50th percentile)'
+            else:
+                return 'Very Low (0-25th percentile)'
+        
+        categories = [get_category(x) for x in values]
+        return categories, percentiles
+
+    def filter_and_clip_zones(self, zones, trip_data):
+        logger.info(f"Number of zones before filtering: {len(zones)}")
+        
+        # Use 'tract' column
+        tract_col = 'tract'
+        logger.info(f"Number of unique {tract_col} values in trip_data: {len(trip_data[tract_col].unique())}")
+        
+        # Debug zone types before filtering
+        trip_zones = trip_data[tract_col].unique()
+        zone_types = {zone: get_zone_type(zone) for zone in trip_zones[:5]}
+        logger.info(f"Sample trip data zone types: {zone_types}")
+        
+        # Filter zones to only those with trip data
+        filtered_zones = zones[zones['YISHUV_STAT11'].isin(trip_data[tract_col])]
+        
+        # Analyze filtered zones
+        filtered_analysis = analyze_zone_ids(filtered_zones, ['YISHUV_STAT11'])
+        logger.info("\nFiltered zones analysis:")
+        logger.info(f"City zones: {filtered_analysis['city']}")
+        logger.info(f"Statistical areas: {filtered_analysis['statistical']}")
+        logger.info(f"Total valid zones: {len(filtered_zones) - len(filtered_analysis['invalid'])}")
+        
+        if filtered_analysis['invalid']:
+            logger.warning(f"Invalid zones found after filtering: {filtered_analysis['invalid'][:5]}")
+        
+        # Clip the geometry to the extent of the filtered zones
+        if len(filtered_zones) > 0:
+            total_bounds = filtered_zones.total_bounds
+            filtered_zones = filtered_zones.clip(total_bounds)
+            logger.info(f"Number of zones after clipping: {len(filtered_zones)}")
+        
+        return filtered_zones
+    
     def create_map(self, df, selected_poi, trip_type, zones, poi_coordinates):
         logger.info(f"Creating map for POI: {selected_poi}, Trip Type: {trip_type}")
         
@@ -67,11 +128,6 @@ class MapCreator:
                 logger.warning("No zones with trips found")
                 return go.Figure()
 
-            # Debug merge fields
-            logger.info("\nMerge fields unique values:")
-            logger.info(f"df['{tract_col}'] types: {[get_zone_type(z) for z in df_aggregated[tract_col].unique()[:5]]}")
-            logger.info(f"zones['YISHUV_STAT11'] types: {[get_zone_type(z) for z in filtered_zones['YISHUV_STAT11'].unique()[:5]]}")
-
             # Merge trip data with filtered zones
             zones_with_data = filtered_zones.merge(
                 df_aggregated, 
@@ -102,56 +158,91 @@ class MapCreator:
                 zones_with_trips = zones_with_trips.to_crs(epsg=4326)
                 logger.info(f"Transformed CRS: {zones_with_trips.crs}")
 
-            # Log the bounding box of the data
-            bounds = zones_with_trips.total_bounds
-            logger.info(f"Data bounds: {bounds}")
+            trip_counts = zones_with_trips['count']
+            percentiles = {
+                0: trip_counts.min(),
+                5: trip_counts.quantile(0.05),
+                20: trip_counts.quantile(0.20),
+                40: trip_counts.quantile(0.40),
+                60: trip_counts.quantile(0.60),
+                80: trip_counts.quantile(0.80),
+                95: trip_counts.quantile(0.95),
+                100: trip_counts.max()
+            }
 
-            # Apply logarithmic transformation to trip counts
-            zones_with_trips['log_trips'] = np.log1p(zones_with_trips['count'])
-            
-            # Calculate the 95th percentile for log-transformed trip counts
-            log_trip_cap = zones_with_trips['log_trips'].quantile(0.95)
+            def get_category_value(x):
+                if x >= percentiles[95]:
+                    return 6
+                elif x >= percentiles[80]:
+                    return 5
+                elif x >= percentiles[60]:
+                    return 4
+                elif x >= percentiles[40]:
+                    return 3
+                elif x >= percentiles[20]:
+                    return 2
+                elif x >= percentiles[5]:
+                    return 1
+                else:
+                    return 0
 
-            # Apply the cap to log-transformed trip counts
-            zones_with_trips['log_trips_capped'] = zones_with_trips['log_trips'].clip(upper=log_trip_cap)
+            zones_with_trips['category_value'] = zones_with_trips['count'].apply(get_category_value)
 
-            # Calculate color scale limits
-            vmin = np.log1p(1)  # Minimum of 1 trip
-            vmax = log_trip_cap
-
-            logger.info(f"Color scale range: {vmin} to {vmax}")
-
-            # Create choropleth map
             fig = go.Figure(go.Choroplethmapbox(
                 geojson=zones_with_trips.__geo_interface__,
                 locations=zones_with_trips.index,
-                z=zones_with_trips['log_trips_capped'],
-                colorscale="Viridis",
-                zmin=vmin,
-                zmax=vmax,
-                marker_opacity=0.7,
+                z=zones_with_trips['category_value'],
+                colorscale=[
+                    [0.0, '#7c1d6f'],
+                    [0.143, '#7c1d6f'],  # Very Low
+                    [0.143, '#b9257a'],
+                    [0.286, '#b9257a'],  # Low
+                    [0.286, '#dc3977'],
+                    [0.429, '#dc3977'],  # Moderate-Low
+                    [0.429, '#e34f6f'],
+                    [0.571, '#e34f6f'],  # Moderate
+                    [0.571, '#f0746e'],
+                    [0.714, '#f0746e'],  # Moderate-High
+                    [0.714, '#faa476'],
+                    [0.857, '#faa476'],  # High
+                    [0.857, '#fcde9c'],
+                    [1.0, '#fcde9c']    # Very High
+                ],
+                showscale=False,
+                marker_opacity=0.8,
                 marker_line_width=0,
-                colorbar=dict(
-                    title="Trips",
-                    tickmode='array',
-                    tickvals=np.linspace(vmin, vmax, 6),  # Position of ticks
-                    ticktext=[f"{int(np.expm1(val))}" for val in np.linspace(vmin, vmax, 6)],  # Text to display
+                zmin=0,
+                zmax=6,
+                hovertemplate=(
+                    '<b>Zone:</b> %{location}<br>' +
+                    '<b>Trips:</b> %{customdata:,.0f}<br>' +
+                    '<extra></extra>'
                 ),
-                hovertemplate='<b>Zone:</b> %{location}<br><b>Trips:</b> %{customdata:.0f}<extra></extra>',
-                customdata=zones_with_trips['count'],
+                customdata=zones_with_trips['count']
             ))
-            # Add annotation for logarithmic scale
-            fig.add_annotation(
-                text="*Color intensity uses capped logarithmic scale",
-                xref="paper", yref="paper",
-                x=0.95, y=0.055,
-                showarrow=False,
-                font=dict(size=6, color="white"),
-                align="right",
-                yanchor='top'
-            )
 
-            # Add all POI markers
+            # Add legend entries (reversed order to show brightest on top)
+            legend_items = [
+                (f'95th+ percentile ({percentiles[95]:.0f}+ trips)', '#fcde9c', 95),
+                (f'80-95th percentile ({percentiles[80]:.0f}-{percentiles[95]:.0f} trips)', '#faa476', 80),
+                (f'60-80th percentile ({percentiles[60]:.0f}-{percentiles[80]:.0f} trips)', '#f0746e', 60),
+                (f'40-60th percentile ({percentiles[40]:.0f}-{percentiles[60]:.0f} trips)', '#e34f6f', 40),
+                (f'20-40th percentile ({percentiles[20]:.0f}-{percentiles[40]:.0f} trips)', '#dc3977', 20),
+                (f'5-20th percentile ({percentiles[5]:.0f}-{percentiles[20]:.0f} trips)', '#b9257a', 5),
+                (f'0-5th percentile (0-{percentiles[5]:.0f} trips)', '#7c1d6f', 0)
+            ]
+
+            for category, color, _ in legend_items:
+                fig.add_trace(go.Scattermapbox(
+                    lat=[None],
+                    lon=[None],
+                    mode='markers',
+                    marker=dict(size=15, color=color),
+                    name=category,
+                    showlegend=True
+                ))
+
+            # Add POI markers
             for poi, coords in poi_coordinates.items():
                 is_selected = poi == selected_poi
                 fig.add_trace(go.Scattermapbox(
@@ -159,8 +250,8 @@ class MapCreator:
                     lon=[coords[1]],
                     mode='markers',
                     marker=go.scattermapbox.Marker(
-                        size=15,
-                        color='red' if is_selected else 'yellow',  # Yellow for better visibility on dark background
+                        size=20,
+                        color='red' if is_selected else 'yellow',
                         symbol='circle',
                     ),
                     text=[poi],
@@ -168,12 +259,6 @@ class MapCreator:
                     showlegend=False,
                     customdata=[poi],
                 ))
-
-            # Calculate the bounding box for all POIs
-            all_lats = [coords[0] for coords in poi_coordinates.values()]
-            all_lons = [coords[1] for coords in poi_coordinates.values()]
-            center_lat = (max(all_lats) + min(all_lats)) / 2
-            center_lon = (max(all_lons) + min(all_lons)) / 2
 
             # Set the center and zoom based on the selected POI
             center_lat, center_lon = poi_coordinates[selected_poi]
@@ -190,41 +275,32 @@ class MapCreator:
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
                 height=600,
-                autosize=True
-            )
-
-            # Update colorbar styling
-            fig.update_traces(
-                selector=dict(type='choroplethmapbox'),
-                colorbar=dict(
-                    title="Trips",
-                    titlefont=dict(size=24),  # Doubled from 12
-                    tickfont=dict(size=20),   # Doubled from 10
-                    tickmode='array',
-                    tickvals=np.linspace(vmin, vmax, 6),
-                    ticktext=[f"{int(np.expm1(val))}" for val in np.linspace(vmin, vmax, 6)],
-                    len=0.9,  # Adjusted length
-                    thickness=25  # Increased thickness
+                autosize=True,
+                showlegend=True,
+                legend=dict(
+                    yanchor="bottom",
+                    y=0.01,
+                    xanchor="left",
+                    x=0.01,
+                    bgcolor="rgba(0,0,0,0.8)",
+                    bordercolor="rgba(255,255,255,0.3)",
+                    borderwidth=1,
+                    font=dict(size=14, color="white"),
+                    itemsizing='constant'
                 )
             )
 
-            # Update annotation font size
-            fig.update_annotations(
-                font=dict(size=24, color="white")  # Doubled from 12
-            )
-
-            # Update marker sizes for POIs
+            # Update hover label font size
             for trace in fig.data:
                 if isinstance(trace, go.Scattermapbox):
-                    trace.marker.size = 20  # Increased from 15
-                    trace.hoverlabel = dict(font=dict(size=20))  # Increased hover text size
+                    trace.hoverlabel = dict(font=dict(size=20))
 
             return fig
+
         except Exception as e:
             logger.error(f"Error in create_map: {str(e)}")
             logger.error(traceback.format_exc())
             return go.Figure()
-
 
     def filter_and_clip_zones(self, zones, trip_data):
         logger.info(f"Number of zones before filtering: {len(zones)}")
