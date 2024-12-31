@@ -91,17 +91,42 @@ class MobilityPatternAnalyzer:
             for trip_type in ['inbound', 'outbound']:
                 try:
                     df = self.load_poi_data(poi, trip_type)
+                    print(f"\nAnalyzing {poi} - {trip_type}")
                     
                     # Extract arrival time columns
                     time_cols = [col for col in df.columns if col.startswith('arrival_')]
+                    if not time_cols:
+                        print(f"No temporal columns found for {poi}")
+                        continue
                     
-                    # Calculate average temporal distribution weighted by total trips
-                    temporal_dist = (df[time_cols].multiply(df['total_trips'], axis=0).sum() / 
-                                   df['total_trips'].sum())
+                    # Calculate actual trip counts by multiplying percentages by total trips
+                    hourly_counts = df[time_cols].multiply(df['total_trips'], axis=0)
+                    
+                    # Sum up total trips for each hour
+                    total_by_hour = hourly_counts.sum()
+                    
+                    # Calculate the distribution (ensure it sums to 100%)
+                    if total_by_hour.sum() > 0:
+                        temporal_dist = total_by_hour / total_by_hour.sum()
+                        
+                        print(f"\nTemporal distribution summary for {poi} {trip_type}:")
+                        print(f"Total trips processed: {total_by_hour.sum():.1f}")
+                        print("\nTop 5 peak hours:")
+                        top_hours = temporal_dist.sort_values(ascending=False).head()
+                        for hour, value in top_hours.items():
+                            print(f"{hour}: {value*100:.1f}%")
+                    else:
+                        print(f"Warning: No trips found for {poi} {trip_type}")
+                        temporal_dist = pd.Series(0, index=time_cols)
                     
                     patterns[f"{poi}_{trip_type}"] = temporal_dist
+                    
                 except FileNotFoundError as e:
                     logger.warning(f"Skipping {poi} {trip_type}: {str(e)}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error analyzing temporal patterns for {poi} {trip_type}: {str(e)}")
+                    logger.error("Stack trace:", exc_info=True)
                     continue
         
         return patterns
@@ -118,9 +143,15 @@ class MobilityPatternAnalyzer:
                     # Get mode columns
                     mode_cols = [col for col in df.columns if col.startswith('mode_')]
                     
+                    # Calculate actual trip counts by mode
+                    mode_counts = df[mode_cols].multiply(df['total_trips'], axis=0)
+                    total_trips = df['total_trips'].sum()
+                    
                     # Calculate weighted average mode split
-                    mode_split = (df[mode_cols].multiply(df['total_trips'], axis=0).sum() / 
-                                df['total_trips'].sum())
+                    if total_trips > 0:
+                        mode_split = mode_counts.sum() / total_trips
+                    else:
+                        mode_split = pd.Series(0, index=mode_cols)
                     
                     mode_patterns[f"{poi}_{trip_type}"] = mode_split
                     

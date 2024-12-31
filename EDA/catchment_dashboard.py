@@ -160,6 +160,39 @@ class CatchmentDashboard:
                     background-color: {{ info.color }};
                 }
                 {% endfor %}
+                .explanation {
+                    position: fixed;
+                    top: 20px;
+                    right: 60px;
+                    background: rgba(33, 33, 33, 0.9);
+                    padding: 12px;
+                    border-radius: 8px;
+                    box-shadow: 0 0 15px rgba(0,0,0,0.3);
+                    z-index: 1000;
+                    width: 280px;
+                    font-size: 13px;
+                    color: #ffffff;
+                }
+                
+                .explanation h3 {
+                    margin: 0 0 8px 0;
+                    font-size: 14px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: #ffffff;
+                    border-bottom: 1px solid #444;
+                    padding-bottom: 8px;
+                }
+                
+                .explanation p {
+                    margin: 0 0 8px 0;
+                    line-height: 1.4;
+                    color: #cccccc;
+                }
+                
+                .explanation p:last-child {
+                    margin-bottom: 0;
+                }
             </style>
         </head>
         <body>
@@ -179,6 +212,11 @@ class CatchmentDashboard:
                     </button>
                     {% endfor %}
                 </div>
+            </div>
+            
+            <div class="explanation">
+                <h3>About Catchment Areas</h3>
+                <p>These maps show where 90% of trips to each location originate from. Different colors represent different transport modes.</p>
             </div>
             
             <div class="methods-note">

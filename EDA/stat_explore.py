@@ -30,36 +30,40 @@ class BasicMobilityAnalyzer:
     def analyze_temporal_patterns(self) -> Dict:
         """Analyze temporal patterns including:
         - Peak hours
-        - Secondary peaks
-        - Temporal correlation between POIs
-        - Weekend vs weekday patterns if available
+        - Temporal distributions
+        - POI correlations
         """
         patterns = {}
+        
         for poi_name, data in self.poi_data.items():
+            print(f"\nAnalyzing temporal patterns for {poi_name}")
+            
             time_cols = [col for col in data.inbound.columns if col.startswith('arrival_')]
+            if not time_cols:
+                print(f"No temporal data found for {poi_name}")
+                continue
             
             # Calculate temporal distributions
-            in_dist = self._calculate_temporal_distribution(data.inbound, time_cols)
-            out_dist = self._calculate_temporal_distribution(data.outbound, time_cols)
+            inbound_dist = self._calculate_temporal_distribution(
+                data.inbound, time_cols
+            )
+            outbound_dist = self._calculate_temporal_distribution(
+                data.outbound, time_cols
+            )
             
             # Find peaks
-            in_peaks = self._find_peaks(in_dist)
-            out_peaks = self._find_peaks(out_dist)
-            
             patterns[poi_name] = {
                 'inbound': {
-                    'distribution': in_dist.to_dict(),
-                    'peaks': in_peaks,
-                    'entropy': stats.entropy(in_dist)
+                    'distribution': inbound_dist.to_dict(),
+                    'peaks': self._find_peaks(inbound_dist)
                 },
                 'outbound': {
-                    'distribution': out_dist.to_dict(),
-                    'peaks': out_peaks,
-                    'entropy': stats.entropy(out_dist)
+                    'distribution': outbound_dist.to_dict(),
+                    'peaks': self._find_peaks(outbound_dist)
                 }
             }
-            
-        # Calculate temporal correlations between POIs
+        
+        # Calculate correlations between POIs
         patterns['correlations'] = self._calculate_poi_correlations()
         
         return patterns
@@ -122,18 +126,37 @@ class BasicMobilityAnalyzer:
 
     def _calculate_temporal_distribution(self, df: pd.DataFrame, time_cols: List[str]) -> pd.Series:
         """Calculate weighted temporal distribution"""
-        # Debug print
-        print("Calculating temporal distribution")
+        print("\nCalculating temporal distribution")
         print("Time columns:", time_cols)
-        print("Sample data:", df[time_cols].head())
         
         try:
-            distribution = (df[time_cols].multiply(df['total_trips'], axis=0).sum() / 
-                          df['total_trips'].sum())
-            return distribution
+            # Get raw counts by multiplying percentages by total trips
+            hourly_counts = df[time_cols].multiply(df['total_trips'], axis=0)
+            
+            # Sum up total trips for each hour
+            total_by_hour = hourly_counts.sum()
+            
+            # Calculate the distribution (ensure it sums to 100%)
+            if total_by_hour.sum() > 0:
+                distribution = total_by_hour / total_by_hour.sum()
+                
+                print("\nTemporal distribution summary:")
+                print(f"Total trips processed: {total_by_hour.sum():.1f}")
+                print("\nTop 5 peak hours:")
+                top_hours = distribution.sort_values(ascending=False).head()
+                for hour, value in top_hours.items():
+                    print(f"{hour}: {value*100:.1f}%")
+                    
+                return distribution
+            else:
+                print("Warning: No trips found in temporal data")
+                return pd.Series(0, index=time_cols)
+                
         except Exception as e:
             print(f"Error in temporal distribution calculation: {str(e)}")
-            return pd.Series()
+            print("Input data sample:")
+            print(df[time_cols + ['total_trips']].head())
+            return pd.Series(0, index=time_cols)
 
     def _find_peaks(self, distribution: pd.Series, threshold: float = 0.1) -> List[Dict]:
         """Find primary and secondary peaks in temporal distribution"""

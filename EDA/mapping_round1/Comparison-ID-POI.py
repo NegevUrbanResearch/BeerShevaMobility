@@ -5,7 +5,7 @@ import random
 import sys
 import os
 # Navigate to the directory containing BeerShevaMobility
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'BeerShevaMobility', 'data-viz')))
+
 # Import the configuration
 from config import OUTPUT_DIR
 

@@ -403,54 +403,45 @@ class SpatialMobilityAnalyzer:
                 })
         return transitions
 
-    def _identify_common_origins(self, gdf1: gpd.GeoDataFrame, 
-                               gdf2: gpd.GeoDataFrame) -> pd.Index:
+    def _identify_common_origins(self, gdf1: gpd.GeoDataFrame, gdf2: gpd.GeoDataFrame) -> List[int]:
         """Identify common trip origins between two POIs"""
         print("\nDebugging _identify_common_origins:")
         print(f"GDF1 shape: {gdf1.shape}")
         print(f"GDF2 shape: {gdf2.shape}")
         
-        # Convert geometries to centroids
+        # Use centroids for comparison
         centroids1 = gdf1.geometry.centroid
         centroids2 = gdf2.geometry.centroid
         
-        # Debug centroid coordinates
         print("\nCentroid 1 stats:")
-        print("X coordinates:", centroids1.x.describe())
-        print("Y coordinates:", centroids1.y.describe())
-        print("\nCentroid 2 stats:")
-        print("X coordinates:", centroids2.x.describe())
-        print("Y coordinates:", centroids2.y.describe())
+        print(pd.DataFrame({
+            'X coordinates': centroids1.x.describe(),
+            'Y coordinates': centroids1.y.describe()
+        }))
         
-        # Check for NaN or inf values
-        print("\nChecking for NaN/inf values:")
-        print("Centroids1 NaN count - X:", centroids1.x.isna().sum(), "Y:", centroids1.y.isna().sum())
-        print("Centroids2 NaN count - X:", centroids2.x.isna().sum(), "Y:", centroids2.y.isna().sum())
+        # Remove any invalid geometries
+        valid_mask1 = ~centroids1.isna()
+        valid_mask2 = ~centroids2.isna()
         
-        # Filter out NaN values before creating KDTree
-        valid_mask1 = ~(centroids1.x.isna() | centroids1.y.isna())
-        valid_centroids1 = centroids1[valid_mask1]
+        if not (valid_mask1.all() and valid_mask2.all()):
+            print(f"Warning: Found {(~valid_mask1).sum()} invalid geometries in GDF1")
+            print(f"Warning: Found {(~valid_mask2).sum()} invalid geometries in GDF2")
         
-        print(f"\nValid centroids after filtering: {len(valid_centroids1)}")
+        # Use only valid geometries
+        centroids1 = centroids1[valid_mask1]
+        centroids2 = centroids2[valid_mask2]
         
-        # Use spatial index for efficient matching
-        coords1 = np.column_stack([valid_centroids1.x, valid_centroids1.y])
-        print("\nCoordinates shape:", coords1.shape)
-        print("Sample coordinates:\n", coords1[:5])
+        # Build KD-tree for efficient spatial search
+        tree = cKDTree(np.column_stack([centroids1.x, centroids1.y]))
         
-        tree = cKDTree(coords1)
-        valid_mask2 = ~(centroids2.x.isna() | centroids2.y.isna())
-        points2 = np.column_stack([centroids2[valid_mask2].x, centroids2[valid_mask2].y])
+        # Find points within threshold distance
+        threshold = 1000  # meters
+        indices = []
+        for x, y in zip(centroids2.x, centroids2.y):
+            nearby = tree.query_ball_point([x, y], threshold)
+            indices.extend(nearby)
         
-        # Find points within small threshold
-        indices = tree.query_ball_point(points2, r=0.001)  # Small threshold in degrees
-        
-        # Map back to original indices
-        valid_indices1 = gdf1.index[valid_mask1]
-        matched_indices = valid_indices1[np.unique([idx for sublist in indices for idx in sublist])]
-        
-        print(f"\nFound {len(matched_indices)} common origins")
-        return matched_indices
+        return list(set(indices))
 
     def _analyze_mode_differences(self, gdf1: gpd.GeoDataFrame, 
                                 gdf2: gpd.GeoDataFrame) -> Dict:
