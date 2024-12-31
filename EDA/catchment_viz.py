@@ -44,47 +44,27 @@ class CatchmentVisualizer:
         self.israel_boundary = self._load_israel_boundary()
 
     def _load_israel_boundary(self) -> gpd.GeoDataFrame:
-        """Load Israel boundary from OSM"""
-        try:
-            import osmnx as ox
-            print("Fetching Israel boundary from OpenStreetMap...")
-            
-            # Configure osmnx
-            ox.config(use_cache=True, log_console=True)
-            
-            # Fetch Israel boundary
-            israel = ox.geocode_to_gdf('Israel')
-            
-            # Simplify geometry to improve performance
-            israel['geometry'] = israel['geometry'].simplify(tolerance=0.001)
-            
-            # Ensure the geometry is valid
-            israel['geometry'] = israel['geometry'].buffer(0)
-            
-            # Convert to EPSG:4326 (WGS84) if not already
-            israel = israel.to_crs(epsg=4326)
-            
-            print("Successfully loaded Israel boundary")
-            return israel
-            
-        except Exception as e:
-            print(f"Error loading Israel boundary: {str(e)}")
-            print("Creating a simplified boundary as fallback...")
-            
-            # Create a simplified rectangular boundary around Israel as fallback
-            israel_bounds = [
-                (29.5, 34.2),  # SW
-                (29.5, 35.9),  # SE
-                (33.4, 35.9),  # NE
-                (33.4, 34.2),  # NW
-                (29.5, 34.2)   # SW (close polygon)
-            ]
-            
-            # Create GeoDataFrame with simplified boundary
-            geometry = [Polygon(israel_bounds)]
-            israel = gpd.GeoDataFrame(geometry=geometry, crs="EPSG:4326")
-            
-            return israel
+        """Create a manually defined boundary polygon encompassing Israel and West Bank"""
+        # Define coordinates for a polygon that covers Israel and West Bank
+        # Format: [lon, lat] pairs
+        boundary_coords = [
+            [34.2, 29.5],   # Southwest corner
+            [34.3, 31.2],   # Western coast
+            [34.6, 31.9],   # Tel Aviv area
+            [34.9, 32.9],   # Northern coast
+            [35.7, 33.3],   # Northern border
+            [35.9, 32.7],   # Northeast
+            [35.6, 31.5],   # Eastern border (including West Bank)
+            [35.4, 30.9],   # Dead Sea region
+            [35.0, 29.5],   # Southern tip
+            [34.2, 29.5]    # Back to start
+        ]
+        
+        # Create polygon and GeoDataFrame
+        geometry = [Polygon(boundary_coords)]
+        israel = gpd.GeoDataFrame(geometry=geometry, crs="EPSG:4326")
+        
+        return israel
 
     def load_poi_data(self, poi_name: str) -> pd.DataFrame:
         """Load and prepare POI data"""
