@@ -12,7 +12,7 @@ class VisualizationGenerator:
         return '''<!DOCTYPE html>
 <html>
 <head>
-    <title>TITLE_PLACEHOLDER</title>
+    <title>Trip Distance Distribution Analysis</title>
     <meta charset="utf-8">
     <!-- Core React -->
     <script src="https://unpkg.com/react@17.0.2/umd/react.development.js"></script>
@@ -37,6 +37,18 @@ class VisualizationGenerator:
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             max-width: 900px;
             margin: 0 auto;
+        }
+        .selector-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #222;
+            border-radius: 8px;
+        }
+        .selector-label {
+            display: block;
+            margin-bottom: 10px;
+            color: #999;
+            font-size: 14px;
         }
         #error-message {
             background: #ff000033;
@@ -88,7 +100,8 @@ class VisualizationGenerator:
             });
         };
 
-        const data = DATA_PLACEHOLDER;
+        const allData = DATA_PLACEHOLDER;
+        
         const modeColors = {
             walk: '#45B7D1',
             bike: '#96CEB4',
@@ -101,6 +114,12 @@ class VisualizationGenerator:
             bike: 'Biking',
             car: 'Car',
             transit: 'Transit'
+        };
+
+        const locationNames = {
+            bgu: 'BGU',
+            soroka_hospital: 'Soroka Hospital',
+            gev_yam: 'Gev Yam'
         };
 
         const processData = (data) => {
@@ -145,6 +164,7 @@ class VisualizationGenerator:
         };
 
         const App = () => {
+            const [selectedLocation, setSelectedLocation] = React.useState('bgu');
             const [selectedMode, setSelectedMode] = React.useState('walk');
             const [isLoading, setIsLoading] = React.useState(true);
             const [error, setError] = React.useState(null);
@@ -168,40 +188,72 @@ class VisualizationGenerator:
                 CartesianGrid, Tooltip
             } = window.Recharts;
 
-            const processedData = processData(data[selectedMode]);
+            const currentData = allData[selectedLocation]?.[selectedMode] || [];
+            const processedData = processData(currentData);
 
             return (
                 <div className="card">
                     <h2 style={{
                         color: '#fff',
                         marginTop: 0,
-                        marginBottom: '20px'
+                        marginBottom: '20px',
+                        textAlign: 'center',
+                        fontSize: '32px'
                     }}>
-                        Trip Distance Distribution - TITLE_PLACEHOLDER
+                        Trip Distance Distribution Analysis
                     </h2>
-                    <div style={{
-                        display: 'flex',
-                        gap: '10px',
-                        marginBottom: '20px'
-                    }}>
-                        {Object.entries(modeNames).map(([mode, name]) => (
-                            <button
-                                key={mode}
-                                onClick={() => setSelectedMode(mode)}
-                                style={{
-                                    padding: '8px 16px',
-                                    borderRadius: '6px',
-                                    border: 'none',
-                                    background: selectedMode === mode ? '#333' : '#222',
-                                    color: selectedMode === mode ? modeColors[mode] : '#999',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s'
-                                }}
-                            >
-                                {name}
-                            </button>
-                        ))}
+                    
+                    <div className="selector-group">
+                        <span className="selector-label">Location:</span>
+                        <div style={{
+                            display: 'flex',
+                            gap: '10px',
+                            marginBottom: '15px'
+                        }}>
+                            {Object.entries(locationNames).map(([key, name]) => (
+                                <button
+                                    key={key}
+                                    onClick={() => setSelectedLocation(key)}
+                                    style={{
+                                        padding: '8px 16px',
+                                        borderRadius: '6px',
+                                        border: 'none',
+                                        background: selectedLocation === key ? '#333' : '#222',
+                                        color: selectedLocation === key ? '#fff' : '#999',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    {name}
+                                </button>
+                            ))}
+                        </div>
+
+                        <span className="selector-label">Transport Mode:</span>
+                        <div style={{
+                            display: 'flex',
+                            gap: '10px'
+                        }}>
+                            {Object.entries(modeNames).map(([mode, name]) => (
+                                <button
+                                    key={mode}
+                                    onClick={() => setSelectedMode(mode)}
+                                    style={{
+                                        padding: '8px 16px',
+                                        borderRadius: '6px',
+                                        border: 'none',
+                                        background: selectedMode === mode ? '#333' : '#222',
+                                        color: selectedMode === mode ? modeColors[mode] : '#999',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    {name}
+                                </button>
+                            ))}
+                        </div>
                     </div>
+
                     <div style={{height: '400px'}}>
                         <ComposedChart
                             width={800}
@@ -231,7 +283,6 @@ class VisualizationGenerator:
                             />
                             <YAxis
                                 stroke="#999"
-
                                 tickFormatter={value => `${value}%`}
                             />
                             <Tooltip content={<CustomTooltip />} />
@@ -273,46 +324,41 @@ class VisualizationGenerator:
 </body>
 </html>'''
 
-    def generate_visualization(self, poi_name: str):
-        """Generate visualization for a specific POI"""
-        print(f"\nGenerating visualization for {poi_name}")
+    def generate_merged_visualization(self):
+        """Generate a single visualization with all POI data"""
+        print("\nGenerating merged visualization")
         
         try:
-            data_file = self.data_dir / f"{poi_name.lower()}_distance_dist.json"
-            print(f"Reading data from: {data_file}")
+            # Load data for all POIs
+            all_data = {}
+            poi_names = ['BGU', 'Soroka_Hospital', 'Gev_Yam']
             
-            with open(data_file) as f:
-                data = json.load(f)
-            print(f"Loaded data successfully. Modes found: {list(data.keys())}")
+            for poi_name in poi_names:
+                data_file = self.data_dir / f"{poi_name.lower()}_distance_dist.json"
+                print(f"Reading data from: {data_file}")
+                
+                with open(data_file) as f:
+                    poi_data = json.load(f)
+                    all_data[poi_name.lower()] = poi_data
             
-            # Format the title by replacing underscores with spaces
-            display_name = poi_name.replace('_', ' ')
+            print(f"Successfully loaded data for all POIs")
             
+            # Generate single HTML with all data
             html_content = self._get_template()
-            html_content = html_content.replace('TITLE_PLACEHOLDER', display_name)
-            html_content = html_content.replace('DATA_PLACEHOLDER', json.dumps(data))
+            html_content = html_content.replace('DATA_PLACEHOLDER', json.dumps(all_data))
             
-            output_file = self.output_dir / f"{poi_name.lower()}_distance_viz.html"
-            print(f"Writing visualization to: {output_file}")
+            output_file = self.output_dir / "merged_distance_viz.html"
+            print(f"Writing merged visualization to: {output_file}")
             
             with open(output_file, 'w') as f:
                 f.write(html_content)
                 
-            print(f"Successfully generated visualization")
+            print(f"Successfully generated merged visualization")
             
         except Exception as e:
-            print(f"Error generating visualization for {poi_name}: {str(e)}")
+            print(f"Error generating merged visualization: {str(e)}")
             raise
-
-    def generate_all_visualizations(self):
-        """Generate visualizations for all POIs"""
-        poi_names = ['BGU', 'Soroka_Hospital', 'Gev_Yam']
-        for poi_name in poi_names:
-            try:
-                self.generate_visualization(poi_name)
-            except Exception as e:
-                print(f"Failed to generate visualization for {poi_name}: {str(e)}")
 
 if __name__ == "__main__":
     generator = VisualizationGenerator()
-    generator.generate_all_visualizations()
+    generator.generate_merged_visualization()
