@@ -104,25 +104,20 @@ class InnovationDistrictAnalyzer:
             poi_trips = city_data.groupby('poi')['total_trips'].sum()
             poi_shares = poi_trips / total_trips
             
-            # Try multiple variations of POI names
-            bgu_variants = ['BGU', 'Ben-Gurion-University', 'Ben Gurion', 'Ben_Gurion']
-            gav_yam_variants = ['Gav-Yam-High-Tech-Park', 'Gev Yam', 'Gav Yam', 'Gev-Yam']
-            
             # Calculate innovation share using standardized names
-            bgu_share = sum(poi_shares.get(self.standardizer.standardize_poi_name(var), 0) 
-                           for var in bgu_variants)
-            gav_yam_share = sum(poi_shares.get(self.standardizer.standardize_poi_name(var), 0) 
-                              for var in gav_yam_variants)
-            innovation_share = bgu_share + gav_yam_share
+            innovation_share = sum(poi_shares.get(poi, 0) 
+                                for poi in self.innovation_district_pois)
             
-            # Mode shares - fixed calculation
+            # Mode shares - FIXED calculation
             mode_cols = [col for col in city_data.columns if col.startswith('mode_')]
             mode_shares = {}
+            
             for mode in mode_cols:
-                # Calculate weighted mode share
-                mode_trips = (city_data[mode] * city_data['total_trips']).sum()
-                mode_share = mode_trips / total_trips if total_trips > 0 else 0
-                mode_shares[mode.replace('mode_', '')] = mode_share * 100  # Convert to percentage
+                # Calculate the weighted average of mode shares
+                mode_shares[mode.replace('mode_', '')] = (
+                    (city_data[mode] * city_data['total_trips']).sum() / 
+                    city_data['total_trips'].sum()
+                )  # Already in percentage form if input data is in percentages
             
             stats = {
                 'city': city,
