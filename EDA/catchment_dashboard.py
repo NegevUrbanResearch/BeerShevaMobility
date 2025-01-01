@@ -27,10 +27,10 @@ class CatchmentDashboard:
         
         # Define modes with display names and colors
         self.mode_info = {
-            'all': {'display': 'All Modes', 'color': '#FFEEAD'},
+            'layered': {'display': 'All Modes', 'color': '#FFEEAD'},
             'car': {'display': 'Car', 'color': '#FF6B6B'},
             'transit': {'display': 'Public Transit', 'color': '#4ECDC4'},
-            'walk': {'display': 'Walking', 'color': '#45B7D1'},
+            'walk': {'display': 'Walking', 'color': '#FFE66D'},
             'bike': {'display': 'Bicycle', 'color': '#96CEB4'}
         }
         
@@ -118,28 +118,25 @@ class CatchmentDashboard:
                     height: 100%;
                     border: none;
                 }
-                .methods-note {
-                    position: fixed;
-                    bottom: 20px;
-                    right: 20px;
-                    background: rgba(33, 33, 33, 0.9);
-                    padding: 12px;
-                    border-radius: 8px;
-                    box-shadow: 0 0 15px rgba(0,0,0,0.3);
-                    max-width: 250px;
+                .legend-grid {
+                    display: grid;
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 8px;
+                    margin-top: 12px;
+                }
+                .legend-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                }
+                .color-box {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 2px;
+                }
+                .mode-name {
                     font-size: 12px;
-                    color: #ffffff;
-                }
-                .methods-note h4 {
-                    margin: 0 0 8px 0;
-                    font-size: 13px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    color: #999;
-                }
-                .methods-note p {
-                    margin: 0 0 8px 0;
-                    line-height: 1.4;
+                    color: #cccccc;
                 }
                 button.mode-btn {
                     padding-left: 24px;
@@ -189,10 +186,6 @@ class CatchmentDashboard:
                     line-height: 1.4;
                     color: #cccccc;
                 }
-                
-                .explanation p:last-child {
-                    margin-bottom: 0;
-                }
             </style>
         </head>
         <body>
@@ -216,16 +209,17 @@ class CatchmentDashboard:
             
             <div class="explanation">
                 <h3>About Catchment Areas</h3>
-                <p>These maps show where 90% of trips to each location originate from. Different colors represent different transport modes.</p>
-            </div>
-            
-            <div class="methods-note">
-                <h4>Methodology</h4>
-                <p>These catchment areas represent the minimal continuous region containing 90% of trips to each destination.</p>
-                <p>Colors indicate transport mode:</p>
-                {% for mode_id, info in mode_info.items() if mode_id != 'all' %}
-                <p style="color: {{ info.color }}">● {{ info.display }}</p>
-                {% endfor %}
+                <p id="explanation-text">Map shows where 90% of trips to each location originate from by mode.</p>
+                <div id="mode-legend" style="display: none;">
+                    <div class="legend-grid">
+                        {% for mode_id, info in mode_info.items() if mode_id != 'layered' %}
+                        <div class="legend-item">
+                            <span class="color-box" style="background-color: {{ info.color }}"></span>
+                            <span class="mode-name">{{ info.display }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
             </div>
 
             <div id="map-container">
@@ -238,15 +232,31 @@ class CatchmentDashboard:
                 let currentMode = '{{ mode_info.keys()|list|first }}';
                 
                 const poiInfo = {{ poi_info|tojson|safe }};
+                const modeInfo = {{ mode_info|tojson|safe }};
+
+                function updateExplanation() {
+                    const explanationText = document.getElementById('explanation-text');
+                    const modeLegend = document.getElementById('mode-legend');
+                    
+                    if (currentMode === 'layered') {
+                        explanationText.textContent = 'Map shows where 90% of trips to each location originate from by mode.';
+                        modeLegend.style.display = 'block';
+                    } else {
+                        explanationText.textContent = `Map shows where 90% of trips to each location originate from by ${modeInfo[currentMode].display.toLowerCase()}.`;
+                        modeLegend.style.display = 'none';
+                    }
+                }
 
                 function updateMap() {
-                    const modeSuffix = currentMode === 'all' ? 'all' : currentMode;
-                    const filename = `${poiInfo[currentPOI].file}_catchment_${modeSuffix}.html`;
+                    const mapSuffix = currentMode === 'layered' ? 'layered' : currentMode;
+                    const filename = `${poiInfo[currentPOI].file}_catchment_${mapSuffix}.html`;
                     document.getElementById('map-frame').src = filename;
                     
                     document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
                     document.getElementById(`poi-${currentPOI}`).classList.add('active');
                     document.getElementById(`mode-${currentMode}`).classList.add('active');
+                    
+                    updateExplanation();
                 }
 
                 function selectPOI(poi) {
@@ -283,4 +293,4 @@ class CatchmentDashboard:
 
 if __name__ == "__main__":
     dashboard = CatchmentDashboard()
-    dashboard.generate_dashboard() 
+    dashboard.generate_dashboard()
