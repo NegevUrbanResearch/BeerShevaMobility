@@ -31,9 +31,9 @@ class CatchmentVisualizer:
             'Gev_Yam': {'lat': 31.263500, 'lon': 34.803500}
         }
         
-        # Updated color scheme for better visibility in overlays
+        # Color scheme - consistent across all visualizations
         self.mode_colors = {
-            'car': '#FF6B6B',      # Bright red
+            'car': '#FF6B6B',       # Bright red
             'transit': '#4ECDC4',   # Turquoise
             'walk': '#FFE66D',      # Yellow
             'bike': '#96CEB4',      # Sage green
@@ -52,8 +52,8 @@ class CatchmentVisualizer:
             },
             'overlay': {
                 'weight': 1,           # Thinner border
-                'fillOpacity': 0.25,   # More transparent fill for overlays
-                'opacity': 0.2         # Very transparent border
+                'fillOpacity': 0.8,    # High fill opacity for better color visibility
+                'opacity': 0.6         # Semi-transparent border
             }
         }
         
@@ -252,24 +252,42 @@ class CatchmentVisualizer:
                         [catchment.bounds[3], catchment.bounds[2]]   # NE corner
                     ])
         
-        # Sort catchments by area (largest to smallest) and add to map
-        catchments.sort(key=lambda x: x['area'], reverse=True)
+        # Sort catchments by area (smallest to largest)
+        catchments.sort(key=lambda x: x['area'])
         
-        # Add catchments to map in order (largest first, so smallest will be on top)
-        for catchment_data in catchments:
+        # Process catchments to prevent overlap
+        processed_catchments = []
+        for i, current in enumerate(catchments):
+            current_poly = current['polygon']
+            # Cut out all smaller polygons from the current one
+            for smaller in catchments[:i]:
+                if smaller['polygon'].intersects(current_poly):
+                    current_poly = current_poly.difference(smaller['polygon'])
+            
+            processed_catchments.append({
+                'mode': current['mode'],
+                'polygon': current_poly,
+                'area': current['area']  # Keep original area for reference
+            })
+        
+        # Add processed catchments to map (now no overlaps)
+        for catchment_data in processed_catchments:
             mode = catchment_data['mode']
             catchment = catchment_data['polygon']
             color = self.mode_colors[mode]
             
-            folium.GeoJson(
-                catchment.__geo_interface__,
-                style_function=lambda x, color=color: {
-                    'fillColor': color,
-                    'color': color,
-                    **self.style_params['overlay']
-                },
-                name=f"{mode.capitalize()} ({catchment_data['area']:.2f} sq deg)"
-            ).add_to(m)
+            if not catchment.is_empty:
+                folium.GeoJson(
+                    catchment.__geo_interface__,
+                    style_function=lambda x, color=color: {
+                        'fillColor': color,
+                        'color': color,
+                        'fillOpacity': 0.8,  # Can use higher opacity now
+                        'weight': 1,
+                        'opacity': 0.6
+                    },
+                    name=f"{mode.capitalize()} ({catchment_data['area']:.2f} sq deg)"
+                ).add_to(m)
         
         # Add POI marker
         folium.CircleMarker(
@@ -279,9 +297,6 @@ class CatchmentVisualizer:
             fill=True,
             popup=poi_name
         ).add_to(m)
-        
-        # Add layer control
-        folium.LayerControl().add_to(m)
         
         # Fit map to bounds if we have them
         if all_bounds:
