@@ -31,13 +31,27 @@ class CatchmentVisualizer:
             'Gev_Yam': {'lat': 31.263500, 'lon': 34.803500}
         }
         
-        # Color scheme for different modes
+        # Updated color scheme for better visibility in overlays
         self.mode_colors = {
-            'car': '#FF6B6B',
-            'transit': '#4ECDC4',
-            'walk': '#45B7D1',
-            'bike': '#96CEB4',
-            'other': '#FFEEAD'
+            'car': '#FF6B6B',      # Bright red
+            'transit': '#4ECDC4',  # Turquoise
+            'walk': '#FFE66D',     # Yellow
+            'bike': '#96CEB4',     # Sage green
+            'other': '#FFEEAD'     # Cream
+        }
+        
+        # Define style parameters
+        self.style_params = {
+            'single': {
+                'weight': 1,           # Thinner border
+                'fillOpacity': 0.4,    # Moderate fill opacity
+                'opacity': 0.3         # Very transparent border
+            },
+            'overlay': {
+                'weight': 1,           # Thinner border
+                'fillOpacity': 0.25,   # More transparent fill for overlays
+                'opacity': 0.2         # Very transparent border
+            }
         }
         
         # Load Israel boundary for clipping
@@ -290,8 +304,7 @@ class CatchmentVisualizer:
                     style_function=lambda x: {
                         'fillColor': color,
                         'color': color,
-                        'weight': 2,
-                        'fillOpacity': 0.4
+                        **self.style_params['single']
                     }
                 ).add_to(m)
                 print("Added catchment polygon to map")
@@ -357,3 +370,5 @@ class CatchmentVisualizer:
 if __name__ == "__main__":
     visualizer = CatchmentVisualizer()
     visualizer.generate_all_catchment_maps() 
+
+      
