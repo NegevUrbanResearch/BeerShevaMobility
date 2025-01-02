@@ -9,6 +9,7 @@ import time
 from tqdm import tqdm
 import os
 import sys
+import logging
 # Add parent directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_loader import DataLoader
@@ -27,6 +28,10 @@ import polyline
 # Run the server:
 #    java -Xmx8G -jar otp-2.5.0-shaded.jar --load --serve graphs
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class RouteModeler:
     def __init__(self):
         self.base_dir = BASE_DIR
@@ -38,6 +43,12 @@ class RouteModeler:
         
         self.load_data()
         
+        # Load and store POI polygons
+        attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # BGU and Soroka
+        if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
+            self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
+            
     def load_data(self):
         """Load and process all required data"""
         loader = DataLoader()  # DataLoader will use the correct files from config
@@ -76,30 +87,138 @@ class RouteModeler:
                 print(f"Total car trips: {car_trips}")
                 print(f"Zones with trips: {len(df_with_cars['tract'].unique())}")
         
-    def generate_alternative_points(self, geometry, num_points=20):
-        """Generate alternative points within a zone if centroid isn't accessible"""
+    def generate_alternative_points(self, geometry, max_attempts=500):
+        """Generate alternative points within a zone using multiple sampling strategies"""
         points = []
-        minx, miny, maxx, maxy = geometry.bounds
+        failed_points = []
         
-        for _ in range(num_points):
-            point = Point(
-                np.random.uniform(minx, maxx),
-                np.random.uniform(miny, maxy)
-            )
-            if geometry.contains(point):
-                points.append(point)
+        # Buffer the geometry slightly inward to avoid edge cases
+        buffered_geometry = geometry.buffer(-0.0001)  # About 10m buffer
+        if buffered_geometry.is_empty:
+            buffered_geometry = geometry
+        
+        minx, miny, maxx, maxy = buffered_geometry.bounds
+        
+        # Define sampling strategies with weights
+        strategies = [
+            ('random', int(max_attempts * 0.6)),  # 60% random sampling
+            ('grid', int(max_attempts * 0.3)),    # 30% grid sampling
+            ('edge', int(max_attempts * 0.1))     # 10% edge sampling
+        ]
+        
+        for strategy, attempts in strategies:
+            logger.debug(f"Trying {strategy} sampling strategy")
+            
+            for attempt in range(attempts):
+                # Generate point based on strategy
+                if strategy == 'random':
+                    point = Point(
+                        np.random.uniform(minx, maxx),
+                        np.random.uniform(miny, maxy)
+                    )
+                elif strategy == 'grid':
+                    # Create a grid of points
+                    grid_size = int(np.sqrt(attempts))
+                    x_points = np.linspace(minx, maxx, grid_size)
+                    y_points = np.linspace(miny, maxy, grid_size)
+                    grid_x = x_points[attempt % grid_size]
+                    grid_y = y_points[(attempt // grid_size) % grid_size]
+                    point = Point(grid_x, grid_y)
+                else:  # edge sampling
+                    # Sample points along the geometry's boundary
+                    boundary_point = geometry.boundary.interpolate(
+                        np.random.random(), normalized=True
+                    )
+                    # Move slightly inward
+                    point = Point(
+                        boundary_point.x + np.random.uniform(-0.0005, 0.0005),
+                        boundary_point.y + np.random.uniform(-0.0005, 0.0005)
+                    )
                 
-        return points
+                if buffered_geometry.contains(point):
+                    # Check if point is within any POI polygon
+                    if any(poi.geometry.contains(point) for _, poi in self.poi_polygons.iterrows()):
+                        failed_points.append((point, f"Inside POI polygon ({strategy})"))
+                        continue
+                    
+                    # Transform coordinates and validate
+                    lat, lon = self.transform_coords(point.x, point.y)
+                    if lat is None or lon is None:
+                        failed_points.append((point, f"Invalid coordinates ({strategy})"))
+                        continue
+                        
+                    # Test if point has graph access
+                    params = {
+                        'fromPlace': f"{lat},{lon}",
+                        'toPlace': f"{lat},{lon}",
+                        'mode': 'CAR'
+                    }
+                    
+                    try:
+                        response = requests.get(f"{self.otp_url}/plan", params=params)
+                        if response.status_code == 200 and 'error' not in response.json():
+                            points.append(point)
+                            if len(points) >= 5:  # We only need a few valid points
+                                return points
+                    except Exception as e:
+                        failed_points.append((point, f"OTP access error: {str(e)} ({strategy})"))
+                        continue
+                
+                if attempt % 50 == 0:
+                    logger.debug(f"Tried {attempt} points with {strategy} sampling")
+        
+        # If we haven't found enough points, try centroid-based fallback
+        if not points:
+            logger.warning("Trying centroid-based fallback points")
+            centroid = geometry.centroid
+            offsets = [(0,0), (0.001,0), (0,-0.001), (0.001,0.001), (-0.001,-0.001)]
+            
+            for offset in offsets:
+                point = Point(centroid.x + offset[0], centroid.y + offset[1])
+                if geometry.contains(point):
+                    if not any(poi.geometry.contains(point) for _, poi in self.poi_polygons.iterrows()):
+                        lat, lon = self.transform_coords(point.x, point.y)
+                        if lat is not None and lon is not None:
+                            points.append(point)
+                            break
+        
+        if points:
+            logger.info(f"Found {len(points)} valid points after trying multiple strategies")
+            return points
+        else:
+            logger.error(f"Failed to find any valid points. Total failed attempts: {len(failed_points)}")
+            return None
     
-    def get_car_route(self, from_x, from_y, to_lat, to_lon):
-        """Query OTP for a driving route"""
-        # Transform only the origin coordinates from ITM to WGS84
-        from_lat, from_lon = self.transform_coords(from_x, from_y)
+    def get_car_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
+        """Query OTP for a driving route with POI avoidance"""
+        logger.debug(f"Attempting route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
         
-        print(f"\nTransformed coordinates:")
-        print(f"From: ({from_x}, {from_y}) -> ({from_lat}, {from_lon})")
-        print(f"To: ({to_lat}, {to_lon})")  # Already in WGS84
+        point_origin = Point(from_lon, from_lat)
+        point_dest = Point(to_lon, to_lat)
         
+        # Map POI names to IDs
+        poi_name_to_id = {
+            'Ben-Gurion-University': 11,
+            'Soroka-Medical-Center': 7
+        }
+        
+        # Determine which polygons to avoid based on origin/destination containment
+        avoid_polygons = []
+        for _, poi in self.poi_polygons.iterrows():
+            # If this POI contains either the origin or destination, allow routing through it
+            if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
+                continue
+                
+            # If this is destination POI's entrance point, allow routing through it
+            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
+                continue
+                
+            # Otherwise, prevent routing through this POI
+            avoid_polygons.append(poi.geometry.wkt)
+            
+        # Create avoidance string if needed
+        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
@@ -109,25 +228,31 @@ class RouteModeler:
             'arriveBy': 'false'
         }
         
+        # Add polygon avoidance if needed
+        if avoid_str:
+            params['walkReluctance'] = 20
+            params['triangleTimeFactor'] = 0
+            params['walkOnStreetReluctance'] = 5
+            params['avoid'] = avoid_str
+        
         try:
             response = requests.get(f"{self.otp_url}/plan", params=params)
-            print(f"Response status: {response.status_code}")
+            logger.debug(f"Response status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 if 'error' in data:
-                    print(f"OTP Error: {data['error']}")
+                    logger.warning(f"OTP Error: {data['error']}")
                     return None
                 if 'plan' not in data:
-                    print("No plan in response")
-                    print(f"Response content: {data}")
+                    logger.warning("No plan in response")
                     return None
                 return data
             else:
-                print(f"Error response content: {response.text}")
+                logger.error(f"Error response content: {response.text}")
                 return None
         except Exception as e:
-            print(f"Error getting route: {str(e)}")
+            logger.error(f"Error getting route: {str(e)}")
             return None
             
     def decode_polyline(self, encoded):
@@ -173,7 +298,6 @@ class RouteModeler:
         # Define main POIs using standardized names
         main_pois = [
             'Ben-Gurion-University',
-            'Gav-Yam-High-Tech-Park',
             'Soroka-Medical-Center'
         ]
         
@@ -187,12 +311,11 @@ class RouteModeler:
                 print(f"Warning: No coordinates found for {poi_name}")
                 continue
             
-            # Get trip data using standardized name and inbound trips
-            if (poi_name, 'inbound') not in self.trip_data:
+            # Process trip data for zones
+            trip_df = self.trip_data.get((poi_name, 'inbound'))
+            if trip_df is None:
                 print(f"Warning: No trip data found for {poi_name}")
                 continue
-            
-            trip_df = self.trip_data[(poi_name, 'inbound')].copy()
             
             # Filter out rows with NaN values in critical columns
             trip_df = trip_df.dropna(subset=['total_trips', 'mode_car'])
@@ -202,24 +325,6 @@ class RouteModeler:
                 (trip_df['total_trips'] > 0) & 
                 (trip_df['mode_car'] > 0)
             ]
-            
-            total_trips = trip_df['total_trips'].sum()
-            total_car_trips = (trip_df['total_trips'] * trip_df['mode_car'] / 100).sum()
-            
-            print(f"\nTrip data summary for {poi_name}:")
-            print(f"Total trips across all zones: {total_trips:.1f}")
-            print(f"Total car trips: {total_car_trips:.1f}")
-            print(f"Number of zones with car trips: {len(trip_df)}")
-            
-            # Sample a few zones for debugging
-            print("\nSample zone data:")
-            sample_zones = trip_df.head(3)
-            for _, zone_data in sample_zones.iterrows():
-                print(f"\nZone {zone_data['tract']}:")
-                print(f"Total trips: {zone_data['total_trips']:.1f}")
-                print(f"Car mode %: {zone_data['mode_car']:.1f}%")
-                car_trips = zone_data['total_trips'] * (zone_data['mode_car'] / 100)
-                print(f"Calculated car trips: {car_trips:.1f}")
             
             # Process only zones that have car trips
             for _, zone_data in tqdm(trip_df.iterrows(), total=len(trip_df)):
@@ -237,9 +342,15 @@ class RouteModeler:
                 if len(zone) == 0:
                     continue
                     
-                # Get zone centroid
-                centroid = zone.geometry.iloc[0].centroid
-                origin_coords = self.transform_coords(centroid.x, centroid.y)
+                # Generate points avoiding POI polygons
+                alternative_points = self.generate_alternative_points(zone.geometry.iloc[0])
+                if not alternative_points:
+                    print(f"Warning: Could not generate valid points for zone {zone_id}")
+                    continue
+                
+                # Use the first valid point
+                origin_point = alternative_points[0]
+                origin_coords = self.transform_coords(origin_point.x, origin_point.y)
                 dest_coords = (float(poi_coords['lat'].iloc[0]), float(poi_coords['lon'].iloc[0]))
                 
                 # Create cache key
@@ -247,36 +358,21 @@ class RouteModeler:
                 
                 # Check cache first
                 if cache_key not in route_cache:
-                    # Get route from OTP
-                    params = {
-                        'fromPlace': f"{origin_coords[0]},{origin_coords[1]}",
-                        'toPlace': f"{dest_coords[0]},{dest_coords[1]}",
-                        'time': departure_time.strftime('%I:%M%p'),
-                        'date': departure_time.strftime('%Y-%m-%d'),
-                        'mode': 'CAR',
-                        'arriveBy': 'false'
-                    }
+                    # Get route from OTP with POI avoidance
+                    route_data = self.get_car_route(
+                        origin_coords[0], origin_coords[1],
+                        dest_coords[0], dest_coords[1],
+                        destination_poi=poi_name
+                    )
                     
-                    try:
-                        response = requests.get(f"{self.otp_url}/plan", params=params)
-                        route_data = response.json()
-                        
-                        if 'plan' not in route_data or not route_data['plan']['itineraries']:
-                            continue
-                            
+                    if route_data and 'plan' in route_data and route_data['plan']['itineraries']:
                         itinerary = route_data['plan']['itineraries'][0]
-                        leg = itinerary['legs'][0]  # Car route should have single leg
-                        
-                        # Decode the polyline string into coordinates
-                        decoded_points = polyline.decode(leg['legGeometry']['points'])
+                        leg = itinerary['legs'][0]
                         
                         route_cache[cache_key] = {
-                            'points': decoded_points,  # Store decoded points
+                            'points': polyline.decode(leg['legGeometry']['points']),
                             'duration': leg['duration']
                         }
-                    except Exception as e:
-                        print(f"Error processing route: {e}")
-                        continue
                     
                     time.sleep(0.1)  # Rate limiting
                 
