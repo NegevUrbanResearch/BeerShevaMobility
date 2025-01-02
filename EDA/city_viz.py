@@ -68,6 +68,7 @@ class InnovationDistrictDashboard:
         .dashboard-header {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 10px;
             margin-bottom: 20px;
             padding: 0 20px;
@@ -89,14 +90,15 @@ class InnovationDistrictDashboard:
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.2em;
+            font-size: 1em;
         }
         .city-button:hover {
             background: #333;
         }
         .city-name {
-            font-size: 1.2em;
+            font-size: 1em;
             min-width: 150px;
+            text-align: center;
         }
         .charts-container {
             display: grid;
@@ -187,7 +189,7 @@ class InnovationDistrictDashboard:
                             padding: '12px',
                             border: '1px solid #333',
                             borderRadius: '4px',
-                            fontSize: '1.2em'
+                            fontSize: '1em'
                         }}>
                             <p style={{margin: '0', color: '#fff'}}>
                                 {`${payload[0].name}: ${payload[0].value.toLocaleString()} trips`}
@@ -254,7 +256,7 @@ class InnovationDistrictDashboard:
                 <div className="dashboard">
                     <div className="card">
                         <div className="dashboard-header">
-                            <h1 style={{margin: 0, fontSize: '1.5em'}}>
+                            <h1 style={{margin: 0, fontSize: '1em'}}>
                                 City Origins: 
                             </h1>
                             <div className="city-selector">
@@ -286,7 +288,7 @@ class InnovationDistrictDashboard:
 
                         <div className="charts-container">
                             <div className="chart-card">
-                                <h3 style={{textAlign: 'center', margin: '0 0 10px', color: '#fff', fontSize: '1.5em'}}>
+                                <h3 style={{textAlign: 'center', margin: '0 0 10px', color: '#fff', fontSize: '1em'}}>
                                     Destination Split
                                 </h3>
                                 <ResponsiveContainer width="125%" height="125%">
@@ -314,7 +316,7 @@ class InnovationDistrictDashboard:
                             </div>
                             
                             <div className="chart-card">
-                                <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1.5em', transform: 'translateX(-25%)'}}>
+                                <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1em', transform: 'translateX(-25%)'}}>
                                     Mode Split
                                 </h3>
                                 <ResponsiveContainer width="125%" height="125%">
