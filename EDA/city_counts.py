@@ -104,32 +104,39 @@ class InnovationDistrictAnalyzer:
             poi_trips = city_data.groupby('poi')['total_trips'].sum()
             poi_shares = poi_trips / total_trips
             
-            # Calculate innovation share using standardized names
+            # Calculate raw trips for each innovation district POI
+            raw_trips = {
+                'BGU_trips': poi_trips.get('Ben-Gurion-University', 0),
+                'Soroka_trips': poi_trips.get('Soroka-Medical-Center', 0),
+                'GavYam_trips': poi_trips.get('Gav-Yam-High-Tech-Park', 0),
+                'ID_trips': poi_trips.get('Soroka-Medical-Center', 0) + poi_trips.get('Ben-Gurion-University', 0) + poi_trips.get('Gav-Yam-High-Tech-Park', 0)
+            }
+            
+            # Calculate innovation share
             innovation_share = sum(poi_shares.get(poi, 0) 
                                 for poi in self.innovation_district_pois)
             
-            # Mode shares - FIXED calculation
+            # Mode shares calculation
             mode_cols = [col for col in city_data.columns if col.startswith('mode_')]
             mode_shares = {}
             
             for mode in mode_cols:
-                # Calculate the weighted average of mode shares
                 mode_shares[mode.replace('mode_', '')] = (
                     (city_data[mode] * city_data['total_trips']).sum() / 
                     city_data['total_trips'].sum()
-                )  # Already in percentage form if input data is in percentages
+                )
             
             stats = {
                 'city': city,
                 'total_trips': total_trips,
                 'innovation_share': innovation_share,
                 'poi_distribution': poi_shares.to_dict(),
-                'mode_shares': mode_shares
+                'mode_shares': mode_shares,
+                **raw_trips  # Add raw trip counts to stats
             }
             
             city_stats.append(stats)
             
-            # Store Beer Sheva data separately
             if city.lower() in ['beer sheva', 'be\'er sheva', 'beer-sheva']:
                 beer_sheva_data = stats
         
@@ -139,43 +146,33 @@ class InnovationDistrictAnalyzer:
         
         return {
             'city_data': results_df,
-            'narrative': self._generate_narrative(results_df, beer_sheva_data),
             'beer_sheva_stats': beer_sheva_data
         }
 
-    def _generate_narrative(self, df: pd.DataFrame, beer_sheva_stats: Dict) -> str:
-        """Generate narrative focusing on city mobility patterns"""
-        top_15 = df.head(15)
-        narrative = ["=== City Mobility Patterns Analysis ===\n"]
+    def run_analysis(self):
+        """Run the complete analysis and save results"""
+        logger.info("Starting innovation district mobility analysis...")
         
-        # Major cities section
-        narrative.append("Major Cities Trip Analysis")
-        narrative.append("------------------------\n")
+        # Load and process data
+        all_data = self.load_and_merge_data()
         
-        for _, row in top_15.iterrows():
-            poi_dist = row['poi_distribution']
-            
-            city_text = (
-                f"\n{row['city']}:"
-                f"\n  - Total trips: {row['total_trips']:,.1f}"
-                f"\n  - POI Distribution:"
-                f"\n    * BGU: {poi_dist.get('Ben-Gurion-University', 0)*100:.1f}%"
-                f"\n    * Soroka: {poi_dist.get('Soroka-Medical-Center', 0)*100:.1f}%"
-                f"\n    * Gav Yam: {poi_dist.get('Gav-Yam-High-Tech-Park', 0)*100:.1f}%"
-                f"\n    * BIG: {poi_dist.get('BIG', 0)*100:.1f}%"
-                f"\n    * HaNegev Mall: {poi_dist.get('HaNegev-Mall', 0)*100:.1f}%"
-                f"\n    * Emek Sara: {poi_dist.get('Emek-Sara-Industrial-Area', 0)*100:.1f}%"
-            )
-            
-            # Add mode split if available
-            if row.get('mode_shares'):
-                city_text += "\n  - Mode Split:"
-                for mode, share in row['mode_shares'].items():
-                    city_text += f"\n    * {mode}: {share:.1f}%"
-            
-            narrative.append(city_text)
+        # Run analysis
+        results = self.analyze_city_patterns(all_data)
         
-        return "\n".join(narrative)
+        # Save results with raw trip counts
+        top_15_df = results['city_data'].head(15)
+        
+        # Rearrange columns for better readability
+        columns_order = [
+            'city', 'total_trips', 'innovation_share',
+            'BGU_trips', 'Soroka_trips', 'GavYam_trips',
+            'poi_distribution', 'mode_shares'
+        ]
+        top_15_df = top_15_df[columns_order]
+        
+        top_15_df.to_csv(self.output_dir / 'top_15_cities_innovation_district.csv', index=False)
+        
+        return results
 
     def run_analysis(self):
         """Run the complete analysis and save results"""
@@ -190,16 +187,10 @@ class InnovationDistrictAnalyzer:
         # Save results
         top_15_df = results['city_data'].head(15)
         top_15_df.to_csv(self.output_dir / 'top_15_cities_innovation_district.csv', index=False)
-        
-        # Save narrative report
-        with open(self.output_dir / 'innovation_district_analysis.txt', 'w') as f:
-            f.write(results['narrative'])
-        
-        logger.info("Analysis complete. Results saved to output directory.")
-        print("\nNarrative Report:")
-        print(results['narrative'])
+        print('results saved to', self.output_dir / 'top_15_cities_innovation_district.csv')
         return results
 
 if __name__ == "__main__":
     analyzer = InnovationDistrictAnalyzer()
     results = analyzer.run_analysis()
+

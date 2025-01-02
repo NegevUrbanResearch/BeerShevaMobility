@@ -45,7 +45,9 @@ class SpatialMobilityAnalyzer:
         
         # Load and standardize zones
         self.zones = gpd.read_file(self.zones_file)
-        
+        print('jump here')
+        print(self.zones.columns)
+        print(self.zones['SHEM_YISHUV_ENGLISH'].head())
         # Add centroids if they don't exist
         if 'centroid_lon' not in self.zones.columns:
             print("Calculating zone centroids...")
