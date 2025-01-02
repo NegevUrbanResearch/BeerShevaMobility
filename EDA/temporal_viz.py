@@ -70,7 +70,7 @@ class TemporalVisualizationGenerator:
             'Ben-Gurion-University': '#FF6B6B',
             'Soroka-Medical-Center': '#4ECDC4',
             'Gav-Yam-High-Tech-Park': '#FFE66D',
-            'Beer-Sheva-Average': '#96CEB4'
+            'Beer-Sheva-Comparisons': '#96CEB4'
         };
 
         const CustomTooltip = ({ active, payload, label }) => {
@@ -236,17 +236,17 @@ class TemporalVisualizationGenerator:
             
             # Calculate Beer Sheva Average
             if general_poi_percentages:
-                hour_data['Beer-Sheva-Average'] = float(np.mean(general_poi_percentages))
-                print(f"Hour {hour} - City Average: {hour_data['Beer-Sheva-Average']:.3f} "
+                hour_data['Beer-Sheva-Comparisons'] = float(np.mean(general_poi_percentages))
+                print(f"Hour {hour} - City Average: {hour_data['Beer-Sheva-Comparisons']:.3f} "
                       f"(from {len(general_poi_percentages)} general POIs)")
             else:
-                hour_data['Beer-Sheva-Average'] = 0.0
+                hour_data['Beer-Sheva-Comparisons'] = 0.0
             
             temporal_data.append(hour_data)
         
         # Verify distributions sum to 1.0 (100%)
         print("\nVerifying distributions:")
-        for poi in analyzer.focus_pois + ['Beer-Sheva-Average']:
+        for poi in analyzer.focus_pois + ['Beer-Sheva-Comparisons']:
             total = sum(hour_data[poi] for hour_data in temporal_data)
             print(f"{poi} total: {total:.3f}")
             if not np.isclose(total, 1.0, atol=0.01):
