@@ -191,8 +191,8 @@ def get_html_template():
         const arcData = ARCDATA;
         
         // Time window in hours for showing active trips
-        const TIME_WINDOW = 0.5;  // 30 minutes window to show active trips
-        const ANIMATION_STEP = 0.002;  // Smaller step for slower time progression
+        const TIME_WINDOW = 0.25;  // Reduce to 15 minutes for more continuous appearance
+        const ANIMATION_STEP = 0.001;  // Slower animation
         
         // Animation state
         let isPlaying = false;
@@ -247,14 +247,17 @@ def get_html_template():
         function updateVisualization(time) {
             const activeArcs = getActiveArcs(time);
             
-            // Update statistics
-            const bguTrips = activeArcs.filter(arc => arc.destination === 'Ben-Gurion-University').length;
-            const sorokaTrips = activeArcs.filter(arc => arc.destination === 'Soroka-Medical-Center').length;
-            
-            document.getElementById('bguStats').textContent = `BGU Trips: ${bguTrips}`;
-            document.getElementById('sorokaStats').textContent = `Soroka Trips: ${sorokaTrips}`;
-            document.getElementById('totalStats').textContent = `Total Active Trips: ${activeArcs.length}`;
-            
+            // Create dots data for moving particles
+            const dotsData = activeArcs.map(arc => {
+                const progress = arc.progress;
+                return {
+                    sourcePosition: [arc.source_lon, arc.source_lat],
+                    targetPosition: [arc.target_lon, arc.target_lat],
+                    progress,
+                    destination: arc.destination
+                };
+            });
+
             // Create enhanced arc layer
             const arcLayer = new deck.ArcLayer({
                 id: 'arc-layer',
@@ -265,61 +268,62 @@ def get_html_template():
                 getSourceColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 255 * (1 - d.progress)];  // Fade based on progress
+                    return [...baseColor, 255];
                 },
                 getTargetColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 255 * d.progress];  // Intensify based on progress
+                    return [...baseColor, 255];
                 },
-                getWidth: d => 2 * (1 + d.progress),  // Reduced width for walking scale
-                getHeight: d => 1,  // Constant height
-                greatCircle: false,
-                widthScale: 1,
-                widthMinPixels: 1,
-                widthMaxPixels: 6,  // Reduced maximum width
-                parameters: {
-                    blend: true,
-                    blendFunc: [
-                        WebGLRenderingContext.SRC_ALPHA,
-                        WebGLRenderingContext.ONE  // Additive blending for glow effect
-                    ]
-                }
-            });
-            
-            // Add a second layer for the glowing trail effect
-            const trailLayer = new deck.ArcLayer({
-                id: 'trail-layer',
-                data: activeArcs,
-                pickable: false,
-                getSourcePosition: d => [d.source_lon, d.source_lat],
-                getTargetPosition: d => [d.target_lon, d.target_lat],
-                getSourceColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
-                },
-                getTargetColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
-                },
-                getWidth: d => 4,  // Reduced trail width
+                getWidth: 2,
+                getHeight: 2.0,
                 greatCircle: false,
                 widthScale: 1,
                 widthMinPixels: 2,
-                widthMaxPixels: 12,  // Reduced maximum trail width
-                parameters: {
-                    blend: true,
-                    blendFunc: [
-                        WebGLRenderingContext.SRC_ALPHA,
-                        WebGLRenderingContext.ONE
-                    ]
+                widthMaxPixels: 4
+            });
+
+            // Add moving dots layer with correct arc height interpolation
+            const dotsLayer = new deck.ScatterplotLayer({
+                id: 'dots-layer',
+                data: dotsData,
+                pickable: false,
+                opacity: 1,
+                stroked: false,
+                filled: true,
+                radiusScale: 1,
+                radiusMinPixels: 3,
+                radiusMaxPixels: 5,
+                getPosition: d => {
+                    const progress = d.progress;
+                    
+                    // Calculate the distance between source and target
+                    const dx = d.targetPosition[0] - d.sourcePosition[0];
+                    const dy = d.targetPosition[1] - d.sourcePosition[1];
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Parametric equations for arc
+                    const t = progress;
+                    const lng = d.sourcePosition[0] + dx * t;
+                    const lat = d.sourcePosition[1] + dy * t;
+                    
+                    // Use quadratic bezier curve for height
+                    const arcHeight = 2.0 * distance;  // Match arc layer height
+                    const height = arcHeight * 4 * t * (1 - t);  // Quadratic curve peak at t=0.5
+                    
+                    return [lng, lat, height];
+                },
+                getFillColor: d => {
+                    return d.destination === 'Ben-Gurion-University' ? 
+                        [0, 255, 255, 255] : [255, 150, 255, 255];
+                },
+                updateTriggers: {
+                    getPosition: [time]
                 }
             });
-            
+
             deckgl.setProps({
-                layers: [trailLayer, arcLayer]
+                layers: [arcLayer, dotsLayer]
             });
         }
         
@@ -370,12 +374,12 @@ def get_html_template():
             cancelAnimationFrame(animationFrame);
         });
         
-        // Modify speed slider for finer control
+        // Update animation speed settings
         speedSlider.min = "0.1";
-        speedSlider.max = "2";
+        speedSlider.max = "1.0";  // Reduce maximum speed
         speedSlider.step = "0.1";
-        speedSlider.value = "0.5";  // Start at half speed
-        animationSpeed = 0.5;  // Set initial animation speed
+        speedSlider.value = "0.3";  // Start at slower speed
+        animationSpeed = 0.3;  // Set initial animation speed
         
         // Initial update
         updateVisualization(currentTime);
