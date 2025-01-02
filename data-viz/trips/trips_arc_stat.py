@@ -168,7 +168,7 @@ def get_html_template():
     <div class="control-panel">
         <h3>Time Controls</h3>
         <div class="time-control-group">
-            <div id="currentTime">08:00</div>
+            <div id="currentTime">06:00</div>
             <input type="range" min="6" max="22" value="8" step="0.25" class="time-slider" id="timeSlider">
             <div class="button-group">
                 <button id="playButton" class="control-button">▶ Play</button>
@@ -191,14 +191,14 @@ def get_html_template():
         const arcData = ARCDATA;
         
         // Time window in hours for showing active trips
-        const TIME_WINDOW = 0.25;  // Reduce to 15 minutes for more continuous appearance
-        const ANIMATION_STEP = 0.001;  // Slower animation
+        const TIME_WINDOW = 0.25;  // 15 minutes for trip visibility
         
-        // Animation state
+        // Animation state and constants
         let isPlaying = false;
-        let currentTime = 8;  // Start at 8:00
+        let currentTime = 6;  // Start at 6:00
         let animationSpeed = 1;
         let animationFrame;
+        const ANIMATION_STEP = 0.01;  // How much time advances each frame
         
         // Mapbox configuration
         const MAPBOX_TOKEN = 'MAPBOX_API_KEY_PLACEHOLDER';  // Will be replaced by Python
@@ -229,23 +229,31 @@ def get_html_template():
         const NUM_SEGMENTS = 20;    // Number of segments for smooth animation
         
         function getActiveArcs(time) {
-            const windowStart = time - TIME_WINDOW;
-            const windowEnd = time;
-            
-            const activeArcs = arcData.filter(arc => {
-                const arcTime = arc.departure_time;
-                return arcTime >= windowStart && arcTime <= windowEnd;
-            }).map(arc => {
-                // Calculate progress based on time difference
-                const progress = Math.min(1, (time - arc.departure_time) / TIME_WINDOW);
-                return {...arc, progress};
-            });
-            
-            return activeArcs;
+            // Show only trips within the time window, but count all trips up to current time
+            return arcData.filter(arc => 
+                arc.departure_time <= time && 
+                arc.departure_time > time - TIME_WINDOW
+            );
+        }
+        
+        function getCumulativeCounts(time) {
+            // Count all trips that have occurred up to current time
+            const allTrips = arcData.filter(arc => arc.departure_time <= time);
+            return {
+                bgu: allTrips.filter(arc => arc.destination === 'Ben-Gurion-University').length,
+                soroka: allTrips.filter(arc => arc.destination === 'Soroka-Medical-Center').length,
+                total: allTrips.length
+            };
         }
         
         function updateVisualization(time) {
             const activeArcs = getActiveArcs(time);
+            const counts = getCumulativeCounts(time);
+            
+            // Update statistics
+            document.getElementById('bguStats').textContent = `BGU Trips: ${counts.bgu}`;
+            document.getElementById('sorokaStats').textContent = `Soroka Trips: ${counts.soroka}`;
+            document.getElementById('totalStats').textContent = `Total Trips: ${counts.total}`;
 
             // Create arc layer
             const arcLayer = new deck.ArcLayer({
@@ -273,7 +281,7 @@ def get_html_template():
             });
 
             deckgl.setProps({
-                layers: [arcLayer]  // Removed dotsLayer from array
+                layers: [arcLayer]
             });
         }
         
@@ -326,10 +334,10 @@ def get_html_template():
         
         // Update animation speed settings
         speedSlider.min = "0.1";
-        speedSlider.max = "1.0";  // Reduce maximum speed
+        speedSlider.max = "5.0";  // Allow faster speeds
         speedSlider.step = "0.1";
-        speedSlider.value = "0.3";  // Start at slower speed
-        animationSpeed = 0.3;  // Set initial animation speed
+        speedSlider.value = "1.0";  // Default speed
+        animationSpeed = 1.0;  // Set initial animation speed
         
         // Initial update
         updateVisualization(currentTime);
