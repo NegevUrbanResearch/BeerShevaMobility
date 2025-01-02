@@ -34,31 +34,23 @@ class CatchmentVisualizer:
         # Color scheme - consistent across all visualizations
         self.mode_colors = {
             'car': '#FF6B6B',       # Bright red
-            'transit': '#4ECDC4',   # Turquoise
-            'walk': '#FFE66D',      # Yellow
-            'bike': '#96CEB4',      # Sage green
-            'other': '#FFEEAD'      # Cream
-        }
-        
-        # Define mode order for layering (from top to bottom)
-        self.mode_order = ['walk', 'bike', 'car', 'transit']
-        
-        # Define style parameters
-        self.style_params = {
-            'single': {
-                'weight': 1,           # Thinner border
-                'fillOpacity': 0.4,    # Moderate fill opacity
-                'opacity': 0.3         # Very transparent border
-            },
-            'overlay': {
-                'weight': 1,           # Thinner border
-                'fillOpacity': 0.8,    # High fill opacity for better color visibility
-                'opacity': 0.6         # Semi-transparent border
-            }
+            'transit': '#4ECDC4',    # Turquoise
+            'walk': '#FFE66D',       # Yellow
+            'bike': '#96CEB4',       # Sage green
+            'other': '#FFEEAD'       # Cream
         }
         
         # Load Israel boundary for clipping
         self.israel_boundary = self._load_israel_boundary()
+        
+        # Add back style parameters
+        self.style_params = {
+            'single': {
+                'weight': 1,
+                'fillOpacity': 0.6,
+                'opacity': 0.8
+            }
+        }
 
     def _load_israel_boundary(self) -> gpd.GeoDataFrame:
         """Create a manually defined boundary polygon encompassing Israel and West Bank"""
@@ -184,15 +176,16 @@ class CatchmentVisualizer:
             return None
 
     def create_layered_catchment_map(self, poi_name: str) -> folium.Map:
-        """Create a map with layered catchment areas for all modes, ordered by size"""
+        """Create a map with layered catchment areas for all modes"""
         # Get POI coordinates
         poi_coords = self.focus_pois[poi_name]
         print(f"\nCreating layered catchment map for {poi_name}")
         
-        # Create base map
+        # Create base map with dark theme
         m = folium.Map(
             location=[poi_coords['lat'], poi_coords['lon']],
-            tiles='cartodbdark_matter'
+            tiles='cartodbdark_matter',
+            zoom_start=11
         )
         
         # Load POI data
@@ -200,8 +193,7 @@ class CatchmentVisualizer:
         if df is None:
             return m
             
-        # Track map bounds and catchments
-        all_bounds = []
+        # Track catchments
         catchments = []
         
         # Calculate catchments for all modes
@@ -210,7 +202,7 @@ class CatchmentVisualizer:
             print(f"\nProcessing {mode} mode...")
             
             # Calculate mode-specific trips
-            df_mode = df.copy()  # Create a copy for each mode
+            df_mode = df.copy()
             
             if mode == 'walk':
                 df_mode['mode_trips'] = df_mode['total_trips'] * df_mode['mode_ped']
@@ -220,13 +212,12 @@ class CatchmentVisualizer:
             else:
                 mode_col = f'mode_{mode}'
                 if mode_col not in mode_cols:
-                    print(f"Warning: Mode column {mode_col} not found")
                     continue
                 df_mode['mode_trips'] = df_mode['total_trips'] * df_mode[mode_col]
             
             # Prepare points and weights
             valid_data = df_mode.dropna(subset=['centroid_lon', 'centroid_lat'])
-            if len(valid_data) > 0:  # Only proceed if we have valid data
+            if len(valid_data) > 0:
                 points = list(zip(valid_data['centroid_lon'], valid_data['centroid_lat']))
                 weights = valid_data['mode_trips'].values
                 
@@ -238,40 +229,17 @@ class CatchmentVisualizer:
                 )
                 
                 if catchment is not None:
-                    # Store catchment with its area and mode
-                    area = catchment.area
                     catchments.append({
                         'mode': mode,
                         'polygon': catchment,
-                        'area': area
+                        'area': catchment.area
                     })
-                    
-                    # Track bounds
-                    all_bounds.extend([
-                        [catchment.bounds[1], catchment.bounds[0]],  # SW corner
-                        [catchment.bounds[3], catchment.bounds[2]]   # NE corner
-                    ])
         
-        # Sort catchments by area (smallest to largest)
-        catchments.sort(key=lambda x: x['area'])
+        # Sort catchments by area (largest to smallest)
+        catchments.sort(key=lambda x: x['area'], reverse=True)
         
-        # Process catchments to prevent overlap
-        processed_catchments = []
-        for i, current in enumerate(catchments):
-            current_poly = current['polygon']
-            # Cut out all smaller polygons from the current one
-            for smaller in catchments[:i]:
-                if smaller['polygon'].intersects(current_poly):
-                    current_poly = current_poly.difference(smaller['polygon'])
-            
-            processed_catchments.append({
-                'mode': current['mode'],
-                'polygon': current_poly,
-                'area': current['area']  # Keep original area for reference
-            })
-        
-        # Add processed catchments to map (now no overlaps)
-        for catchment_data in processed_catchments:
+        # Add catchments to map
+        for catchment_data in catchments:
             mode = catchment_data['mode']
             catchment = catchment_data['polygon']
             color = self.mode_colors[mode]
@@ -282,11 +250,10 @@ class CatchmentVisualizer:
                     style_function=lambda x, color=color: {
                         'fillColor': color,
                         'color': color,
-                        'fillOpacity': 0.8,  # Can use higher opacity now
                         'weight': 1,
-                        'opacity': 0.6
-                    },
-                    name=f"{mode.capitalize()} ({catchment_data['area']:.2f} sq deg)"
+                        'fillOpacity': 0.6,
+                        'opacity': 0.8
+                    }
                 ).add_to(m)
         
         # Add POI marker
@@ -297,13 +264,6 @@ class CatchmentVisualizer:
             fill=True,
             popup=poi_name
         ).add_to(m)
-        
-        # Fit map to bounds if we have them
-        if all_bounds:
-            m.fit_bounds(all_bounds, padding=(30, 30))
-        else:
-            m.location = [poi_coords['lat'], poi_coords['lon']]
-            m.zoom_start = 11
         
         return m
 
@@ -327,7 +287,7 @@ class CatchmentVisualizer:
             return m
         
         # Calculate trips by mode
-        df_mode = df.copy()  # Create a copy for mode-specific calculations
+        df_mode = df.copy()
         if mode:
             if mode == 'walk':
                 df_mode['mode_trips'] = df_mode['total_trips'] * df_mode['mode_ped']
@@ -362,7 +322,9 @@ class CatchmentVisualizer:
                 style_function=lambda x: {
                     'fillColor': color,
                     'color': color,
-                    **self.style_params['single']
+                    'weight': 1,
+                    'fillOpacity': 0.6,
+                    'opacity': 0.8
                 }
             ).add_to(m)
             
