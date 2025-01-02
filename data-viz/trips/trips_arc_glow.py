@@ -226,14 +226,28 @@ def get_html_template():
         
         // Add new constants for animation
         const TRAIL_LENGTH = 0.25;  // Length of the arc trail
-        const NUM_SEGMENTS = 20;    // Number of segments for smooth animation
+        const NUM_SEGMENTS = 1000;    // Number of segments for smooth animation
         
         function getActiveArcs(time) {
-            // Show only trips within the time window, but count all trips up to current time
-            return arcData.filter(arc => 
-                arc.departure_time <= time && 
-                arc.departure_time > time - TIME_WINDOW
-            );
+            // Show only trips within the time window, no progress tracking
+            return arcData.filter(arc => {
+                const timeSinceStart = time - arc.departure_time;
+                if (timeSinceStart < 0 || timeSinceStart > TIME_WINDOW) return false;
+                
+                // Calculate distance for base height offset
+                const dx = arc.target_lon - arc.source_lon;
+                const dy = arc.target_lat - arc.source_lat;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Generate a stable random offset based on departure time
+                const randomOffset = Math.abs(Math.sin(arc.departure_time * 1000)) * 2;
+                
+                // Store both the base height and glow height to ensure consistency
+                arc.baseHeight = 0.5 + distance + randomOffset;
+                arc.glowHeight = arc.baseHeight;
+                arc.opacity = Math.min(1, timeSinceStart / (TIME_WINDOW / 2));
+                return true;
+            });
         }
         
         function getCumulativeCounts(time) {
@@ -255,7 +269,7 @@ def get_html_template():
             document.getElementById('sorokaStats').textContent = `Soroka Trips: ${counts.soroka}`;
             document.getElementById('totalStats').textContent = `Total Trips: ${counts.total}`;
             
-            // Create enhanced arc layer
+            // Main arc layer
             const arcLayer = new deck.ArcLayer({
                 id: 'arc-layer',
                 data: activeArcs,
@@ -265,29 +279,30 @@ def get_html_template():
                 getSourceColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 255 * (1 - d.progress)];  // Fade based on progress
+                    return [...baseColor, 255 * d.opacity];
                 },
                 getTargetColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 255 * d.progress];  // Intensify based on progress
+                    return [...baseColor, 255 * d.opacity];
                 },
-                getWidth: d => 2 * (1 + d.progress),  // Reduced width for walking scale
-                getHeight: d => 1,  // Constant height
+                getWidth: 2,
+                getHeight: d => d.baseHeight,  // Use stored base height
                 greatCircle: false,
                 widthScale: 1,
                 widthMinPixels: 1,
-                widthMaxPixels: 6,  // Reduced maximum width
+                widthMaxPixels: 6,
                 parameters: {
                     blend: true,
                     blendFunc: [
                         WebGLRenderingContext.SRC_ALPHA,
-                        WebGLRenderingContext.ONE  // Additive blending for glow effect
-                    ]
+                        WebGLRenderingContext.ONE
+                    ],
+                    depthTest: true
                 }
             });
             
-            // Add a second layer for the glowing trail effect
+            // Glow trail layer
             const trailLayer = new deck.ArcLayer({
                 id: 'trail-layer',
                 data: activeArcs,
@@ -297,24 +312,26 @@ def get_html_template():
                 getSourceColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
+                    return [...baseColor, 50 * d.opacity];
                 },
                 getTargetColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
+                    return [...baseColor, 50 * d.opacity];
                 },
-                getWidth: d => 4,  // Reduced trail width
+                getWidth: 2,
+                getHeight: d => d.glowHeight,  // Use stored glow height
                 greatCircle: false,
                 widthScale: 1,
                 widthMinPixels: 2,
-                widthMaxPixels: 12,  // Reduced maximum trail width
+                widthMaxPixels: 12,
                 parameters: {
                     blend: true,
                     blendFunc: [
                         WebGLRenderingContext.SRC_ALPHA,
                         WebGLRenderingContext.ONE
-                    ]
+                    ],
+                    depthTest: true
                 }
             });
             
