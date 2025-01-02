@@ -73,24 +73,30 @@ class InnovationDistrictDashboard:
             padding: 0 20px;
         }
         .city-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
             margin-left: 0;
         }
-        .city-select {
-            padding: 8px 16px;
-            border-radius: 6px;
-            border: 1px solid #333;
+        .city-button {
             background: #222;
             color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
             cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 1.2em;
-            min-width: 200px;
         }
-        .city-select:hover {
+        .city-button:hover {
             background: #333;
         }
-        .city-select option {
-            padding: 8px;
-            background: #222;
+        .city-name {
+            font-size: 1.2em;
+            min-width: 150px;
         }
         .charts-container {
             display: grid;
@@ -139,12 +145,12 @@ class InnovationDistrictDashboard:
         };
 
         const modeColors = {
-            car: '#f87171',
-            bus: '#60a5fa',
-            bike: '#4ade80',
-            ped: '#a78bfa',
-            multimodal: '#fcd34d',
-            train: '#e879f9'
+            car: '#ef4444',      // Red for cars
+            bus: '#3b82f6',      // Blue for public transit
+            bike: '#22c55e',     // Green for active transport
+            ped: '#84cc16',      // Lime for active transport
+            multimodal: '#f59e0b', // Orange for mixed modes
+            train: '#6366f1'     // Indigo for rail transit
         };
 
         // Helper function to convert to proper case
@@ -235,7 +241,7 @@ class InnovationDistrictDashboard:
                         textAnchor={textAnchor}
                         dominantBaseline="central"
                         style={{ 
-                            fontSize: '0.75em',
+                            fontSize: '0.92em',
                             fontWeight: 'normal'
                         }}
                     >
@@ -249,35 +255,47 @@ class InnovationDistrictDashboard:
                     <div className="card">
                         <div className="dashboard-header">
                             <h1 style={{margin: 0, fontSize: '1.5em'}}>
-                                Origin: 
+                                City Origins: 
                             </h1>
                             <div className="city-selector">
-                                <select 
-                                    className="city-select"
-                                    value={selectedCity}
-                                    onChange={(e) => setSelectedCity(e.target.value)}
+                                <button 
+                                    className="city-button"
+                                    onClick={() => {
+                                        const cities = Object.keys(cityData);
+                                        const currentIndex = cities.indexOf(selectedCity);
+                                        const prevIndex = (currentIndex - 1 + cities.length) % cities.length;
+                                        setSelectedCity(cities[prevIndex]);
+                                    }}
                                 >
-                                    {Object.keys(cityData).map(city => (
-                                        <option key={city} value={city}>
-                                            {city}
-                                        </option>
-                                    ))}
-                                </select>
+                                    ←
+                                </button>
+                                <span className="city-name">{selectedCity}</span>
+                                <button 
+                                    className="city-button"
+                                    onClick={() => {
+                                        const cities = Object.keys(cityData);
+                                        const currentIndex = cities.indexOf(selectedCity);
+                                        const nextIndex = (currentIndex + 1) % cities.length;
+                                        setSelectedCity(cities[nextIndex]);
+                                    }}
+                                >
+                                    →
+                                </button>
                             </div>
                         </div>
 
                         <div className="charts-container">
                             <div className="chart-card">
-                                <h3 style={{textAlign: 'center', margin: '0 0 10px', color: '#fff', fontSize: '1.5em', transform: 'translateX(-25%)'}}>
+                                <h3 style={{textAlign: 'center', margin: '0 0 10px', color: '#fff', fontSize: '1.5em'}}>
                                     Destination Split
                                 </h3>
-                                <ResponsiveContainer width="200%" height="125%">
+                                <ResponsiveContainer width="125%" height="125%">
                                     <PieChart>
                                         <Pie
                                             data={destData}
                                             dataKey="value"
                                             nameKey="name"
-                                            cx="45%"
+                                            cx="50%"
                                             cy="50%"
                                             outerRadius={120}
                                             label={renderCustomizedLabel}
@@ -299,7 +317,7 @@ class InnovationDistrictDashboard:
                                 <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1.5em', transform: 'translateX(-25%)'}}>
                                     Mode Split
                                 </h3>
-                                <ResponsiveContainer width="200%" height="125%">
+                                <ResponsiveContainer width="125%" height="125%">
                                     <PieChart>
                                         <Pie
                                             data={modeData}
