@@ -193,27 +193,32 @@ def load_building_data():
         
         # Process buildings
         for idx, building in buildings_gdf.iterrows():
-            building_color = [80, 90, 100, 160]  # Default color
             try:
-                height = float(building.get('height', 20))
-                building_height = height * 1.5
-                
                 # Check if building intersects with any POI polygon
+                intersects_poi = False
+                building_color = None
+                building_height = None
+                
                 for poi_idx, poi_polygon in poi_polygons.iterrows():
                     if building.geometry.intersects(poi_polygon.geometry):
+                        intersects_poi = True
                         numeric_id = int(poi_polygon['ID'])
                         poi_name = POI_ID_MAP.get(numeric_id)
                         
                         if poi_name:
                             logger.debug(f"Building intersects with POI {numeric_id} ({poi_name})")
+                            height = float(building.get('height', 20))
                             building_height = min(40, height * 1000)
                             building_color = POI_INFO[poi_name]['color']
+                            break
                 
-                buildings_data.append({
-                    "polygon": list(building.geometry.exterior.coords),
-                    "height": building_height,
-                    "color": building_color
-                })
+                # Only add building if it intersects with a POI
+                if intersects_poi and building_color and building_height:
+                    buildings_data.append({
+                        "polygon": list(building.geometry.exterior.coords),
+                        "height": building_height,
+                        "color": building_color
+                    })
             except Exception as e:
                 logger.error(f"Skipping building due to error: {e}")
                 continue

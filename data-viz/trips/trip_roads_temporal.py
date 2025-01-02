@@ -6,36 +6,38 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import logging
-from config import BUILDINGS_FILE, MAPBOX_API_KEY, OUTPUT_DIR
+from config import BUILDINGS_FILE
 from shapely.geometry import Point
+from pyproj import Transformer
 import re
 import trip_html_template
-
-print(MAPBOX_API_KEY)
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load attraction centers and define POIs
+
+# Add parent directory to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import MAPBOX_API_KEY, OUTPUT_DIR
+
 attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
 poi_polygons = attractions[attractions['ID'].isin([11, 12, 7])]  # POI polygons
 poi_polygons_json = poi_polygons.to_json()
 POI_RADIUS = 0.0018  # about 200 meters in decimal degrees
 
-# POI information with colors
+# Update POI_INFO with even more contrasting colors and darker base buildings
 POI_INFO = {
-    'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},
-    'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},
-    'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}
+    'BGU': {'color': [0, 255, 90, 200], 'lat': 31.2614375, 'lon': 34.7995625},         # Brighter neon green
+    'Gav Yam': {'color': [0, 191, 255, 200], 'lat': 31.2641875, 'lon': 34.8128125},    # Deep sky blue
+    'Soroka Hospital': {'color': [170, 0, 255, 200], 'lat': 31.2579375, 'lon': 34.8003125}  # Deep purple
 }
 
-# ID to name mapping
+# Define the mapping between shapefile IDs and POI names
 POI_ID_MAP = {
     7: 'BGU',
     12: 'Gav Yam',
     11: 'Soroka Hospital'
 }
-
 def load_temporal_distributions():
     """Load temporal distribution data for each POI"""
     logger.info("Loading temporal distributions")
@@ -51,7 +53,9 @@ def load_temporal_distributions():
         file_path = os.path.join(OUTPUT_DIR, filename)
         try:
             df = pd.read_csv(file_path)
+            # Extract car distribution for business hours (6-22)
             dist = df[(df['hour'] >= 6) & (df['hour'] <= 22)]['car_dist'].values
+            # Normalize to ensure sum is 1.0
             dist = dist / dist.sum()
             distributions[poi_name] = dist
             logger.info(f"Loaded distribution for {poi_name}: sum={dist.sum():.3f}")
@@ -60,6 +64,8 @@ def load_temporal_distributions():
             raise
             
     return distributions
+        
+
 
 def load_trip_data():
     """Load and process trip data with optimized timing distribution"""
@@ -71,6 +77,7 @@ def load_trip_data():
         raw_trip_count = trips_gdf['num_trips'].sum()
         logger.info(f"Loaded {len(trips_gdf)} routes representing {raw_trip_count:,} total trips")
         
+        # Load temporal distributions
         temporal_dist = load_temporal_distributions()
         
         # Calculate center coordinates
@@ -84,6 +91,11 @@ def load_trip_data():
         hours_per_day = 16  # 6:00-22:00
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
+        
+        logger.info(f"Animation Configuration:")
+        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-22:00)")
+        logger.info(f"  - Frames per hour: {frames_per_hour}")
+        logger.info(f"  - Total frames: {animation_duration}")
         
         routes_data = []
         processed_trips = 0
@@ -110,15 +122,18 @@ def load_trip_data():
                 processed_trips += num_trips
                 path = [[float(x), float(y)] for x, y in coords]
                 
+                # Instead of creating individual trips, create route patterns
                 for hour_idx, hour_fraction in enumerate(temporal_dist[poi_name]):
                     hour_trips = round(num_trips * hour_fraction)
                     if hour_trips <= 0:
                         continue
                     
-                    num_patterns = min(5, max(1, hour_trips // 100))
+                    # Create a few staggered patterns per hour instead of individual trips
+                    num_patterns = min(5, max(1, hour_trips // 100))  # Scale patterns based on volume
                     trips_per_pattern = hour_trips / num_patterns
                     
                     for pattern in range(num_patterns):
+                        # Add some randomness to start time within the hour
                         start_offset = (pattern / num_patterns) * frames_per_hour + np.random.randint(-30, 30)
                         start_time = hour_idx * frames_per_hour + start_offset
                         
@@ -126,7 +141,7 @@ def load_trip_data():
                             'path': path,
                             'startTime': int(start_time),
                             'numTrips': trips_per_pattern,
-                            'duration': len(coords) * 2,
+                            'duration': len(coords) * 2,  # Base duration on path length
                             'poi': poi_name
                         })
                 
@@ -134,50 +149,72 @@ def load_trip_data():
                 logger.error(f"Error processing route {idx}: {str(e)}")
                 continue
         
+        logger.info(f"Created {len(routes_data)} route patterns")
+        logger.info(f"Original trips processed: {processed_trips:,}")
+        
         return routes_data, center_lat, center_lon, raw_trip_count, animation_duration
         
     except Exception as e:
         logger.error(f"Error loading trip data: {str(e)}")
         raise
+        
+    
+
 
 def load_building_data():
-    """Load building data for 3D visualization, filtering to only POI buildings"""
+    """Load building data for 3D visualization"""
     file_path = os.path.join(OUTPUT_DIR, "buildings.geojson")
     logger.info(f"Loading building data from: {file_path}")
     
     try:
         buildings_gdf = gpd.read_file(BUILDINGS_FILE)
+        
+        # Convert to format needed for deck.gl
         buildings_data = []
         text_features = []
         
-        # Process only buildings that intersect with POI areas
+        # Debug logging for POI polygons
+        logger.info(f"POI polygons IDs: {[p['ID'] for idx, p in poi_polygons.iterrows()]}")
+        
         for idx, building in buildings_gdf.iterrows():
             try:
                 # Check if building intersects with any POI polygon
+                intersects_poi = False
+                building_color = None
+                building_height = None
+                
                 for poi_idx, poi_polygon in poi_polygons.iterrows():
                     if building.geometry.intersects(poi_polygon.geometry):
+                        intersects_poi = True
                         numeric_id = int(poi_polygon['ID'])
                         poi_name = POI_ID_MAP.get(numeric_id)
                         
                         if poi_name:
-                            # Get height, default to 20 if not found
+                            logger.debug(f"Building intersects with POI {numeric_id} ({poi_name})")
                             height = float(building.get('height', 20))
-                            # Enhanced height for POI buildings
-                            building_height = min(40, height * 2)  # Reduced multiplier for better scaling
+                            building_height = min(40, height * 1000)
                             building_color = POI_INFO[poi_name]['color']
                             
-                            buildings_data.append({
-                                "polygon": list(building.geometry.exterior.coords),
-                                "height": building_height,
-                                "color": building_color
+                            # Add text label for POI
+                            text_features.append({
+                                "position": list(building.geometry.centroid.coords)[0] + (building_height + 10,),
+                                "text": poi_name,
+                                "color": [255, 255, 255, 255]
                             })
                             break
-                            
+                
+                # Only add building if it intersects with a POI
+                if intersects_poi and building_color and building_height:
+                    buildings_data.append({
+                        "polygon": list(building.geometry.exterior.coords),
+                        "height": building_height,
+                        "color": building_color
+                    })
             except Exception as e:
                 logger.error(f"Skipping building due to error: {e}")
                 continue
         
-        # Prepare POI borders and fills
+        # Prepare POI polygon borders and fills
         poi_borders = []
         poi_fills = []
         
@@ -186,6 +223,7 @@ def load_building_data():
             poi_name = POI_ID_MAP.get(numeric_id)
             
             if poi_name:
+                logger.info(f"Processing POI polygon: ID={numeric_id}, Name={poi_name}")
                 color = POI_INFO[poi_name]['color'][:3]
                 
                 poi_borders.append({
@@ -195,17 +233,24 @@ def load_building_data():
                 
                 poi_fills.append({
                     "polygon": list(poi_polygon.geometry.exterior.coords),
-                    "color": color + [50]   # Low opacity for fills
+                    "color": color + [100]  # Medium opacity for fills
                 })
+            else:
+                logger.warning(f"Unknown POI ID: {numeric_id}")
         
-        logger.info(f"Filtered to {len(buildings_data)} POI buildings")
-        logger.info(f"Created {len(poi_fills)} POI areas")
+        logger.info(f"Loaded {len(buildings_data)} buildings within POI zones")
+        logger.info(f"Created {len(poi_fills)} POI fill areas")
         return buildings_data, text_features, poi_borders, poi_fills
-    
     except Exception as e:
         logger.error(f"Error loading building data: {str(e)}")
         raise
 
+
+
+
+
+
+# Update the create_animation function to match parameter names
 def create_animation(html_template, map_style, output_suffix):
     trips_data, center_lat, center_lon, total_trips, animation_duration = load_trip_data()
     buildings_data, text_features, poi_borders, poi_fills = load_building_data()
@@ -229,12 +274,12 @@ def create_animation(html_template, map_style, output_suffix):
         'start_hour': 6,
         'end_hour': 22,
         'frames_per_hour': frames_per_hour,
-         'map_style': map_style
+        'map_style': map_style
     }
-    print(f"Using Mapbox token: {MAPBOX_API_KEY[:10]}...") 
+    
     try:
         formatted_html = html_template % format_values
-        output_path = os.path.join(OUTPUT_DIR, f"trip_animation_mapbox_{output_suffix}.html")
+        output_path = os.path.join(OUTPUT_DIR, f"trip_animation_time_{output_suffix}.html")
         with open(output_path, 'w') as f:
             f.write(formatted_html)
         logger.info(f"Animation saved to: {output_path}")
@@ -245,19 +290,48 @@ def create_animation(html_template, map_style, output_suffix):
 
 if __name__ == "__main__":
     try:
-        # Define Mapbox styles
+        # Updated map styles with CORS support and place names
         MAP_STYLES = {
-    'dark': 'mapbox://styles/mapbox/dark-v11',
-    'light': 'mapbox://styles/mapbox/light-v11',
-    'streets': 'mapbox://styles/mapbox/streets-v12',
-    'satellite': 'mapbox://styles/mapbox/satellite-streets-v12'
-}
+            'dark_matter': 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            'dark_nolabels': 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+            'positron': 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+            'voyager': 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+            'dark_all': 'https://api.maptiler.com/maps/night/style.json?key=GnqbOrn8e3f2dldaHF31',  # Dark with all labels
+            'toner': {
+                'style': 'https://api.maptiler.com/maps/toner/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'toner_dark': {
+                'style': 'https://api.maptiler.com/maps/toner-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'basic_dark': {
+                'style': 'https://api.maptiler.com/maps/basic-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            },
+            'dataviz_dark': {
+                'style': 'https://api.maptiler.com/maps/dataviz-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
+                'attribution': '© MapTiler © OpenStreetMap contributors'
+            }
+        }
         
         # Generate an animation for each map style
-        for suffix, style_url in MAP_STYLES.items():
-            output_file = create_animation(trip_html_template.HTML_TEMPLATE, style_url, suffix)
+        for suffix, style_info in MAP_STYLES.items():
+            # Handle both simple string styles and dictionary style configs
+            if isinstance(style_info, dict):
+                map_style = style_info['style']
+            else:
+                map_style = style_info
+                
+            # Modify the HTML template to use the current map style
+            modified_template = trip_html_template.HTML_TEMPLATE.replace(
+                "MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json'",
+                f"MAP_STYLE = '{map_style}'"
+            )
+            
+            output_file = create_animation(modified_template, map_style, suffix)
             print(f"Animation with {suffix} style saved to: {output_file}")
             
     except Exception as e:
         logger.error(f"Failed to create animations: {str(e)}")
-        sys.exit(1)
+        sys.exit(1) 
