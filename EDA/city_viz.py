@@ -196,10 +196,10 @@ class InnovationDistrictDashboard:
 
             const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, fill, payload, index }) => {
                 // Skip labels for very small segments (less than 0.1%)
-                if (percent < 0.001) return null;
+                if (percent < 0.01) return null;
 
                 const RADIAN = Math.PI / 180;
-                const radius = outerRadius * 1.15; // Consistent radius for all labels
+                const radius = outerRadius * 1.12; // Consistent radius for all labels
                 
                 // Calculate the base angle position
                 let currentAngle = midAngle;
@@ -225,7 +225,7 @@ class InnovationDistrictDashboard:
                 
                 const textAnchor = x > cx ? 'start' : 'end';
                 
-                const label = `${name} (${(percent * 100).toFixed(1)}%)`;
+                const label = `${name} ${(percent * 100).toFixed(1)}%`;
                 
                 return (
                     <text 
@@ -248,7 +248,7 @@ class InnovationDistrictDashboard:
                 <div className="dashboard">
                     <div className="card">
                         <div className="dashboard-header">
-                            <h1 style={{margin: 0, fontSize: '1.8em'}}>
+                            <h1 style={{margin: 0, fontSize: '1.5em'}}>
                                 Origin: 
                             </h1>
                             <div className="city-selector">
@@ -268,16 +268,16 @@ class InnovationDistrictDashboard:
 
                         <div className="charts-container">
                             <div className="chart-card">
-                                <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1.8em'}}>
+                                <h3 style={{textAlign: 'center', margin: '0 0 10px', color: '#fff', fontSize: '1.5em', transform: 'translateX(-25%)'}}>
                                     Destination Split
                                 </h3>
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="200%" height="125%">
                                     <PieChart>
                                         <Pie
                                             data={destData}
                                             dataKey="value"
                                             nameKey="name"
-                                            cx="50%"
+                                            cx="45%"
                                             cy="50%"
                                             outerRadius={120}
                                             label={renderCustomizedLabel}
@@ -296,16 +296,16 @@ class InnovationDistrictDashboard:
                             </div>
                             
                             <div className="chart-card">
-                                <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1.8em'}}>
+                                <h3 style={{textAlign: 'center', margin: '0 0 20px', color: '#fff', fontSize: '1.5em', transform: 'translateX(-25%)'}}>
                                     Mode Split
                                 </h3>
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="200%" height="125%">
                                     <PieChart>
                                         <Pie
                                             data={modeData}
                                             dataKey="value"
                                             nameKey="name"
-                                            cx="50%"
+                                            cx="45%"
                                             cy="50%"
                                             outerRadius={120}
                                             label={renderCustomizedLabel}
