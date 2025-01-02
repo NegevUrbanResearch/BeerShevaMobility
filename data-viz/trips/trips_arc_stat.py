@@ -181,18 +181,18 @@ def get_html_template():
         </div>
     </div>
     <div class="stats-panel">
-        <h3>Cumulative Statistics</h3>
-        <div id="bguStats" class="stat-row bgu-stat">BGU Total Trips: 0</div>
-        <div id="sorokaStats" class="stat-row soroka-stat">Soroka Total Trips: 0</div>
-        <div id="totalStats" class="stat-row">Total Trips: 0</div>
+        <h3>Current Statistics</h3>
+        <div id="bguStats" class="stat-row bgu-stat">BGU Trips: 0</div>
+        <div id="sorokaStats" class="stat-row soroka-stat">Soroka Trips: 0</div>
+        <div id="totalStats" class="stat-row">Total Active Trips: 0</div>
     </div>
     <script>
         // Arc data
         const arcData = ARCDATA;
         
         // Time window in hours for showing active trips
-        const TIME_WINDOW = 0.5;  // 30 minutes window to show active trips
-        const ANIMATION_STEP = 0.002;  // Smaller step for slower time progression
+        const TIME_WINDOW = 0.25;  // Reduce to 15 minutes for more continuous appearance
+        const ANIMATION_STEP = 0.001;  // Slower animation
         
         // Animation state
         let isPlaying = false;
@@ -225,14 +225,18 @@ def get_html_template():
         });
         
         // Add new constants for animation
-        const TRAIL_LENGTH = 5;  // Length of the arc trail
-        const NUM_SEGMENTS = 2000;    // Number of segments for smooth animation
+        const TRAIL_LENGTH = 0.25;  // Length of the arc trail
+        const NUM_SEGMENTS = 20;    // Number of segments for smooth animation
         
         function getActiveArcs(time) {
+            const windowStart = time - TIME_WINDOW;
+            const windowEnd = time;
+            
             const activeArcs = arcData.filter(arc => {
                 const arcTime = arc.departure_time;
-                return arcTime <= time;
+                return arcTime >= windowStart && arcTime <= windowEnd;
             }).map(arc => {
+                // Calculate progress based on time difference
                 const progress = Math.min(1, (time - arc.departure_time) / TIME_WINDOW);
                 return {...arc, progress};
             });
@@ -242,15 +246,8 @@ def get_html_template():
         
         function updateVisualization(time) {
             const activeArcs = getActiveArcs(time);
-            
-            const bguTrips = activeArcs.filter(arc => arc.destination === 'Ben-Gurion-University').length;
-            const sorokaTrips = activeArcs.filter(arc => arc.destination === 'Soroka-Medical-Center').length;
-            
-            document.getElementById('bguStats').textContent = `BGU Total Trips: ${bguTrips}`;
-            document.getElementById('sorokaStats').textContent = `Soroka Total Trips: ${sorokaTrips}`;
-            document.getElementById('totalStats').textContent = `Total Trips: ${activeArcs.length}`;
-            
-            // Create enhanced arc layer
+
+            // Create arc layer
             const arcLayer = new deck.ArcLayer({
                 id: 'arc-layer',
                 data: activeArcs,
@@ -260,61 +257,23 @@ def get_html_template():
                 getSourceColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 255 * (1 - d.progress)];  // Fade based on progress
+                    return [...baseColor, 255];
                 },
                 getTargetColor: d => {
                     const baseColor = d.destination === 'Ben-Gurion-University' ? 
                         [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 255 * d.progress];  // Intensify based on progress
+                    return [...baseColor, 255];
                 },
-                getWidth: d => 2 * (1 + d.progress),  // Reduced width for walking scale
-                getHeight: d => 1,  // Constant height
+                getWidth: 2,
+                getHeight: 2.0,
                 greatCircle: false,
                 widthScale: 1,
                 widthMinPixels: 2,
-                widthMaxPixels: 2,  // Reduced maximum width
-                parameters: {
-                    blend: true,
-                    blendFunc: [
-                        WebGLRenderingContext.SRC_ALPHA,
-                        WebGLRenderingContext.ONE  // Additive blending for glow effect
-                    ]
-                }
+                widthMaxPixels: 4
             });
-            
-            // Add a second layer for the glowing trail effect
-            const trailLayer = new deck.ArcLayer({
-                id: 'trail-layer',
-                data: activeArcs,
-                pickable: false,
-                getSourcePosition: d => [d.source_lon, d.source_lat],
-                getTargetPosition: d => [d.target_lon, d.target_lat],
-                getSourceColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 210, 255] : [255, 100, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
-                },
-                getTargetColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 150, 255] : [200, 50, 255];
-                    return [...baseColor, 50];  // Low opacity for trail
-                },
-                getWidth: d => 4,  // Reduced trail width
-                greatCircle: false,
-                widthScale: 1,
-                widthMinPixels: 2,
-                widthMaxPixels: 12,  // Reduced maximum trail width
-                parameters: {
-                    blend: true,
-                    blendFunc: [
-                        WebGLRenderingContext.SRC_ALPHA,
-                        WebGLRenderingContext.ONE
-                    ]
-                }
-            });
-            
+
             deckgl.setProps({
-                layers: [trailLayer, arcLayer]
+                layers: [arcLayer]  // Removed dotsLayer from array
             });
         }
         
@@ -365,12 +324,12 @@ def get_html_template():
             cancelAnimationFrame(animationFrame);
         });
         
-        // Modify speed slider for finer control
+        // Update animation speed settings
         speedSlider.min = "0.1";
-        speedSlider.max = "2";
+        speedSlider.max = "1.0";  // Reduce maximum speed
         speedSlider.step = "0.1";
-        speedSlider.value = "0.5";  // Start at half speed
-        animationSpeed = 0.5;  // Set initial animation speed
+        speedSlider.value = "0.3";  // Start at slower speed
+        animationSpeed = 0.3;  // Set initial animation speed
         
         // Initial update
         updateVisualization(currentTime);
