@@ -179,21 +179,22 @@ def load_building_data():
         for idx, building in buildings_gdf.iterrows():
             try:
                 # Check if building intersects with any POI polygon
-                intersects_poi = False
-                building_color = None
-                building_height = None
-                
                 for poi_idx, poi_polygon in poi_polygons.iterrows():
                     if building.geometry.intersects(poi_polygon.geometry):
-                        intersects_poi = True
                         numeric_id = int(poi_polygon['ID'])
                         poi_name = POI_ID_MAP.get(numeric_id)
                         
                         if poi_name:
-                            logger.debug(f"Building intersects with POI {numeric_id} ({poi_name})")
+                            # Get actual height from building data, default to 20 if not found
                             height = float(building.get('height', 20))
                             building_height = min(40, height * 1000)
                             building_color = POI_INFO[poi_name]['color']
+                            
+                            buildings_data.append({
+                                "polygon": list(building.geometry.exterior.coords),
+                                "height": building_height,
+                                "color": building_color
+                            })
                             
                             # Add text label for POI
                             text_features.append({
@@ -202,14 +203,7 @@ def load_building_data():
                                 "color": [255, 255, 255, 255]
                             })
                             break
-                
-                # Only add building if it intersects with a POI
-                if intersects_poi and building_color and building_height:
-                    buildings_data.append({
-                        "polygon": list(building.geometry.exterior.coords),
-                        "height": building_height,
-                        "color": building_color
-                    })
+                            
             except Exception as e:
                 logger.error(f"Skipping building due to error: {e}")
                 continue
@@ -219,12 +213,12 @@ def load_building_data():
         poi_fills = []
         
         for poi_idx, poi_polygon in poi_polygons.iterrows():
-            numeric_id = int(poi_polygon['ID'])
+            numeric_id = int(poi_polygon['ID'])  # Ensure numeric ID is int
             poi_name = POI_ID_MAP.get(numeric_id)
             
             if poi_name:
                 logger.info(f"Processing POI polygon: ID={numeric_id}, Name={poi_name}")
-                color = POI_INFO[poi_name]['color'][:3]
+                color = POI_INFO[poi_name]['color'][:3]  # Get RGB values
                 
                 poi_borders.append({
                     "polygon": list(poi_polygon.geometry.exterior.coords),
@@ -238,7 +232,7 @@ def load_building_data():
             else:
                 logger.warning(f"Unknown POI ID: {numeric_id}")
         
-        logger.info(f"Loaded {len(buildings_data)} buildings within POI zones")
+        logger.info(f"Loaded {len(buildings_data)} buildings")
         logger.info(f"Created {len(poi_fills)} POI fill areas")
         return buildings_data, text_features, poi_borders, poi_fills
     except Exception as e:
@@ -296,23 +290,6 @@ if __name__ == "__main__":
             'dark_nolabels': 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
             'positron': 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
             'voyager': 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-            'dark_all': 'https://api.maptiler.com/maps/night/style.json?key=GnqbOrn8e3f2dldaHF31',  # Dark with all labels
-            'toner': {
-                'style': 'https://api.maptiler.com/maps/toner/style.json?key=GnqbOrn8e3f2dldaHF31',
-                'attribution': '© MapTiler © OpenStreetMap contributors'
-            },
-            'toner_dark': {
-                'style': 'https://api.maptiler.com/maps/toner-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
-                'attribution': '© MapTiler © OpenStreetMap contributors'
-            },
-            'basic_dark': {
-                'style': 'https://api.maptiler.com/maps/basic-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
-                'attribution': '© MapTiler © OpenStreetMap contributors'
-            },
-            'dataviz_dark': {
-                'style': 'https://api.maptiler.com/maps/dataviz-dark/style.json?key=GnqbOrn8e3f2dldaHF31',
-                'attribution': '© MapTiler © OpenStreetMap contributors'
-            }
         }
         
         # Generate an animation for each map style

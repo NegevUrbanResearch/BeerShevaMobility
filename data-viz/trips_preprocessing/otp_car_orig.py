@@ -43,11 +43,14 @@ class RouteModeler:
         
         self.load_data()
         
-        # Load and store POI polygons
+        # Load and store POI polygons - Only BGU and Soroka for avoidance
         attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # BGU and Soroka
+        # Keep BGU and Soroka for avoidance, but load Gav Yam for destination
+        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # Only BGU and Soroka for avoidance
+        self.all_pois = attractions[attractions['ID'].isin([11, 7, 12])]  # Include Gav Yam for destinations
         if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
             self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
+            self.all_pois = self.all_pois.to_crs("EPSG:4326")
             
     def load_data(self):
         """Load and process all required data"""
@@ -199,12 +202,13 @@ class RouteModeler:
         # Map POI names to IDs
         poi_name_to_id = {
             'Ben-Gurion-University': 11,
-            'Soroka-Medical-Center': 7
+            'Soroka-Medical-Center': 7,
+            'Gav-Yam-High-Tech-Park': 12  # Add Gav Yam mapping
         }
         
         # Determine which polygons to avoid based on origin/destination containment
         avoid_polygons = []
-        for _, poi in self.poi_polygons.iterrows():
+        for _, poi in self.poi_polygons.iterrows():  # Only iterate through BGU and Soroka
             # If this POI contains either the origin or destination, allow routing through it
             if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
                 continue
@@ -295,10 +299,11 @@ class RouteModeler:
         route_cache = {}
         departure_time = datetime.now().replace(hour=8, minute=0, second=0)
         
-        # Define main POIs using standardized names
+        # Define main POIs using standardized names - now including Gav Yam
         main_pois = [
             'Ben-Gurion-University',
-            'Soroka-Medical-Center'
+            'Soroka-Medical-Center',
+            'Gav-Yam-High-Tech-Park'  # Add Gav Yam
         ]
         
         print("\nProcessing routes for main POIs:")
