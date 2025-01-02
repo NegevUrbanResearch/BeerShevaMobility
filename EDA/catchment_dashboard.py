@@ -6,7 +6,7 @@ class CatchmentDashboard:
     def __init__(self):
         self.project_root = Path(__file__).parent
         self.maps_dir = self.project_root / "output" / "catchment_maps"
-        self.output_dir = self.project_root / "output" / "dashboard"
+        self.output_dir = self.project_root / "output" / "catchment_dashboard"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Define POIs with display names and file names
