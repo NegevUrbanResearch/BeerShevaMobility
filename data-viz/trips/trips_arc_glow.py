@@ -191,14 +191,14 @@ def get_html_template():
         const arcData = ARCDATA;
         
         // Time window in hours for showing active trips
-        const TIME_WINDOW = 0.5;  // 30 minutes window to show active trips
-        const ANIMATION_STEP = 0.002;  // Smaller step for slower time progression
+        const TIME_WINDOW = 0.25;  // 15 minutes for trip visibility
         
-        // Animation state
+        // Animation state and constants
         let isPlaying = false;
-        let currentTime = 8;  // Start at 8:00
+        let currentTime = 6;  // Start at 6:00
         let animationSpeed = 1;
         let animationFrame;
+        const ANIMATION_STEP = 0.01;  // How much time advances each frame
         
         // Mapbox configuration
         const MAPBOX_TOKEN = 'MAPBOX_API_KEY_PLACEHOLDER';  // Will be replaced by Python
@@ -229,31 +229,31 @@ def get_html_template():
         const NUM_SEGMENTS = 20;    // Number of segments for smooth animation
         
         function getActiveArcs(time) {
-            const windowStart = time - TIME_WINDOW;
-            const windowEnd = time;
-            
-            const activeArcs = arcData.filter(arc => {
-                const arcTime = arc.departure_time;
-                return arcTime >= windowStart && arcTime <= windowEnd;
-            }).map(arc => {
-                // Calculate progress based on time difference
-                const progress = Math.min(1, (time - arc.departure_time) / TIME_WINDOW);
-                return {...arc, progress};
-            });
-            
-            return activeArcs;
+            // Show only trips within the time window, but count all trips up to current time
+            return arcData.filter(arc => 
+                arc.departure_time <= time && 
+                arc.departure_time > time - TIME_WINDOW
+            );
+        }
+        
+        function getCumulativeCounts(time) {
+            // Count all trips that have occurred up to current time
+            const allTrips = arcData.filter(arc => arc.departure_time <= time);
+            return {
+                bgu: allTrips.filter(arc => arc.destination === 'Ben-Gurion-University').length,
+                soroka: allTrips.filter(arc => arc.destination === 'Soroka-Medical-Center').length,
+                total: allTrips.length
+            };
         }
         
         function updateVisualization(time) {
             const activeArcs = getActiveArcs(time);
+            const counts = getCumulativeCounts(time);
             
             // Update statistics
-            const bguTrips = activeArcs.filter(arc => arc.destination === 'Ben-Gurion-University').length;
-            const sorokaTrips = activeArcs.filter(arc => arc.destination === 'Soroka-Medical-Center').length;
-            
-            document.getElementById('bguStats').textContent = `BGU Trips: ${bguTrips}`;
-            document.getElementById('sorokaStats').textContent = `Soroka Trips: ${sorokaTrips}`;
-            document.getElementById('totalStats').textContent = `Total Active Trips: ${activeArcs.length}`;
+            document.getElementById('bguStats').textContent = `BGU Trips: ${counts.bgu}`;
+            document.getElementById('sorokaStats').textContent = `Soroka Trips: ${counts.soroka}`;
+            document.getElementById('totalStats').textContent = `Total Trips: ${counts.total}`;
             
             // Create enhanced arc layer
             const arcLayer = new deck.ArcLayer({
@@ -433,7 +433,7 @@ def create_arc_visualization(input_file, output_dir):
         html_content = template.replace('ARCDATA', json.dumps(arc_data))
         
         # Save visualization
-        output_file = os.path.join(output_dir, "walking_arc_visualization.html")
+        output_file = os.path.join(output_dir, "walking_arc_visualization_glow.html")
         with open(output_file, 'w') as f:
             f.write(html_content)
             
