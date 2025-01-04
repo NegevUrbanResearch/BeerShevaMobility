@@ -3,6 +3,7 @@ import geopandas as gpd
 import requests
 import json
 from shapely.geometry import Point, LineString
+from shapely import wkt
 import numpy as np
 from datetime import datetime
 import time
@@ -32,39 +33,22 @@ class OTPClient:
         
         # Load and store POI polygons with their IDs
         attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-        # BGU (11) and Soroka (7)
+        # BGU (7) and Soroka (11)
         self.poi_polygons = attractions[attractions['ID'].isin([11, 7])].copy()
         if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
             self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
     
     def get_walking_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None, origin_poi=None):
         """
-        Query OTP for a walking route with retries.
-        
-        Parameters:
-        - from_lat, from_lon: Origin coordinates
-        - to_lat, to_lon: Destination coordinates
-        - destination_poi: Name of destination POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
-        - origin_poi: Name of origin POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
+        Query OTP for a walking route with enhanced avoidance parameters.
         """
-        # Validate coordinates before processing
-        from_lat, from_lon, valid_origin = CoordinateValidator.validate_wgs84(
-            from_lat, from_lon, use_beer_sheva_bounds=True
-        )
-        to_lat, to_lon, valid_dest = CoordinateValidator.validate_wgs84(
-            to_lat, to_lon, use_beer_sheva_bounds=True
-        )
-        
-        if not (valid_origin and valid_dest):
-            logger.debug("Using adjusted coordinates for routing")
-        
         point_origin = Point(from_lon, from_lat)
         point_dest = Point(to_lon, to_lat)
         
         # Map POI names to IDs
         poi_name_to_id = {
-            'Ben-Gurion-University': 11,
-            'Soroka-Medical-Center': 7
+            'Ben-Gurion-University': 7,
+            'Soroka-Medical-Center': 11
         }
         
         # Determine which polygons to avoid
@@ -74,13 +58,19 @@ class OTPClient:
             if (origin_poi and poi_name_to_id.get(origin_poi) == poi['ID']) or \
                (destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']):
                 continue
-                
-            # Otherwise, prevent routing through this POI
-            avoid_polygons.append(poi.geometry.wkt)
             
-        # Create avoidance string if needed
-        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            # Ensure the polygon is valid and properly formatted
+            if not poi.geometry.is_valid:
+                poi.geometry = poi.geometry.buffer(0)
             
+            # Add polygon to avoidance list with specific cost multiplier
+            avoid_polygons.append({
+                'geometry': poi.geometry.wkt,
+                'id': poi['ID'],
+                'penalty': 1000000  # Very high penalty for crossing avoided areas
+            })
+        
+        # Create enhanced routing parameters
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
@@ -88,13 +78,29 @@ class OTPClient:
             'date': datetime.now().strftime('%Y-%m-%d'),
             'time': '09:00:00',
             'arriveBy': 'false',
-            'walkSpeed': 1.4
+            'walkSpeed': 1.4,
+            'maxWalkDistance': 10000,  # Allow longer walks to find routes around avoided areas
+            'walkReluctance': 1,  # Keep normal walking reluctance
+            'alightSlack': 0,     # No slack time for getting off transit
+            'transferSlack': 0,   # No slack time for transfers
+            'maxTransfers': 0,    # Prevent any transit transfers
+            'wheelchair': 'false',
+            'locale': 'en'
         }
         
-        # Add polygon avoidance if needed
-        if avoid_str:
-            params['avoid'] = avoid_str
-            
+        # Add avoidance parameters
+        if avoid_polygons:
+            # Create more aggressive avoidance strings
+            avoid_str = '|'.join(f"{p['geometry']}::{p['penalty']}" for p in avoid_polygons)
+            params.update({
+                'avoid': avoid_str,
+                'walkOnStreetReluctance': 1,    # Normal street walking
+                'turnReluctance': 1,            # Normal turns
+                'traversalCostMultiplier': 1,   # Normal traversal
+                'nonpreferredCost': 1000000,    # Very high cost for non-preferred routes
+                'maxPreTransitTime': 1800       # 30 minutes max pre-transit time
+            })
+        
         for attempt in range(self.max_retries):
             try:
                 response = requests.get(
@@ -108,6 +114,19 @@ class OTPClient:
                     if 'error' in data or 'plan' not in data:
                         logger.warning(f"OTP returned invalid response: {data.get('error', 'No plan found')}")
                         return None
+                    
+                    # Validate the route doesn't cross avoided areas
+                    if 'plan' in data and 'itineraries' in data['plan']:
+                        itinerary = data['plan']['itineraries'][0]
+                        route_points = polyline.decode(itinerary['legs'][0]['legGeometry']['points'])
+                        route_line = LineString([(lon, lat) for lat, lon in route_points])
+                        
+                        # Check if route intersects with any avoided polygons
+                        for avoid_poly in avoid_polygons:
+                            if route_line.intersects(wkt.loads(avoid_poly['geometry'])):
+                                logger.warning(f"Route intersects avoided polygon {avoid_poly['id']}, retrying...")
+                                return None
+                    
                     return data
                 elif response.status_code == 429:  # Too Many Requests
                     wait_time = (attempt + 1) * self.retry_delay
