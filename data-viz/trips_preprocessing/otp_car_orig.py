@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime
 import time
 from tqdm import tqdm
+from shapely import wkt
 import os
 import sys
 import logging
@@ -43,14 +44,11 @@ class RouteModeler:
         
         self.load_data()
         
-        # Load and store POI polygons - Only BGU and Soroka for avoidance
+        # Load and store POI polygons
         attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-        # Keep BGU and Soroka for avoidance, but load Gav Yam for destination
-        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # Only BGU and Soroka for avoidance
-        self.all_pois = attractions[attractions['ID'].isin([11, 7, 12])]  # Include Gav Yam for destinations
+        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # BGU and Soroka
         if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
             self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
-            self.all_pois = self.all_pois.to_crs("EPSG:4326")
             
     def load_data(self):
         """Load and process all required data"""
@@ -193,7 +191,7 @@ class RouteModeler:
             return None
     
     def get_car_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
-        """Query OTP for a driving route with POI avoidance"""
+        """Query OTP for a driving route with enhanced avoidance parameters"""
         logger.debug(f"Attempting route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
         
         point_origin = Point(from_lon, from_lat)
@@ -202,42 +200,52 @@ class RouteModeler:
         # Map POI names to IDs
         poi_name_to_id = {
             'Ben-Gurion-University': 11,
-            'Soroka-Medical-Center': 7,
-            'Gav-Yam-High-Tech-Park': 12  # Add Gav Yam mapping
+            'Soroka-Medical-Center': 7
         }
         
-        # Determine which polygons to avoid based on origin/destination containment
+        # Determine which polygons to avoid with specific penalties
         avoid_polygons = []
-        for _, poi in self.poi_polygons.iterrows():  # Only iterate through BGU and Soroka
+        for _, poi in self.poi_polygons.iterrows():
+            # Only allow routing through POI if it's explicitly the destination POI
+            if (destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']):
+                continue
+            
             # If this POI contains either the origin or destination, allow routing through it
             if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
                 continue
-                
-            # If this is destination POI's entrance point, allow routing through it
-            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
-                continue
-                
-            # Otherwise, prevent routing through this POI
-            avoid_polygons.append(poi.geometry.wkt)
             
-        # Create avoidance string if needed
-        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            # Ensure the polygon is valid and properly formatted
+            if not poi.geometry.is_valid:
+                poi.geometry = poi.geometry.buffer(0)
             
+            # Add polygon to avoidance list with specific penalty
+            avoid_polygons.append({
+                'geometry': poi.geometry.wkt,
+                'id': poi['ID'],
+                'penalty': 1000000  # Very high penalty for crossing avoided areas
+            })
+        
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
             'mode': 'CAR',
             'date': datetime.now().strftime('%Y-%m-%d'),
             'time': '09:00:00',
-            'arriveBy': 'false'
+            'arriveBy': 'false',
+            'locale': 'en'
         }
         
-        # Add polygon avoidance if needed
-        if avoid_str:
-            params['walkReluctance'] = 20
-            params['triangleTimeFactor'] = 0
-            params['walkOnStreetReluctance'] = 5
-            params['avoid'] = avoid_str
+        # Add enhanced avoidance parameters
+        if avoid_polygons:
+            # Create avoidance string with penalties
+            avoid_str = '|'.join(f"{p['geometry']}::{p['penalty']}" for p in avoid_polygons)
+            params.update({
+                'avoid': avoid_str,
+                'walkReluctance': 20,
+                'turnReluctance': 2,            # Increased turn reluctance
+                'traversalCostMultiplier': 5,   # Higher cost for traversing avoided areas
+                'nonpreferredCost': 1000000     # Very high cost for non-preferred routes
+            })
         
         try:
             response = requests.get(f"{self.otp_url}/plan", params=params)
@@ -251,10 +259,25 @@ class RouteModeler:
                 if 'plan' not in data:
                     logger.warning("No plan in response")
                     return None
+                    
+                # Validate the route doesn't cross avoided areas
+                if 'plan' in data and 'itineraries' in data['plan']:
+                    itinerary = data['plan']['itineraries'][0]
+                    route_points = polyline.decode(itinerary['legs'][0]['legGeometry']['points'])
+                    route_line = LineString([(lon, lat) for lat, lon in route_points])
+                    
+                    # Check if route intersects with any avoided polygons
+                    for avoid_poly in avoid_polygons:
+                        if route_line.intersects(wkt.loads(avoid_poly['geometry'])):
+                            logger.warning(f"Route intersects avoided polygon {avoid_poly['id']}, rejecting...")
+                            return None
+                
                 return data
+                
             else:
                 logger.error(f"Error response content: {response.text}")
                 return None
+                
         except Exception as e:
             logger.error(f"Error getting route: {str(e)}")
             return None
@@ -299,11 +322,10 @@ class RouteModeler:
         route_cache = {}
         departure_time = datetime.now().replace(hour=8, minute=0, second=0)
         
-        # Define main POIs using standardized names - now including Gav Yam
+        # Define main POIs using standardized names
         main_pois = [
             'Ben-Gurion-University',
-            'Soroka-Medical-Center',
-            'Gav-Yam-High-Tech-Park'  # Add Gav Yam
+            'Soroka-Medical-Center'
         ]
         
         print("\nProcessing routes for main POIs:")

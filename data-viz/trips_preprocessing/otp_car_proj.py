@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime
 import time
 from tqdm import tqdm
+from shapely import wkt
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,7 +39,7 @@ class OTPClient:
         
         # Load and store POI polygons
         attractions = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
-        self.poi_polygons = attractions[attractions['ID'].isin([11, 7])]  # BGU and Soroka
+        self.poi_polygons = attractions[attractions['ID'].isin([7, 11])]  # BGU (7) and Soroka (11)
         if self.poi_polygons.crs is None or self.poi_polygons.crs.to_string() != "EPSG:4326":
             self.poi_polygons = self.poi_polygons.to_crs("EPSG:4326")
             
@@ -64,61 +65,65 @@ class OTPClient:
         return lat, lon
     def get_car_route(self, from_lat, from_lon, to_lat, to_lon, destination_poi=None):
         """
-        Query OTP for a driving route with retries.
+        Query OTP for a driving route with enhanced avoidance parameters.
         
         Parameters:
         - from_lat, from_lon: Origin coordinates
         - to_lat, to_lon: Destination coordinates
         - destination_poi: Name of destination POI ('Ben-Gurion-University' or 'Soroka-Medical-Center')
         """
-        # Add debug logging for the problematic coordinates
-        logger.debug(f"Attempting route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
-        
-        # Validate and adjust coordinates
-        from_lat, from_lon = self._validate_coordinates(from_lat, from_lon)
-        to_lat, to_lon = self._validate_coordinates(to_lat, to_lon)
-        
         point_origin = Point(from_lon, from_lat)
         point_dest = Point(to_lon, to_lat)
         
         # Map POI names to IDs
         poi_name_to_id = {
-            'Ben-Gurion-University': 11,
-            'Soroka-Medical-Center': 7
+            'Ben-Gurion-University': 7,
+            'Soroka-Medical-Center': 11
         }
         
-        # Determine which polygons to avoid based on origin/destination containment
+        # Determine which polygons to avoid with specific penalties
         avoid_polygons = []
         for _, poi in self.poi_polygons.iterrows():
+            # Only allow routing through POI if it's explicitly the origin or destination POI
+            if (destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']):
+                continue
+            
             # If this POI contains either the origin or destination, allow routing through it
             if poi.geometry.contains(point_origin) or poi.geometry.contains(point_dest):
                 continue
-                
-            # If this is destination POI's entrance point, allow routing through it
-            if destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']:
-                continue
-                
-            # Otherwise, prevent routing through this POI
-            avoid_polygons.append(poi.geometry.wkt)
             
-        # Create avoidance string if needed
-        avoid_str = '|'.join(avoid_polygons) if avoid_polygons else None
+            # Ensure the polygon is valid and properly formatted
+            if not poi.geometry.is_valid:
+                poi.geometry = poi.geometry.buffer(0)
             
+            # Add polygon to avoidance list with specific penalty
+            avoid_polygons.append({
+                'geometry': poi.geometry.wkt,
+                'id': poi['ID'],
+                'penalty': 1000000  # Very high penalty for crossing avoided areas
+            })
+        
         params = {
             'fromPlace': f"{from_lat},{from_lon}",
             'toPlace': f"{to_lat},{to_lon}",
             'mode': 'CAR',
             'date': datetime.now().strftime('%Y-%m-%d'),
             'time': '09:00:00',
-            'arriveBy': 'false'
+            'arriveBy': 'false',
+            'locale': 'en'
         }
         
-        # Add polygon avoidance if needed
-        if avoid_str:
-            params['walkReluctance'] = 20  # Keep these car-specific parameters
-            params['triangleTimeFactor'] = 0
-            params['walkOnStreetReluctance'] = 5
-            params['avoid'] = avoid_str
+        # Add enhanced avoidance parameters
+        if avoid_polygons:
+            # Create avoidance string with penalties
+            avoid_str = '|'.join(f"{p['geometry']}::{p['penalty']}" for p in avoid_polygons)
+            params.update({
+                'avoid': avoid_str,
+                'walkReluctance': 20,
+                'turnReluctance': 2,            # Increased turn reluctance
+                'traversalCostMultiplier': 5,   # Higher cost for traversing avoided areas
+                'nonpreferredCost': 1000000     # Very high cost for non-preferred routes
+            })
         
         logger.debug(f"Requesting route with params: {params}")
         
@@ -132,26 +137,35 @@ class OTPClient:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    if 'error' in data:
-                        error_msg = data.get('error', {}).get('msg', 'Unknown error')
-                        logger.warning(f"OTP Error (attempt {attempt + 1}): {error_msg}")
-                        
-                        if attempt == self.max_retries - 1:  # On last attempt
-                            logger.warning(f"Failed to find route after {self.max_retries} attempts. Skipping route from ({from_lat}, {from_lon}) to ({to_lat}, {to_lon})")
-                        
-                        time.sleep(self.retry_delay)
-                        continue
+                    if 'error' in data or 'plan' not in data:
+                        logger.warning(f"OTP returned invalid response: {data.get('error', 'No plan found')}")
+                        return None
                     
-                    if 'plan' in data:
-                        return data
-                
-                time.sleep(self.retry_delay)
+                    # Validate the route doesn't cross avoided areas
+                    if 'plan' in data and 'itineraries' in data['plan']:
+                        itinerary = data['plan']['itineraries'][0]
+                        route_points = polyline.decode(itinerary['legs'][0]['legGeometry']['points'])
+                        route_line = LineString([(lon, lat) for lat, lon in route_points])
+                        
+                        # Check if route intersects with any avoided polygons
+                        for avoid_poly in avoid_polygons:
+                            if route_line.intersects(wkt.loads(avoid_poly['geometry'])):
+                                logger.warning(f"Route intersects avoided polygon {avoid_poly['id']}, retrying...")
+                                return None
+                    
+                    return data
+                    
+                elif response.status_code == 429:  # Too Many Requests
+                    wait_time = (attempt + 1) * self.retry_delay
+                    logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
+                    time.sleep(wait_time)
+                    continue
                     
             except Exception as e:
                 logger.error(f"Error getting route (attempt {attempt + 1}): {str(e)}")
                 time.sleep(self.retry_delay)
                 
-        return None  # Return None after all retries failed
+        return None
 
     def _adjust_coordinates(self, params):
         """Adjust coordinates to be within Israel bounds"""
