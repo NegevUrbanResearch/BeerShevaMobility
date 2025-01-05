@@ -85,8 +85,7 @@ HTML_TEMPLATE = """
         <div class="methodology-container">
             <h3 style="margin: 0 0 10px 0;">Methodology</h3>
             <p style="margin: 0; font-size: 0.9em;">
-                Represents daily trips (6:00-22:00) across Beer Sheva's road network using temporal distributions.<br>
-                Total Daily Trips: %(total_trips)d<br>
+                Simulates %(total_trips)d daily car trips  to BGU, Gav Yam, and Soroka Hospital. <br>
                 Current simulation time: <span id="current-time">06:00</span><br>
                 <div class="trip-counters">
                     Cumulative Trips (Updated Hourly):<br>
