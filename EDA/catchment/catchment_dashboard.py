@@ -4,7 +4,7 @@ import shutil
 
 class CatchmentDashboard:
     def __init__(self):
-        self.project_root = Path(__file__).parent
+        self.project_root = Path(__file__).parent.parent
         self.maps_dir = self.project_root / "output" / "catchment_maps"
         self.output_dir = self.project_root / "output" / "dashboard"
         self.output_dir.mkdir(parents=True, exist_ok=True)

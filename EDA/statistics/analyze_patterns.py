@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+# Add the project root to Python path
+sys.path.append(str(Path(__file__).parent.parent))
+
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -12,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 class MobilityPatternAnalyzer:
     def __init__(self):
-        # Use project root directory structure
-        self.project_root = Path(__file__).parent
+        # Use EDA directory as base
+        self.project_root = Path(__file__).parent.parent  # This will point to EDA folder
         self.data_dir = self.project_root / "output" / "dashboard_data"
         self.stats_dir = self.project_root / "output" / "statistics"
         self.output_dir = self.data_dir

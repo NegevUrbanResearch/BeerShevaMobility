@@ -12,7 +12,7 @@ import geopy.distance
 
 class CatchmentVisualizer:
     def __init__(self):
-        self.project_root = Path(__file__).parent
+        self.project_root = Path(__file__).parent.parent
         self.data_dir = self.project_root / "output" / "dashboard_data"
         self.output_dir = self.project_root / "output" / "catchment_maps"
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -348,11 +348,228 @@ class CatchmentVisualizer:
         ).add_to(m)
         
         return m
+    
+    def analyze_catchments(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Integrated analysis of catchment areas and their overlaps.
+        
+        Returns:
+            Tuple[pd.DataFrame, pd.DataFrame]: (areas_df, overlaps_df)
+            - areas_df: Areas for each POI and mode
+            - overlaps_df: Overlap calculations between POIs and modes
+        """
+        modes = ['car', 'transit', 'walk', 'bike']
+        areas_dict = {}
+        overlaps = []
+        catchments = {}  # Store all catchments for overlap calculations
+        
+        # Calculate all catchments and their areas
+        for poi_name in self.focus_pois.keys():
+            print(f"\nAnalyzing catchments for {poi_name}")
+            poi_areas = {}
+            catchments[poi_name] = {}
+            
+            # Get POI coordinates
+            poi_coords = self.focus_pois[poi_name]
+            
+            # Load POI data
+            df, mode_cols = self.load_poi_data(poi_name)
+            if df is None:
+                continue
+                
+            # Calculate catchments and areas for each mode
+            for mode in modes:
+                print(f"Processing {mode} mode...")
+                
+                # Calculate mode-specific trips
+                df_mode = df.copy()
+                
+                if mode == 'walk':
+                    df_mode['mode_trips'] = df_mode['total_trips'] * df_mode['mode_ped']
+                elif mode == 'transit':
+                    transit_cols = ['mode_bus', 'mode_link', 'mode_train']
+                    df_mode['mode_trips'] = df_mode['total_trips'] * df_mode[transit_cols].sum(axis=1)
+                else:
+                    mode_col = f'mode_{mode}'
+                    if mode_col not in mode_cols:
+                        poi_areas[mode] = None
+                        continue
+                    df_mode['mode_trips'] = df_mode['total_trips'] * df_mode[mode_col]
+                
+                # Prepare points and weights
+                valid_data = df_mode.dropna(subset=['centroid_lon', 'centroid_lat'])
+                if len(valid_data) > 0:
+                    points = list(zip(valid_data['centroid_lon'], valid_data['centroid_lat']))
+                    weights = valid_data['mode_trips'].values
+                    
+                    # Calculate catchment
+                    catchment = self.calculate_catchment_polygon(
+                        points=points,
+                        weights=weights,
+                        poi_coords=poi_coords
+                    )
+                    
+                    if catchment is not None:
+                        # Store catchment for overlap calculations
+                        catchments[poi_name][mode] = catchment
+                        
+                        # Calculate area
+                        gdf_catchment = gpd.GeoDataFrame(geometry=[catchment], crs="EPSG:4326")
+                        gdf_catchment_projected = gdf_catchment.to_crs({'proj':'cea'})
+                        area_km2 = gdf_catchment_projected.geometry.area.iloc[0] / 10**6
+                        poi_areas[mode] = area_km2
+                    else:
+                        poi_areas[mode] = None
+                else:
+                    poi_areas[mode] = None
+            
+            areas_dict[poi_name] = poi_areas
+        
+        # Calculate overlaps between POIs for each mode
+        for mode in modes:
+            for poi1 in self.focus_pois.keys():
+                for poi2 in self.focus_pois.keys():
+                    if poi1 >= poi2:  # Skip duplicate combinations
+                        continue
+                        
+                    if poi1 in catchments and poi2 in catchments:
+                        catchment1 = catchments[poi1].get(mode)
+                        catchment2 = catchments[poi2].get(mode)
+                        
+                        if catchment1 is not None and catchment2 is not None:
+                            # Calculate overlap
+                            gdf1 = gpd.GeoDataFrame(geometry=[catchment1], crs="EPSG:4326")
+                            gdf2 = gpd.GeoDataFrame(geometry=[catchment2], crs="EPSG:4326")
+                            
+                            gdf1_proj = gdf1.to_crs({'proj':'cea'})
+                            gdf2_proj = gdf2.to_crs({'proj':'cea'})
+                            
+                            intersection = gdf1_proj.intersection(gdf2_proj)
+                            intersection_area = intersection.area.iloc[0] / 10**6
+                            area1 = gdf1_proj.area.iloc[0] / 10**6
+                            area2 = gdf2_proj.area.iloc[0] / 10**6
+                            
+                            overlap_pct1 = (intersection_area / area1) * 100
+                            overlap_pct2 = (intersection_area / area2) * 100
+                            
+                            overlaps.append({
+                                'type': 'poi_to_poi',
+                                'mode': mode,
+                                'entity1': poi1,
+                                'entity2': poi2,
+                                'intersection_area_km2': intersection_area,
+                                'overlap_pct_of_1': overlap_pct1,
+                                'overlap_pct_of_2': overlap_pct2
+                            })
+        
+        # Calculate overlaps between modes for each POI
+        for poi_name in self.focus_pois.keys():
+            if poi_name in catchments:
+                for mode1 in modes:
+                    for mode2 in modes:
+                        if mode1 >= mode2:  # Skip duplicate combinations
+                            continue
+                            
+                        catchment1 = catchments[poi_name].get(mode1)
+                        catchment2 = catchments[poi_name].get(mode2)
+                        
+                        if catchment1 is not None and catchment2 is not None:
+                            # Calculate overlap
+                            gdf1 = gpd.GeoDataFrame(geometry=[catchment1], crs="EPSG:4326")
+                            gdf2 = gpd.GeoDataFrame(geometry=[catchment2], crs="EPSG:4326")
+                            
+                            gdf1_proj = gdf1.to_crs({'proj':'cea'})
+                            gdf2_proj = gdf2.to_crs({'proj':'cea'})
+                            
+                            intersection = gdf1_proj.intersection(gdf2_proj)
+                            intersection_area = intersection.area.iloc[0] / 10**6
+                            area1 = gdf1_proj.area.iloc[0] / 10**6
+                            area2 = gdf2_proj.area.iloc[0] / 10**6
+                            
+                            overlap_pct1 = (intersection_area / area1) * 100
+                            overlap_pct2 = (intersection_area / area2) * 100
+                            
+                            overlaps.append({
+                                'type': 'mode_to_mode',
+                                'poi': poi_name,
+                                'entity1': mode1,
+                                'entity2': mode2,
+                                'intersection_area_km2': intersection_area,
+                                'overlap_pct_of_1': overlap_pct1,
+                                'overlap_pct_of_2': overlap_pct2
+                            })
+        
+        # Create DataFrames
+        areas_df = pd.DataFrame.from_dict(areas_dict, orient='index')
+        overlaps_df = pd.DataFrame(overlaps)
+        
+        # Save results with descriptions
+        description = f"""
+    Catchment Areas and Overlaps Analysis
+    -----------------------------------
+    Generated on: {pd.Timestamp.now().strftime('%Y-%m-%d')}
+
+    This analysis contains two main components:
+
+    1. Catchment Areas (areas.csv):
+    ------------------------------
+    Areas in square kilometers for each POI and transportation mode.
+
+    POIs:
+    - BGU: Ben-Gurion University
+    - Soroka_Hospital: Soroka Medical Center
+    - Gev_Yam: Gav-Yam Negev Advanced Technologies Park
+
+    Modes:
+    - car: Private vehicle trips
+    - transit: Combined public transit (bus, train, and other transit links)
+    - walk: Pedestrian trips
+    - bike: Bicycle trips
+
+    2. Overlaps Analysis (overlaps.csv):
+    ----------------------------------
+    Two types of overlaps are analyzed:
+    a) POI-to-POI: Overlap between different POIs for each mode
+    b) Mode-to-mode: Overlap between different modes for each POI
+
+    Overlap metrics:
+    - intersection_area_km2: Area of overlap in square kilometers
+    - overlap_pct_of_1: Percentage of entity1's catchment that overlaps with entity2
+    - overlap_pct_of_2: Percentage of entity2's catchment that overlaps with entity1
+
+    Values represent the minimal continuous catchment area containing 90% of trips.
+    Areas are calculated in square kilometers using an equal area projection.
+    NULL values indicate insufficient data for that combination.
+    """
+        
+        # Save areas
+        with open(self.output_dir / 'catchment_areas.csv', 'w') as f:
+            f.write(description + '\n\n')
+            f.write("CATCHMENT AREAS (square kilometers)\n")
+            areas_df.to_csv(f)
+        
+        # Save overlaps
+        with open(self.output_dir / 'catchment_overlaps.csv', 'w') as f:
+            f.write(description + '\n\n')
+            f.write("CATCHMENT OVERLAPS\n")
+            overlaps_df.to_csv(f, index=False)
+        
+        print(f"\nResults saved to {self.output_dir}")
+        return areas_df, overlaps_df
 
     def generate_all_catchment_maps(self):
-        """Generate catchment maps for all POIs and modes"""
+        """Generate catchment maps and analyze areas/overlaps for all POIs and modes"""
         modes = ['car', 'transit', 'walk', 'bike']
         
+        # First calculate areas and overlaps
+        areas_df, overlaps_df = self.analyze_catchments()
+        
+        print("\nCatchment areas summary (sq km):")
+        print(areas_df)
+        print("\nOverlap analysis summary:")
+        print(overlaps_df)
+        
+        # Then generate maps as before
         for poi_name in self.focus_pois.keys():
             print(f"\nGenerating catchment maps for {poi_name}")
             
@@ -367,8 +584,9 @@ class CatchmentVisualizer:
                 m = self.create_catchment_map(poi_name, mode)
                 m.save(self.output_dir / f"{poi_name.lower()}_catchment_{mode}.html")
                 print(f"Saved {mode} catchment map for {poi_name}")
-                
-            print(f"All maps saved to {self.output_dir}")
+        
+        print(f"\nAll maps and analysis saved to {self.output_dir}")
+        return areas_df, overlaps_df
 
     def load_zones(self):
         """Load zones data and calculate centroids"""
@@ -386,3 +604,5 @@ class CatchmentVisualizer:
 if __name__ == "__main__":
     visualizer = CatchmentVisualizer()
     visualizer.generate_all_catchment_maps()
+
+

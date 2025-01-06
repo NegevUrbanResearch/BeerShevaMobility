@@ -3,7 +3,7 @@ import json
 
 class VisualizationGenerator:
     def __init__(self):
-        self.project_root = Path(__file__).parent
+        self.project_root = Path(__file__).parent.parent
         self.data_dir = self.project_root / "output" / "distance_histograms"
         self.output_dir = self.project_root / "output" / "visualizations"
         self.output_dir.mkdir(parents=True, exist_ok=True)

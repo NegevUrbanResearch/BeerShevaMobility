@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 from datetime import time
 
+sys.path.append(str(Path(__file__).parent.parent))
 # Add parent directory to path for imports
 from config import OUTPUT_DIR, DATA_DIR, RAW_TRIPS_FILE
 from utils.data_standards import DataStandardizer

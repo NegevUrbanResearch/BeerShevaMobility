@@ -1,7 +1,13 @@
+import sys
 from pathlib import Path
+# Add the project root to Python path
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
+from EDA.statistics.analyze_patterns import MobilityPatternAnalyzer
 import json
 import pandas as pd
 import numpy as np
+
 
 class TemporalVisualizationGenerator:
     def __init__(self):
@@ -292,10 +298,121 @@ class TemporalVisualizationGenerator:
         except Exception as e:
             print(f"Error generating visualization: {str(e)}")
             raise
+        
+    def export_temporal_analysis(self, temporal_data):
+        """
+        Export temporal data with additional analysis metrics for LLM annotation.
+        
+        Args:
+            temporal_data (list): List of dictionaries containing hourly temporal patterns
+        """
+        print("\nExporting temporal analysis for LLM annotation...")
+        
+        # Convert temporal_data to DataFrame for easier analysis
+        df = pd.DataFrame(temporal_data)
+        
+        # Add time period labels
+        def get_time_period(hour):
+            hour = int(hour.split(':')[0])
+            if 5 <= hour < 9:
+                return 'Morning Rush'
+            elif 9 <= hour < 12:
+                return 'Morning'
+            elif 12 <= hour < 14:
+                return 'Lunch'
+            elif 14 <= hour < 17:
+                return 'Afternoon'
+            elif 17 <= hour < 20:
+                return 'Evening Rush'
+            elif 20 <= hour < 23:
+                return 'Evening'
+            else:
+                return 'Night'
+        
+        df['time_period'] = df['hour'].apply(get_time_period)
+        
+        # Calculate additional metrics
+        pois = [col for col in df.columns if col not in ['hour', 'time_period']]
+        
+        analysis_rows = []
+        for idx, row in df.iterrows():
+            hour = row['hour']
+            time_period = row['time_period']
+            
+            # Basic data
+            analysis_row = {
+                'hour': hour,
+                'time_period': time_period
+            }
+            
+            # Add raw percentages for each POI
+            for poi in pois:
+                analysis_row[f'{poi}_pct'] = row[poi]
+            
+            # Find dominant POI for this hour
+            max_poi = max(pois, key=lambda x: row[x])
+            analysis_row['dominant_poi'] = max_poi
+            analysis_row['dominant_poi_pct'] = row[max_poi]
+            
+            # Calculate relative activity level
+            hour_total = sum(row[poi] for poi in pois)
+            analysis_row['total_activity'] = hour_total
+            
+            # Calculate activity ratios compared to city average
+            for poi in pois:
+                if poi != 'Beer-Sheva-Comparisons' and row['Beer-Sheva-Comparisons'] != 0:
+                    ratio = row[poi] / row['Beer-Sheva-Comparisons']
+                    analysis_row[f'{poi}_vs_city_ratio'] = ratio
+            
+            analysis_rows.append(analysis_row)
+        
+        # Convert to DataFrame
+        analysis_df = pd.DataFrame(analysis_rows)
+        
+        # Add hour-over-hour changes
+        for poi in pois:
+            analysis_df[f'{poi}_change'] = analysis_df[f'{poi}_pct'].pct_change()
+        
+        # Calculate peak hours for each POI
+        for poi in pois:
+            peak_hour = analysis_df.loc[analysis_df[f'{poi}_pct'].idxmax(), 'hour']
+            peak_pct = analysis_df[f'{poi}_pct'].max()
+            print(f"Peak hour for {poi}: {peak_hour} ({peak_pct:.1f}%)")
+        
+        # Export to CSV
+        output_file = self.output_dir / "temporal_analysis.csv"
+        analysis_df.to_csv(output_file, index=False)
+        print(f"\nExported temporal analysis to: {output_file}")
+        
+        # Print sample of the analysis
+        print("\nSample of exported analysis:")
+        print(analysis_df[['hour', 'time_period', 'dominant_poi', 'total_activity']].head())
+        
+        return output_file    
+
+def main():
+    """Main function to run temporal pattern analysis"""
+    try:
+        print("Starting temporal pattern analysis...")
+        
+        # Initialize analyzer and generator
+        analyzer = MobilityPatternAnalyzer()
+        generator = TemporalVisualizationGenerator()
+        
+        # Generate visualization and get temporal data
+        temporal_data = generator.process_temporal_data(analyzer)
+        generator.generate_visualization(analyzer)
+        
+        # Export temporal analysis to CSV
+        analysis_file = generator.export_temporal_analysis(temporal_data)
+        print(f"\nAnalysis exported to: {analysis_file}")
+        
+        print("\nProcess completed successfully!")
+        
+    except Exception as e:
+        print(f"\nError during analysis: {str(e)}")
+        raise
+
 
 if __name__ == "__main__":
-    from analyze_patterns import MobilityPatternAnalyzer
-    
-    analyzer = MobilityPatternAnalyzer()
-    generator = TemporalVisualizationGenerator()
-    generator.generate_visualization(analyzer)
+    main()

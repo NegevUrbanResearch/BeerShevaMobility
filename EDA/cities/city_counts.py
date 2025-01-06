@@ -4,6 +4,9 @@ import numpy as np
 from pathlib import Path
 import logging
 from typing import Dict
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.data_standards import DataStandardizer
 
 logging.basicConfig(level=logging.INFO)
