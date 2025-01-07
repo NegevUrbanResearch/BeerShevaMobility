@@ -181,10 +181,13 @@ def get_html_template():
         </div>
     </div>
     <div class="stats-panel">
-        <h3>Current Statistics</h3>
+        <h3>Cumulative Statistics</h3>
         <div id="bguStats" class="stat-row bgu-stat">BGU Trips: 0</div>
         <div id="sorokaStats" class="stat-row soroka-stat">Soroka Trips: 0</div>
         <div id="totalStats" class="stat-row">Total Active Trips: 0</div>
+        <p style="color: #ccc; font-size: 14px; margin-bottom: 15px; max-width: 300px;">
+            Arcs in this visualization represent inbound walking trips to Ben Gurion University & Soroka Medical Center.
+        </p>
     </div>
     <script>
         // Arc data
