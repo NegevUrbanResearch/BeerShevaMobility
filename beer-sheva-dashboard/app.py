@@ -23,7 +23,7 @@ class DashboardApp:
             <style>
                 body { 
                     font-size: 1.5rem;
-                    background-color: #1a1a1a !important;
+                    background-color: #000000 !important;
                     min-height: 100vh;
                     margin: 0;
                     padding: 0;
@@ -106,7 +106,7 @@ class DashboardApp:
                             'top': '0',
                             'objectFit': 'contain',
                             'backgroundColor': '#2d2d2d',
-                            'width': '243px' if id_prefix == 'frequency' else '208px',  # Increased from 231px/198px
+                            'width': '245px' if id_prefix == 'frequency' else '208px',  # Increased from 231px/198px
                             'height': '277px',  # Increased from 264px
                             'display': 'block'
                         }
@@ -263,7 +263,7 @@ class DashboardApp:
                 
             ], className="g-2 mb-4", style={'marginTop': '0.4rem'})  # Reduced from 2rem
             
-        ], fluid=True, className="p-3", style={'backgroundColor': '#1a1a1a', 'minHeight': '100vh'})
+        ], fluid=True, className="p-3", style={'backgroundColor': '#000000', 'minHeight': '100vh'})
 
     def setup_callbacks(self):
         @self.app.callback(
