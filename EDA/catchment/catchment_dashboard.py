@@ -56,6 +56,7 @@ class CatchmentDashboard:
                     padding: 0;
                     background: #1a1a1a;
                     color: #ffffff;
+                    font-size: 23px;
                 }
                 .controls { 
                     position: fixed;
@@ -66,11 +67,11 @@ class CatchmentDashboard:
                     border-radius: 8px;
                     box-shadow: 0 0 15px rgba(0,0,0,0.3);
                     z-index: 1000;
-                    width: 160px;
+                    width: 322px;
                 }
                 .controls h3 {
-                    margin: 0 0 12px 0;
-                    font-size: 14px;
+                    margin: 0 0 18px 0;
+                    font-size: 27px;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
                     color: #ffffff;
@@ -81,21 +82,21 @@ class CatchmentDashboard:
                     margin-bottom: 12px;
                 }
                 .btn-group p {
-                    margin: 0 0 4px 0;
-                    font-size: 12px;
+                    margin: 0 0 5px 0;
+                    font-size: 23px;
                     color: #999;
                 }
                 button {
                     display: block;
                     width: 100%;
-                    padding: 6px 8px;
+                    padding: 12px 18px;
                     margin: 2px 0;
                     border: 1px solid #444;
                     border-radius: 4px;
                     cursor: pointer;
                     background: #333;
                     color: #fff;
-                    font-size: 12px;
+                    font-size: 23px;
                     text-align: left;
                     transition: all 0.2s ease;
                 }
@@ -127,15 +128,15 @@ class CatchmentDashboard:
                 .legend-item {
                     display: flex;
                     align-items: center;
-                    gap: 6px;
+                    gap: 12px;
                 }
                 .color-box {
-                    width: 12px;
-                    height: 12px;
+                    width: 23px;
+                    height: 23px;
                     border-radius: 2px;
                 }
                 .mode-name {
-                    font-size: 12px;
+                    font-size: 23px;
                     color: #cccccc;
                 }
                 button.mode-btn {
@@ -166,14 +167,14 @@ class CatchmentDashboard:
                     border-radius: 8px;
                     box-shadow: 0 0 15px rgba(0,0,0,0.3);
                     z-index: 1000;
-                    width: 280px;
-                    font-size: 13px;
+                    width: 498px;
+                    font-size: 23px;
                     color: #ffffff;
                 }
                 
                 .explanation h3 {
                     margin: 0 0 8px 0;
-                    font-size: 14px;
+                    font-size: 27px;
                     text-transform: uppercase;
                     letter-spacing: 0.5px;
                     color: #ffffff;
@@ -185,6 +186,38 @@ class CatchmentDashboard:
                     margin: 0 0 8px 0;
                     line-height: 1.4;
                     color: #cccccc;
+                }
+                
+                /* Enhanced transition styles */
+                .map-frame {
+                    position: absolute;
+                    width: 100%;
+                    height: 100%;
+                    border: none;
+                    opacity: 0;
+                    transition: opacity 1.5s ease-in-out;  /* Increased duration */
+                    pointer-events: none;  /* Prevent interaction during transition */
+                }
+                .map-frame.active {
+                    opacity: 1;
+                    pointer-events: auto;  /* Re-enable interaction when active */
+                }
+                
+                /* Add fade overlay */
+                #fade-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(26, 26, 26, 0.5);  /* Match body background */
+                    opacity: 0;
+                    transition: opacity 1.2s ease-in-out;
+                    pointer-events: none;
+                    z-index: 999;
+                }
+                #fade-overlay.active {
+                    opacity: 1;
                 }
             </style>
         </head>
@@ -223,8 +256,12 @@ class CatchmentDashboard:
             </div>
 
             <div id="map-container">
-                <iframe id="map-frame" src=""></iframe>
+                <!-- We'll now use two iframes for smooth transitions -->
+                <iframe class="map-frame" id="map-frame-1" src=""></iframe>
+                <iframe class="map-frame" id="map-frame-2" src=""></iframe>
             </div>
+
+            <div id="fade-overlay"></div>
 
             <script>
                 // Initialize with first POI and mode
@@ -247,11 +284,36 @@ class CatchmentDashboard:
                     }
                 }
 
+                let activeFrame = 1;
+
                 function updateMap() {
                     const mapSuffix = currentMode === 'layered' ? 'layered' : currentMode;
                     const filename = `${poiInfo[currentPOI].file}_catchment_${mapSuffix}.html`;
-                    document.getElementById('map-frame').src = filename;
                     
+                    const currentFrameId = `map-frame-${activeFrame}`;
+                    const nextFrameId = `map-frame-${activeFrame === 1 ? 2 : 1}`;
+                    
+                    const currentFrame = document.getElementById(currentFrameId);
+                    const nextFrame = document.getElementById(nextFrameId);
+                    const fadeOverlay = document.getElementById('fade-overlay');
+                    
+                    // Start transition
+                    fadeOverlay.classList.add('active');
+                    
+                    // Load new map in inactive frame
+                    nextFrame.src = filename;
+                    
+                    nextFrame.onload = () => {
+                        requestAnimationFrame(() => {
+                            // Ensure smooth transition by using requestAnimationFrame
+                            fadeOverlay.classList.remove('active');
+                            currentFrame.classList.remove('active');
+                            nextFrame.classList.add('active');
+                            activeFrame = activeFrame === 1 ? 2 : 1;
+                        });
+                    };
+                    
+                    // Update UI state
                     document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
                     document.getElementById(`poi-${currentPOI}`).classList.add('active');
                     document.getElementById(`mode-${currentMode}`).classList.add('active');

@@ -49,6 +49,13 @@ def create_react_visualization():
                         Bus: 18.20,
                         Walk: 5.75,
                         Train: 1.72
+                    },
+                    {
+                        name: 'Gav Yam',
+                        Car: 77.45,
+                        Bus: 15.04,
+                        Walk: 5.78,
+                        Train: 0.99
                     }
                 ];
 

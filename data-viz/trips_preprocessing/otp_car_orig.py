@@ -197,15 +197,21 @@ class RouteModeler:
         point_origin = Point(from_lon, from_lat)
         point_dest = Point(to_lon, to_lat)
         
-        # Map POI names to IDs
+        # Update POI name to ID mapping
         poi_name_to_id = {
             'Ben-Gurion-University': 11,
-            'Soroka-Medical-Center': 7
+            'Soroka-Medical-Center': 7,
+            'Gav-Yam-High-Tech-Park': 12  # Add Gav Yam mapping
         }
         
-        # Determine which polygons to avoid with specific penalties
+        # Only avoid BGU and Soroka polygons
+        restricted_poi_ids = [11, 7]  # BGU and Soroka IDs
         avoid_polygons = []
         for _, poi in self.poi_polygons.iterrows():
+            # Skip if this POI is not restricted (i.e., Gav Yam)
+            if poi['ID'] not in restricted_poi_ids:
+                continue
+            
             # Only allow routing through POI if it's explicitly the destination POI
             if (destination_poi and poi_name_to_id.get(destination_poi) == poi['ID']):
                 continue
@@ -218,11 +224,15 @@ class RouteModeler:
             if not poi.geometry.is_valid:
                 poi.geometry = poi.geometry.buffer(0)
             
-            # Add polygon to avoidance list with specific penalty
+            # Calculate penalty based on area and add huge base penalty
+            area_penalty = poi.geometry.area * 1e7  # Scale penalty by area
+            base_penalty = 1e8  # Increase base penalty significantly
+            
+            # Add polygon to avoidance list with combined penalty
             avoid_polygons.append({
                 'geometry': poi.geometry.wkt,
                 'id': poi['ID'],
-                'penalty': 1000000  # Very high penalty for crossing avoided areas
+                'penalty': base_penalty + area_penalty
             })
         
         params = {
@@ -241,10 +251,15 @@ class RouteModeler:
             avoid_str = '|'.join(f"{p['geometry']}::{p['penalty']}" for p in avoid_polygons)
             params.update({
                 'avoid': avoid_str,
-                'walkReluctance': 20,
-                'turnReluctance': 2,            # Increased turn reluctance
-                'traversalCostMultiplier': 5,   # Higher cost for traversing avoided areas
-                'nonpreferredCost': 1000000     # Very high cost for non-preferred routes
+                'walkReluctance': 50,              # Increased from 20
+                'turnReluctance': 4,               # Increased from 2
+                'traversalCostMultiplier': 100,    # Increased from 5
+                'nonpreferredCost': 1e8,           # Increased from 1000000
+                'maxHours': 5,                     # Add maximum trip duration
+                'maxWalkDistance': 0,              # Disable walking segments
+                'alightSlack': 0,                  # Minimize slack time
+                'driveDistanceReluctance': 5,      # Penalize longer routes
+                'intersectionTraversalCost': 100   # Penalize complex intersections
             })
         
         try:
@@ -322,10 +337,11 @@ class RouteModeler:
         route_cache = {}
         departure_time = datetime.now().replace(hour=8, minute=0, second=0)
         
-        # Define main POIs using standardized names
+        # Update main POIs list
         main_pois = [
             'Ben-Gurion-University',
-            'Soroka-Medical-Center'
+            'Soroka-Medical-Center',
+            'Gav-Yam-High-Tech-Park'  # Add Gav Yam
         ]
         
         print("\nProcessing routes for main POIs:")

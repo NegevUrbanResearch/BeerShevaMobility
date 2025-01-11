@@ -181,13 +181,29 @@ class CatchmentVisualizer:
         poi_coords = self.focus_pois[poi_name]
         print(f"\nCreating layered catchment map for {poi_name}")
         
-        # Create base map with dark theme
+        # Create base map with dark theme and larger font size
         m = folium.Map(
             location=[poi_coords['lat'], poi_coords['lon']],
             tiles='cartodbdark_matter',
             zoom_start=11
         )
         
+        # Add CSS to increase font sizes
+        css = """
+        <style>
+            .leaflet-popup-content {
+                font-size: 15px !important;
+            }
+            .leaflet-control-layers-toggle {
+                font-size: 15px !important;
+            }
+            .leaflet-control-attribution {
+                font-size: 12px !important;
+            }
+        </style>
+        """
+        m.get_root().html.add_child(folium.Element(css))
+
         # Load POI data
         df, mode_cols = self.load_poi_data(poi_name)
         if df is None:
@@ -238,6 +254,45 @@ class CatchmentVisualizer:
         # Sort catchments by area (largest to smallest)
         catchments.sort(key=lambda x: x['area'], reverse=True)
         
+        # Calculate bounds that encompass all catchments
+        if catchments:
+            # Initialize with first catchment bounds
+            min_x = float('inf')
+            max_x = float('-inf')
+            min_y = float('inf')
+            max_y = float('-inf')
+
+            # Find min/max bounds across all catchments
+            for catchment_data in catchments:
+                catchment = catchment_data['polygon']
+                bounds = catchment.bounds  # (minx, miny, maxx, maxy)
+                min_x = min(min_x, bounds[0])
+                min_y = min(min_y, bounds[1])
+                max_x = max(max_x, bounds[2])
+                max_y = max(max_y, bounds[3])
+
+            # Create base map with calculated bounds
+            center_lat = (min_y + max_y) / 2
+            center_lon = (min_x + max_x) / 2
+            m = folium.Map(
+                location=[center_lat, center_lon],
+                tiles='cartodbdark_matter'
+            )
+
+            # Set bounds with padding
+            m.fit_bounds(
+                [[min_y, min_x], [max_y, max_x]],
+                padding=(30, 30)  # Add 30 pixels padding on all sides
+            )
+        else:
+            # Fallback to POI-centered map if no catchments
+            poi_coords = self.focus_pois[poi_name]
+            m = folium.Map(
+                location=[poi_coords['lat'], poi_coords['lon']],
+                tiles='cartodbdark_matter',
+                zoom_start=11
+            )
+        
         # Add catchments to map
         for catchment_data in catchments:
             mode = catchment_data['mode']
@@ -256,13 +311,13 @@ class CatchmentVisualizer:
                     }
                 ).add_to(m)
         
-        # Add POI marker
+        # Add POI marker with larger popup font
         folium.CircleMarker(
             location=[poi_coords['lat'], poi_coords['lon']],
             radius=8,
             color='white',
             fill=True,
-            popup=poi_name
+            popup=folium.Popup(poi_name, parse_html=True, max_width=300)
         ).add_to(m)
         
         return m
@@ -281,6 +336,22 @@ class CatchmentVisualizer:
             tiles='cartodbdark_matter'
         )
         
+        # Add CSS to increase font sizes
+        css = """
+        <style>
+            .leaflet-popup-content {
+                font-size: 15px !important;
+            }
+            .leaflet-control-layers-toggle {
+                font-size: 15px !important;
+            }
+            .leaflet-control-attribution {
+                font-size: 12px !important;
+            }
+        </style>
+        """
+        m.get_root().html.add_child(folium.Element(css))
+
         # Load POI data
         df, mode_cols = self.load_poi_data(poi_name)
         if df is None:
@@ -338,13 +409,13 @@ class CatchmentVisualizer:
             m.location = [poi_coords['lat'], poi_coords['lon']]
             m.zoom_start = 11
         
-        # Add POI marker
+        # Add POI marker with larger popup font
         folium.CircleMarker(
             location=[poi_coords['lat'], poi_coords['lon']],
             radius=8,
             color='white',
             fill=True,
-            popup=poi_name
+            popup=folium.Popup(poi_name, parse_html=True, max_width=300)
         ).add_to(m)
         
         return m

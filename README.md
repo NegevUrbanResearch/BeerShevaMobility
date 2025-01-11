@@ -4,10 +4,15 @@ A comprehensive mobility data analysis and visualization platform for Beer Sheva
 
 ## Project Components
 
-### 1. EDA (@EDA)
+### 1. ETL & Analytics Pipeline (@EDA)
 Tools for analyzing and visualizing specific Points of Interest:
-- Utility scripts for loading, preprocessing, and exploring data
-- Geospatial analysis of POIs
+- ETL scripts for loading, preprocessing, and exploring mobility data
+- Advanced geospatial analytics including:
+  - Origin-destination matrices
+  - Temporal trip pattern analysis
+  - Catchment area calculations
+  - Trip density clustering
+  - Modal split analysis
 - Static maps of trip patterns
 - Detecting and summarizing trip patterns
 

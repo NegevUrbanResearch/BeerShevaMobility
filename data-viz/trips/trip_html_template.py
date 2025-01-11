@@ -43,13 +43,14 @@ HTML_TEMPLATE = """
                 color: white;
                 padding: 12px 24px;
                 border-radius: 5px;
-                font-family: monospace;
+                font-family: Arial;
                 font-size: 24px;
                 z-index: 1000;
             }
             .trip-counters {
-                margin-top: 10px;
-                font-family: monospace;
+                margin-top: 15px;
+                font-family: Arial;
+                font-size: 14px;
             }
             .counter-row {
                 margin: 5px 0;
@@ -83,26 +84,26 @@ HTML_TEMPLATE = """
         </div>
         <div class="time-display">06:00</div>
         <div class="methodology-container">
-            <h3 style="margin: 0 0 10px 0;">Methodology</h3>
-            <p style="margin: 0; font-size: 0.9em;">
-                Simulates %(total_trips)d daily car trips  to BGU, Gav Yam, and Soroka Hospital. <br>
-                Current simulation time: <span id="current-time">06:00</span><br>
-                <div class="trip-counters">
-                    Cumulative Trips (Updated Hourly):<br>
-                    <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
-                        BGU: <span id="bgu-counter">0</span>
-                    </div>
-                    <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span>
-                        Gav Yam: <span id="gav-yam-counter">0</span>
-                    </div>
-                    <div class="counter-row">
-                        <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
-                        Soroka: <span id="soroka-hospital-counter">0</span>
-                    </div>
-                </div>
+            <h3 style="margin: 0 0 10px 0;">Legend</h3>
+            <p style="margin: 0; font-size: 14px;">
+                %(total_trips)d car trips simulated to BGU, Gav Yam, and Soroka Hospital.<br><br>
+                Current simulation time: <span id="current-time">06:00</span>
             </p>
+            <div class="trip-counters">
+                Cumulative Trips (Updated Hourly):<br>
+                <div class="counter-row">
+                    <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 255, 90); vertical-align: middle;"></span>
+                    BGU: <span id="bgu-counter">0</span>
+                </div>
+                <div class="counter-row">
+                    <span style="display: inline-block; width: 20px; height: 10px; background: rgb(0, 191, 255); vertical-align: middle;"></span>
+                    Gav Yam: <span id="gav-yam-counter">0</span>
+                </div>
+                <div class="counter-row">
+                    <span style="display: inline-block; width: 20px; height: 10px; background: rgb(170, 0, 255); vertical-align: middle;"></span>
+                    Soroka: <span id="soroka-hospital-counter">0</span>
+                </div>
+            </div>
         </div>
         <div class="map-attribution">
             © <a href="https://www.maptiler.com/copyright/" target="_blank">MapTiler</a>
@@ -365,6 +366,15 @@ HTML_TEMPLATE = """
 
                 // Initialize animation
                 animate();
+
+                map.on('style.load', () => {
+                    // Remove country borders for dark_nolabels style
+                    if (MAP_STYLE.includes('dark-v11')) {
+                        map.setLayoutProperty('admin-0-boundary', 'visibility', 'none');
+                        map.setLayoutProperty('admin-0-boundary-bg', 'visibility', 'none');
+                        map.setLayoutProperty('admin-1-boundary', 'visibility', 'none');
+                    }
+                });
             });
         </script>
     </body>
