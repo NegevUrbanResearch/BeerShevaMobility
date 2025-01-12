@@ -208,14 +208,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
             body, html {{ 
                 margin: 0; 
                 padding: 0;
-                background-color: #666666;
-                background-image: 
-                    linear-gradient(45deg, #808080 25%, transparent 25%),
-                    linear-gradient(-45deg, #808080 25%, transparent 25%),
-                    linear-gradient(45deg, transparent 75%, #808080 75%),
-                    linear-gradient(-45deg, transparent 75%, #808080 75%);
-                background-size: 20px 20px;
-                background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+                background-color: #000000;
             }}
             #container {{ 
                 width: 100vw; 
@@ -223,7 +216,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
                 position: relative;
             }}
             canvas {{
-                background: transparent !important;
+                background: #000000 !important;
             }}
             #loading {{
                 position: fixed;
@@ -338,7 +331,7 @@ def load_model_outline(shapefile_path):
         logger.error(f"Error loading model outline: {str(e)}")
         raise
 
-def get_optimal_viewport(bounds):
+def get_optimal_viewport(bounds, model_size='big'):
     """Calculate optimal viewport settings based on geometry bounds"""
     minx, miny, maxx, maxy = bounds
     center_lon = (minx + maxx) / 2
@@ -346,12 +339,16 @@ def get_optimal_viewport(bounds):
     
     lat_zoom = np.log2(360 / (maxy - miny)) + 1
     lon_zoom = np.log2(360 / (maxx - minx)) + 1
-    zoom = min(lat_zoom, lon_zoom) - 0.5
+    base_zoom = min(lat_zoom, lon_zoom) - 0.5
+    
+    # Add extra zoom for small model
+    if model_size == 'small':
+        base_zoom += 0.75  # Increase zoom level by 0.5 for small model
     
     return {
         'longitude': center_lon,
         'latitude': center_lat,
-        'zoom': zoom,
+        'zoom': base_zoom,
         'pitch': 0,
         'bearing': 0
     }
@@ -443,7 +440,7 @@ def main():
                     model_outline, bounds = outline_data
                     
                     logger.info("Creating viewport")
-                    viewport = get_optimal_viewport(bounds)
+                    viewport = get_optimal_viewport(bounds, model_size)
                     
                     # Generate output filename
                     html_path = os.path.join(
