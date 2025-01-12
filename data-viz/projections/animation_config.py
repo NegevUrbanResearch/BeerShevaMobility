@@ -24,17 +24,17 @@ def calculate_animation_duration():
             'speed_multiplier': 2.0,        # Cars move faster
             'path_multiplier': 30,          # Car path stretching
             'trail_length': 10,              # Longer trail for cars
-            'min_width': 2,                 # Minimum line width
-            'max_width': 4,                 # Maximum line width
+            'min_width': 2,                 
+            'max_width': 4,                
             'opacity': 1,                 # Slightly more opaque
             'animation_offset': 0,          # No offset for cars
         },
         'walk': {
-            'speed_multiplier': 1.0,        # Base walking speed
+            'speed_multiplier': 1,        # Base walking speed
             'path_multiplier': 45,          # Walking path stretching
-            'trail_length': 7,              # Shorter trail for walking
-            'min_width': 1,                 # Thinner lines for walking
-            'max_width': 2,                 # Maximum width for walking
+            'trail_length': 8,              # Shorter trail for walking
+            'min_width': 2,                 
+            'max_width': 4,                 
             'opacity': 1,                 # Slightly more transparent
             'animation_offset': 0,          # No offset for walking
         }
