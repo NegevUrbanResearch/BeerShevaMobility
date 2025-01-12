@@ -36,8 +36,8 @@ def save_frames_as_images(html_path, output_dir):
     
     firefox_options = FirefoxOptions()
     firefox_options.add_argument('--headless')
-    firefox_options.add_argument('--width=1920')
-    firefox_options.add_argument('--height=1080')
+    firefox_options.add_argument('--width=3840')
+    firefox_options.add_argument('--height=2160')
     firefox_options.set_preference('webgl.force-enabled', True)
     firefox_options.set_preference('webgl.disabled', False)
     # Add hardware acceleration options
@@ -380,9 +380,9 @@ def record_animation_mac(html_path, output_path, duration_seconds):
                 '-framerate', str(target_fps),
                 '-i', os.path.join(temp_dir, 'frame_%05d.png'),
                 '-c:v', encoder,
-                '-b:v', '20M',  # Higher bitrate
-                '-maxrate', '25M',
-                '-bufsize', '25M',
+                '-b:v', '80M',
+                '-maxrate', '100M',
+                '-bufsize', '100M',
                 '-preset', 'fast',
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
