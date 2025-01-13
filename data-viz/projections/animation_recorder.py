@@ -424,7 +424,8 @@ def record_animation_mac(html_path, output_path, duration_seconds):
 def main():
     from config import OUTPUT_DIR
     
-    modes = ['car', 'walk']
+    #modes = ['car', 'walk']
+    modes = ['walk']
     directions = ['inbound', 'outbound']
     models = ['big', 'small']
     

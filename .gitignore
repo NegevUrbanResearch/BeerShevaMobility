@@ -32,3 +32,5 @@ EDA/shapes/data/*
 EDA/output/*
 EDA/temporal_preprocessing.py
 *.log
+*.jpg
+*.png
