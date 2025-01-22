@@ -503,6 +503,7 @@ class OptimizedCatchmentDashboard:
 
             const poiData = catchmentData[currentPOI];
             const newLayer = L.layerGroup();
+            let currentBounds = null;
             
             if (currentMode === 'layered') {
                 // Sort modes by area before adding to map
@@ -510,7 +511,7 @@ class OptimizedCatchmentDashboard:
                     .sort((a, b) => b[1].area - a[1].area);
                 
                 sortedModes.forEach(([mode, data]) => {
-                    L.geoJSON(data.geometry, {
+                    const layer = L.geoJSON(data.geometry, {
                         style: {
                             color: data.color,
                             fillColor: data.color,
@@ -518,10 +519,17 @@ class OptimizedCatchmentDashboard:
                             weight: 1
                         }
                     }).addTo(newLayer);
+                    
+                    // Update bounds to include all layers
+                    if (!currentBounds) {
+                        currentBounds = layer.getBounds();
+                    } else {
+                        currentBounds.extend(layer.getBounds());
+                    }
                 });
             } else if (poiData.modes[currentMode]) {
                 const modeData = poiData.modes[currentMode];
-                L.geoJSON(modeData.geometry, {
+                const layer = L.geoJSON(modeData.geometry, {
                     style: {
                         color: modeData.color,
                         fillColor: modeData.color,
@@ -529,6 +537,9 @@ class OptimizedCatchmentDashboard:
                         weight: 1
                     }
                 }).addTo(newLayer);
+                
+                // Use specific mode bounds
+                currentBounds = layer.getBounds();
             }
 
             // Add POI marker
@@ -546,14 +557,26 @@ class OptimizedCatchmentDashboard:
             newLayer.addTo(map);
             currentLayer = newLayer;
 
-            // Fit bounds if available
-            if (poiData.bounds) {
-                const bounds = [
-                    [poiData.bounds[1], poiData.bounds[0]],  // Southwest corner
-                    [poiData.bounds[3], poiData.bounds[2]]   // Northeast corner
-                ];
-                map.fitBounds(bounds, {
-                    padding: [30, 30]  // Add padding
+            // Fit bounds with mode-specific padding and zoom adjustments
+            if (currentBounds) {
+                let padding = [50, 50];  // Default padding
+                let maxZoom = 13;        // Default max zoom
+                
+                // Adjust zoom and padding based on mode
+                if (currentMode === 'walk') {
+                    padding = [30, 30];  // Tighter padding for walking
+                    maxZoom = 14;        // Allow closer zoom for walking
+                } else if (currentMode === 'bike') {
+                    padding = [40, 40];
+                    maxZoom = 13;
+                } else if (currentMode === 'layered') {
+                    padding = [60, 60];  // Larger padding for all modes
+                    maxZoom = 12;        // Further out for overview
+                }
+                
+                map.fitBounds(currentBounds, {
+                    padding: padding,
+                    maxZoom: maxZoom
                 });
             }
 

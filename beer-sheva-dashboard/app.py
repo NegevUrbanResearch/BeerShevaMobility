@@ -327,4 +327,4 @@ class DashboardApp:
 
 if __name__ == '__main__':
     dashboard = DashboardApp()
-    dashboard.app.run_server(host='0.0.0.0', debug=True)
+    dashboard.app.run_server(host='0.0.0.0', port=8051, debug=True)
