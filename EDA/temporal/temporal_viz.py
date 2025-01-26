@@ -1,25 +1,184 @@
 import sys
 from pathlib import Path
-# Add the project root to Python path
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
-from EDA.statistics.analyze_patterns import MobilityPatternAnalyzer
 import json
 import pandas as pd
 import numpy as np
+from typing import Dict, List, Optional
+import logging
 
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+from config import OUTPUT_DIR, DATA_DIR
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class MobilityPatternAnalyzer:
+    """Simplified analyzer class for temporal visualizations"""
+    def __init__(self, data_dir: Optional[Path] = None):
+        # Use OUTPUT_DIR from config instead of local data directory
+        self.data_dir = data_dir or Path(OUTPUT_DIR)
+        self.focus_pois = [
+            'Ben-Gurion-University',
+            'Soroka-Medical-Center',
+            'Gav-Yam-High-Tech-Park'
+        ]
 
 class TemporalVisualizationGenerator:
     def __init__(self):
         self.project_root = Path(__file__).parent
-        self.output_dir = self.project_root / "output" / "visualizations"
+        # Use OUTPUT_DIR for both input and output
+        self.output_dir = Path(OUTPUT_DIR) / "visualizations"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Expected column names
+        self.required_columns = ['hour', 'all_dist']
+        
+        # Validation thresholds
+        self.distribution_sum_tolerance = 0.01  # 1% tolerance for sum to 1.0
+        self.midnight_threshold = 0.05  # 5% threshold for midnight values
 
-    def _get_template(self):
+    def validate_temporal_data(self, df: pd.DataFrame, poi_name: str) -> bool:
+        """Validate loaded temporal data for a POI."""
+        try:
+            # Check required columns
+            missing_cols = [col for col in self.required_columns if col not in df.columns]
+            if missing_cols:
+                logger.error(f"Missing required columns for {poi_name}: {missing_cols}")
+                return False
+            
+            # Validate distribution sum
+            total = df['all_dist'].sum()
+            if not np.isclose(total, 1.0, atol=self.distribution_sum_tolerance):
+                logger.error(f"Distribution sum for {poi_name} is {total:.3f}, expected 1.0")
+                return False
+            
+            # Check midnight values
+            midnight_value = df.loc[df['hour'] == 0, 'all_dist'].iloc[0]
+            if midnight_value > self.midnight_threshold:
+                logger.warning(f"High midnight value ({midnight_value:.1%}) for {poi_name}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating data for {poi_name}: {str(e)}")
+            return False
+
+    def load_temporal_data(self, data_dir: Path, poi_name: str, trip_type: str) -> Optional[pd.DataFrame]:
+        """Load and validate temporal data for a POI."""
+        try:
+            file_name = f"{poi_name.lower().replace('-', '_')}_{trip_type}_temporal.csv"
+            file_path = data_dir / file_name
+            
+            if not file_path.exists():
+                logger.error(f"No {trip_type} temporal file found for {poi_name}: {file_path}")
+                return None
+            
+            df = pd.read_csv(file_path)
+            
+            if self.validate_temporal_data(df, poi_name):
+                return df
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error loading {trip_type} data for {poi_name}: {str(e)}")
+            return None
+
+    def calculate_city_average(self, data_dir: Path, focus_pois: List[str], 
+                             trip_type: str) -> Optional[pd.DataFrame]:
+        """Calculate weighted city-wide average excluding focus POIs."""
+        try:
+            # Get all temporal data files
+            all_files = list(data_dir.glob(f"*_{trip_type}_temporal.csv"))
+            
+            # Exclude focus POI files
+            focus_poi_files = {f"{poi.lower().replace('-', '_')}_{trip_type}_temporal.csv" 
+                             for poi in focus_pois}
+            general_files = [f for f in all_files if f.name not in focus_poi_files]
+            
+            if not general_files:
+                logger.error("No general POI files found for city average")
+                return None
+            
+            # Load and validate all general POI data
+            valid_dfs = []
+            for file_path in general_files:
+                poi_name = file_path.stem.replace(f"_{trip_type}_temporal", "")
+                df = pd.read_csv(file_path)
+                
+                if self.validate_temporal_data(df, poi_name):
+                    valid_dfs.append(df)
+            
+            if not valid_dfs:
+                logger.error("No valid POI data found for city average")
+                return None
+            
+            # Calculate weighted average
+            avg_df = pd.concat(valid_dfs).groupby('hour')['all_dist'].mean().reset_index()
+            
+            # Normalize to ensure sum is 1.0
+            avg_df['all_dist'] = avg_df['all_dist'] / avg_df['all_dist'].sum()
+            
+            return avg_df
+            
+        except Exception as e:
+            logger.error(f"Error calculating city average: {str(e)}")
+            return None
+
+    def process_temporal_data(self, analyzer) -> Dict:
+        """Process temporal data for both inbound and outbound trips."""
+        logger.info("Processing temporal data for visualization...")
+        
+        result = {
+            'inbound': [],
+            'outbound': []
+        }
+        
+        # Process data for each trip type
+        for trip_type in ['inbound', 'outbound']:
+            # Process each hour
+            for hour in range(24):
+                # Create time bin label (e.g., "7:00-8:00")
+                next_hour = (hour + 1) % 24
+                time_label = f"{hour:02d}:00-{next_hour:02d}:00"
+                
+                hour_data = {
+                    'hour': f"{hour:02d}:00",  # Keep original hour format for axis
+                    'displayHour': time_label,  # Add display format for tooltip
+                    'x': hour + 0.5  # Add midpoint for line placement
+                }
+                
+                # Process focus POIs
+                for poi in analyzer.focus_pois:
+                    df = self.load_temporal_data(analyzer.data_dir, poi, trip_type)
+                    if df is not None:
+                        hour_value = df.loc[df['hour'] == hour, 'all_dist'].iloc[0]
+                        hour_data[poi] = float(hour_value) * 100  # Convert to percentage
+                    else:
+                        hour_data[poi] = 0.0
+                
+                # Add city-wide average
+                avg_df = self.calculate_city_average(analyzer.data_dir, analyzer.focus_pois, trip_type)
+                if avg_df is not None:
+                    city_value = avg_df.loc[avg_df['hour'] == hour, 'all_dist'].iloc[0]
+                    hour_data['Beer-Sheva-Comparisons'] = float(city_value) * 100
+                else:
+                    hour_data['Beer-Sheva-Comparisons'] = 0.0
+                
+                result[trip_type].append(hour_data)
+        
+        return result
+
+    def _get_template(self) -> str:
+        """Get HTML template with React components."""
         return '''<!DOCTYPE html>
 <html>
 <head>
-    <title>Temporal Trip Patterns</title>
+    <title>Temporal Trip Distributions</title>
     <meta charset="utf-8">
     <!-- Core React -->
     <script src="https://unpkg.com/react@17.0.2/umd/react.development.js"></script>
@@ -63,6 +222,42 @@ class TemporalVisualizationGenerator:
             margin-right: 4px;
             border-radius: 2px;
         }
+        .toggle-button {
+            background: #333;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+        .toggle-button:hover {
+            background: #444;
+        }
+        .mode-toggle {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .mode-toggle button {
+            background: transparent;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .mode-toggle button.active {
+            background: #444;
+            border-color: #666;
+        }
+        .mode-toggle button:hover {
+            background: #333;
+        }
     </style>
 </head>
 <body>
@@ -79,8 +274,10 @@ class TemporalVisualizationGenerator:
             'Beer-Sheva-Comparisons': '#96CEB4'
         };
 
-        const CustomTooltip = ({ active, payload, label }) => {
+        const CustomTooltip = ({ active, payload, label, currentTripType }) => {
             if (active && payload && payload.length) {
+                // Find the full data point to get the display hour
+                const dataPoint = temporalData[currentTripType].find(d => d.hour === label);
                 return (
                     <div style={{
                         background: '#1a1a1a',
@@ -88,7 +285,7 @@ class TemporalVisualizationGenerator:
                         padding: '8px',
                         fontSize: '0.85em'
                     }}>
-                        <p style={{ margin: '0 0 5px' }}><strong>{label}</strong></p>
+                        <p style={{ margin: '0 0 5px' }}><strong>{dataPoint.displayHour}</strong></p>
                         {payload.map((entry, index) => (
                             <p key={index} style={{ 
                                 margin: '2px 0',
@@ -104,19 +301,35 @@ class TemporalVisualizationGenerator:
         };
 
         const App = () => {
+            const [tripType, setTripType] = React.useState('inbound');
+            
             return (
                 <div className="card">
                     <h2 style={{ textAlign: 'center', marginBottom: '20px' }}>
                         Temporal Trip Patterns
                     </h2>
+                    <div className="mode-toggle">
+                        <button 
+                            className={tripType === 'inbound' ? 'active' : ''}
+                            onClick={() => setTripType('inbound')}
+                        >
+                            Inbound Trips
+                        </button>
+                        <button 
+                            className={tripType === 'outbound' ? 'active' : ''}
+                            onClick={() => setTripType('outbound')}
+                        >
+                            Outbound Trips
+                        </button>
+                    </div>
                     <ResponsiveContainer width="100%" height={400}>
                         <LineChart
-                            data={temporalData}
+                            data={temporalData[tripType]}
                             margin={{
                                 top: 5,
                                 right: 30,
                                 left: 20,
-                                bottom: 45  // Increased bottom margin further
+                                bottom: 45
                             }}
                         >
                             <CartesianGrid strokeDasharray="3 3" stroke="#333" />
@@ -128,21 +341,21 @@ class TemporalVisualizationGenerator:
                                     value: 'Hour of Day',
                                     position: 'bottom',
                                     fill: '#fff',
-                                    offset: 10  // Increased offset from x-axis
+                                    offset: 10
                                 }}
                             />
                             <YAxis
                                 stroke="#fff"
                                 tick={{ fill: '#fff' }}
                                 label={{
-                                    value: 'Trip Distribution (%)',
+                                    value: `${tripType.charAt(0).toUpperCase() + tripType.slice(1)} Trips (%)`,
                                     angle: -90,
                                     position: 'insideLeft',
                                     fill: '#fff',
                                     offset: 0
                                 }}
                             />
-                            <Tooltip content={<CustomTooltip />} />
+                            <Tooltip content={<CustomTooltip currentTripType={tripType} />} />
                             {Object.entries(poiColors).map(([poi, color]) => (
                                 <Line
                                     key={poi}
@@ -151,8 +364,16 @@ class TemporalVisualizationGenerator:
                                     stroke={color}
                                     strokeWidth={2}
                                     dot={false}
+                                    xAxisId="x"
                                 />
                             ))}
+                            <XAxis 
+                                dataKey="x"
+                                type="number"
+                                domain={[0, 23]}
+                                hide={true}
+                                xAxisId="x"
+                            />
                         </LineChart>
                     </ResponsiveContainer>
                     <div className="legend">
@@ -172,247 +393,56 @@ class TemporalVisualizationGenerator:
 </body>
 </html>'''
 
-    def process_temporal_data(self, analyzer):
-        """Process temporal data for visualization"""
-        print("\nProcessing temporal data for visualization...")
-        temporal_data = []
-        
-        # Get all possible hours
-        hours = [f"{i:02d}:00" for i in range(24)]
-        
-        # Get list of all temporal data files
-        data_files = list(analyzer.data_dir.glob("*_inbound_temporal.csv"))
-        if not data_files:
-            raise FileNotFoundError("No temporal data files found")
-        
-        # Get focus POI file names for exclusion
-        focus_poi_files = {f"{poi.lower().replace('-', '_')}_inbound_temporal.csv" 
-                          for poi in analyzer.focus_pois}
-        
-        # Filter out focus POIs from the general POI list
-        general_poi_files = [f for f in data_files if f.name not in focus_poi_files]
-        print(f"\nFound {len(data_files)} total temporal files:")
-        print(f"- {len(focus_poi_files)} focus POIs: {', '.join(focus_poi_files)}")
-        print(f"- {len(general_poi_files)} general POIs: {', '.join(f.name for f in general_poi_files)}")
-        
-        # Process each hour
-        for hour in hours:
-            hour_data = {'hour': hour}
-            hour_idx = int(hour.split(':')[0])
-            
-            # Process focus POIs first
-            for poi in analyzer.focus_pois:
-                try:
-                    file_name = f"{poi.lower().replace('-', '_')}_inbound_temporal.csv"
-                    file_path = analyzer.data_dir / file_name
-                    
-                    if file_path.exists():
-                        temporal_df = pd.read_csv(file_path)
-                        row = temporal_df.loc[temporal_df['hour'] == hour_idx]
-                        
-                        if not row.empty:
-                            # Use the 'all' distribution column
-                            percentage = row['all_dist'].iloc[0]
-                            print(f"Focus POI: {poi}, Hour: {hour}, Percentage: {percentage:.3f}")
-                        else:
-                            percentage = 0.0
-                    else:
-                        percentage = 0.0
-                        print(f"No temporal file found for {poi}")
-                    
-                    hour_data[poi] = float(percentage)
-                    
-                except Exception as e:
-                    print(f"Error processing {poi} for hour {hour}: {str(e)}")
-                    hour_data[poi] = 0.0
-            
-            # Process general POIs for city-wide average
-            general_poi_percentages = []
-            for file_path in general_poi_files:
-                try:
-                    temporal_df = pd.read_csv(file_path)
-                    row = temporal_df.loc[temporal_df['hour'] == hour_idx]
-                    
-                    if not row.empty:
-                        percentage = row['all_dist'].iloc[0]
-                        general_poi_percentages.append(percentage)
-                        print(f"General POI: {file_path.stem}, Hour: {hour}, Percentage: {percentage:.3f}")
-                except Exception as e:
-                    print(f"Error processing general POI {file_path.stem} for hour {hour}: {str(e)}")
-            
-            # Calculate Beer Sheva Average
-            if general_poi_percentages:
-                hour_data['Beer-Sheva-Comparisons'] = float(np.mean(general_poi_percentages))
-                print(f"Hour {hour} - City Average: {hour_data['Beer-Sheva-Comparisons']:.3f} "
-                      f"(from {len(general_poi_percentages)} general POIs)")
-            else:
-                hour_data['Beer-Sheva-Comparisons'] = 0.0
-            
-            temporal_data.append(hour_data)
-        
-        # Verify distributions sum to 1.0 (100%)
-        print("\nVerifying distributions:")
-        for poi in analyzer.focus_pois + ['Beer-Sheva-Comparisons']:
-            total = sum(hour_data[poi] for hour_data in temporal_data)
-            print(f"{poi} total: {total:.3f}")
-            if not np.isclose(total, 1.0, atol=0.01):
-                print(f"Warning: {poi} distribution sum ({total:.3f}) is not close to 1.0")
-        
-        # Convert to percentages for visualization
-        for hour_data in temporal_data:
-            for key in hour_data:
-                if key != 'hour':
-                    hour_data[key] *= 100
-        
-        print(f"\nProcessed {len(temporal_data)} hourly data points")
-        if temporal_data:
-            print("\nSample data points:")
-            for i in range(min(3, len(temporal_data))):
-                print(f"Hour {temporal_data[i]['hour']}:")
-                for key, value in temporal_data[i].items():
-                    if key != 'hour':
-                        print(f"  {key}: {value:.1f}%")
-        
-        return temporal_data
-
     def generate_visualization(self, analyzer):
-        """Generate temporal pattern visualization"""
-        print("\nGenerating temporal visualization...")
+        """Generate temporal pattern visualization for both inbound and outbound data."""
+        logger.info("Generating temporal visualization...")
         
         try:
-            # Process the data
+            # Process both inbound and outbound data
             temporal_data = self.process_temporal_data(analyzer)
+            
+            # Validate we have data for at least one trip type
+            if not temporal_data['inbound'] and not temporal_data['outbound']:
+                raise ValueError("No valid temporal data found for any trip type")
             
             # Generate HTML with processed data
             html_content = self._get_template()
             html_content = html_content.replace('DATA_PLACEHOLDER', json.dumps(temporal_data))
             
             output_file = self.output_dir / "temporal_visualization.html"
-            print(f"Writing visualization to: {output_file}")
+            logger.info(f"Writing visualization to: {output_file}")
             
             with open(output_file, 'w') as f:
                 f.write(html_content)
                 
-            print(f"Successfully generated temporal visualization")
+            logger.info("Successfully generated temporal visualization")
             
         except Exception as e:
-            print(f"Error generating visualization: {str(e)}")
+            logger.error(f"Error generating visualization: {str(e)}")
             raise
-        
-    def export_temporal_analysis(self, temporal_data):
-        """
-        Export temporal data with additional analysis metrics for LLM annotation.
-        
-        Args:
-            temporal_data (list): List of dictionaries containing hourly temporal patterns
-        """
-        print("\nExporting temporal analysis for LLM annotation...")
-        
-        # Convert temporal_data to DataFrame for easier analysis
-        df = pd.DataFrame(temporal_data)
-        
-        # Add time period labels
-        def get_time_period(hour):
-            hour = int(hour.split(':')[0])
-            if 5 <= hour < 9:
-                return 'Morning Rush'
-            elif 9 <= hour < 12:
-                return 'Morning'
-            elif 12 <= hour < 14:
-                return 'Lunch'
-            elif 14 <= hour < 17:
-                return 'Afternoon'
-            elif 17 <= hour < 20:
-                return 'Evening Rush'
-            elif 20 <= hour < 23:
-                return 'Evening'
-            else:
-                return 'Night'
-        
-        df['time_period'] = df['hour'].apply(get_time_period)
-        
-        # Calculate additional metrics
-        pois = [col for col in df.columns if col not in ['hour', 'time_period']]
-        
-        analysis_rows = []
-        for idx, row in df.iterrows():
-            hour = row['hour']
-            time_period = row['time_period']
-            
-            # Basic data
-            analysis_row = {
-                'hour': hour,
-                'time_period': time_period
-            }
-            
-            # Add raw percentages for each POI
-            for poi in pois:
-                analysis_row[f'{poi}_pct'] = row[poi]
-            
-            # Find dominant POI for this hour
-            max_poi = max(pois, key=lambda x: row[x])
-            analysis_row['dominant_poi'] = max_poi
-            analysis_row['dominant_poi_pct'] = row[max_poi]
-            
-            # Calculate relative activity level
-            hour_total = sum(row[poi] for poi in pois)
-            analysis_row['total_activity'] = hour_total
-            
-            # Calculate activity ratios compared to city average
-            for poi in pois:
-                if poi != 'Beer-Sheva-Comparisons' and row['Beer-Sheva-Comparisons'] != 0:
-                    ratio = row[poi] / row['Beer-Sheva-Comparisons']
-                    analysis_row[f'{poi}_vs_city_ratio'] = ratio
-            
-            analysis_rows.append(analysis_row)
-        
-        # Convert to DataFrame
-        analysis_df = pd.DataFrame(analysis_rows)
-        
-        # Add hour-over-hour changes
-        for poi in pois:
-            analysis_df[f'{poi}_change'] = analysis_df[f'{poi}_pct'].pct_change()
-        
-        # Calculate peak hours for each POI
-        for poi in pois:
-            peak_hour = analysis_df.loc[analysis_df[f'{poi}_pct'].idxmax(), 'hour']
-            peak_pct = analysis_df[f'{poi}_pct'].max()
-            print(f"Peak hour for {poi}: {peak_hour} ({peak_pct:.1f}%)")
-        
-        # Export to CSV
-        output_file = self.output_dir / "temporal_analysis.csv"
-        analysis_df.to_csv(output_file, index=False)
-        print(f"\nExported temporal analysis to: {output_file}")
-        
-        # Print sample of the analysis
-        print("\nSample of exported analysis:")
-        print(analysis_df[['hour', 'time_period', 'dominant_poi', 'total_activity']].head())
-        
-        return output_file    
+
 
 def main():
     """Main function to run temporal pattern analysis"""
     try:
-        print("Starting temporal pattern analysis...")
+        logger.info("Starting temporal pattern analysis...")
         
-        # Initialize analyzer and generator
-        analyzer = MobilityPatternAnalyzer()
+        # Initialize analyzer with OUTPUT_DIR
+        data_dir = Path(OUTPUT_DIR)
+        if not data_dir.exists():
+            raise FileNotFoundError(f"Data directory not found: {data_dir}")
+            
+        analyzer = MobilityPatternAnalyzer(data_dir)
         generator = TemporalVisualizationGenerator()
         
-        # Generate visualization and get temporal data
-        temporal_data = generator.process_temporal_data(analyzer)
+        # Generate visualization
         generator.generate_visualization(analyzer)
         
-        # Export temporal analysis to CSV
-        analysis_file = generator.export_temporal_analysis(temporal_data)
-        print(f"\nAnalysis exported to: {analysis_file}")
-        
-        print("\nProcess completed successfully!")
+        logger.info("Process completed successfully!")
         
     except Exception as e:
-        print(f"\nError during analysis: {str(e)}")
+        logger.error(f"Error during analysis: {str(e)}")
         raise
-
 
 if __name__ == "__main__":
     main()
