@@ -53,8 +53,8 @@ def load_temporal_distributions():
         file_path = os.path.join(OUTPUT_DIR, filename)
         try:
             df = pd.read_csv(file_path)
-            # Extract car distribution for business hours (6-22)
-            dist = df[(df['hour'] >= 6) & (df['hour'] <= 22)]['car_dist'].values
+            # Extract car distribution for business hours (7-19)
+            dist = df[(df['hour'] >= 7) & (df['hour'] <= 19)]['car_dist'].values
             # Normalize to ensure sum is 1.0
             dist = dist / dist.sum()
             distributions[poi_name] = dist
@@ -88,12 +88,12 @@ def load_trip_data():
         # Animation parameters
         frames_per_second = 30
         minutes_per_simulated_hour = 60
-        hours_per_day = 16  # 6:00-22:00
+        hours_per_day = 12  # Changed from 16 to 12 (7:00-19:00)
         frames_per_hour = frames_per_second * minutes_per_simulated_hour
         animation_duration = frames_per_hour * hours_per_day
         
         logger.info(f"Animation Configuration:")
-        logger.info(f"  - Hours simulated: {hours_per_day} (6:00-22:00)")
+        logger.info(f"  - Hours simulated: {hours_per_day} (7:00-19:00)")  # Updated log message
         logger.info(f"  - Frames per hour: {frames_per_hour}")
         logger.info(f"  - Total frames: {animation_duration}")
         
@@ -249,7 +249,7 @@ def create_animation(html_template, map_style, output_suffix):
     trips_data, center_lat, center_lon, total_trips, animation_duration = load_trip_data()
     buildings_data, text_features, poi_borders, poi_fills = load_building_data()
     
-    hours_simulated = 16
+    hours_simulated = 12
     frames_per_hour = animation_duration // hours_simulated
     
     format_values = {
@@ -265,8 +265,8 @@ def create_animation(html_template, map_style, output_suffix):
         'animation_duration': animation_duration,
         'loopLength': animation_duration,
         'mapbox_api_key': MAPBOX_API_KEY,
-        'start_hour': 6,
-        'end_hour': 22,
+        'start_hour': 7,  # Changed from 6 to 7
+        'end_hour': 19,   # Changed from 22 to 19
         'frames_per_hour': frames_per_hour,
         'map_style': map_style
     }

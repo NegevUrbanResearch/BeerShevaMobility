@@ -78,19 +78,17 @@ def load_trip_data():
         center_lon = (total_bounds[0] + total_bounds[2]) / 2
         center_lat = (total_bounds[1] + total_bounds[3]) / 2
         
-        # Time distribution by hour (6-22) for BGU and Soroka
+        # Time distribution by hour (7-19) for BGU and Soroka
         bgu_dist = {
-            6: 0.000641, 7: 0.020829, 8: 0.148528, 9: 0.132706, 10: 0.181134,
+            7: 0.020829, 8: 0.148528, 9: 0.132706, 10: 0.181134,
             11: 0.091648, 12: 0.110234, 13: 0.067655, 14: 0.071941, 15: 0.036371,
-            16: 0.044302, 17: 0.032646, 18: 0.029481, 19: 0.018466, 20: 0.007851,
-            21: 0.004046, 22: 0.001522
+            16: 0.044302, 17: 0.032646, 18: 0.029481, 19: 0.018466
         }
         
         soroka_dist = {
-            6: 0.024975, 7: 0.080456, 8: 0.270533, 9: 0.110459, 10: 0.089172,
+            7: 0.080456, 8: 0.270533, 9: 0.110459, 10: 0.089172,
             11: 0.051793, 12: 0.052799, 13: 0.058666, 14: 0.103084, 15: 0.030003,
-            16: 0.042910, 17: 0.027154, 18: 0.017264, 19: 0.022796, 20: 0.005699,
-            21: 0.004023, 22: 0.008213
+            16: 0.042910, 17: 0.027154, 18: 0.017264, 19: 0.022796
         }
         
         # Normalize distributions
@@ -103,7 +101,7 @@ def load_trip_data():
         
         # Animation parameters
         total_animation_time = 240000  # 240 seconds (4 minutes) to match HTML template
-        hours_in_day = 16  # 6am to 22pm = 16 hours
+        hours_in_day = 12  # 7am to 7pm = 12 hours
         ms_per_hour = total_animation_time / hours_in_day
         
         trips_data = []
@@ -111,7 +109,7 @@ def load_trip_data():
         
         # Pre-calculate hourly trip totals
         hourly_totals = {hour: {'Ben-Gurion-University': 0, 'Soroka-Medical-Center': 0} 
-                         for hour in range(6, 23)}
+                         for hour in range(7, 20)}
         
         for idx, row in trips_gdf.iterrows():
             try:
@@ -139,7 +137,7 @@ def load_trip_data():
                         hourly_totals[hour][destination] += 1
                         
                         # Calculate timestamps
-                        hour_offset = hour - 6  # Hours since 6am
+                        hour_offset = hour - 7  # Hours since 7am
                         start_time = hour_offset * ms_per_hour
                         path_duration = min(ms_per_hour * 0.8, 15000)  # Cap duration at 15 seconds
                         

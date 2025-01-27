@@ -121,12 +121,12 @@ HTML_TEMPLATE = """
             <input type="range" min="0.5" max="5" step="0.5" value="2.5" id="animation-speed" style="width: 200px">
         </div>
     </div>
-    <div class="time-display">06:00</div>
+    <div class="time-display">07:00</div>
     <div class="methodology-container">
         <h3 style="margin: 0 0 10px 0;">Legend</h3>
         <p style="margin: 0; font-size: 14px;">
             %(total_trips)d car trips simulated to BGU, Gav Yam, and Soroka Hospital.<br><br>
-            Current simulation time: <span id="current-time">06:00</span>
+            Current simulation time: <span id="current-time">07:00</span>
         </p>
         <div class="trip-counters">
             Cumulative Trips (Updated Hourly):<br>
@@ -173,8 +173,8 @@ HTML_TEMPLATE = """
             };
             
             // Animation constants
-            const START_HOUR = 6;
-            const END_HOUR = 22;
+            const START_HOUR = 7;
+            const END_HOUR = 19;
             const HOURS_PER_DAY = END_HOUR - START_HOUR;
             const FRAMES_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
 

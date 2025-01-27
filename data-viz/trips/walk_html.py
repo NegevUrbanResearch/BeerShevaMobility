@@ -62,14 +62,14 @@ HTML_TEMPLATE = """
 <body>
     <div id="container"></div>
     <div id="tooltip"></div>
-    <div class="time-display">06:00</div>
+    <div class="time-display">07:00</div>
     <div class="control-panel">
         <div>
             <label>Trail Length: <span id="trail-value">5</span></label>
             <input type="range" min="1" max="20" value="5" id="trail-length" style="width: 200px">
         </div>
         <div>
-            <label>Animation Speed: <span id="speed-value">1</span></label>
+            <label>Animation Speed: <span id="speed-value">2</span></label>
             <input type="range" min="0.1" max="5" step="0.1" value="1" id="animation-speed" style="width: 200px">
         </div>
     </div>
@@ -78,7 +78,7 @@ HTML_TEMPLATE = """
         <p style="margin: 0; font-size: 0.9em;">
             Represents individual walking trips to POIs using approximate origin locations.<br>
             Total Daily Trips: %(total_trips)d<br>
-            Current Time: <span id="current-time">06:00</span><br>
+            Current Time: <span id="current-time">07:00</span><br>
             <div class="trip-counters">
                 Cumulative Trips:<br>
                 <div class="counter-row">
@@ -124,10 +124,10 @@ HTML_TEMPLATE = """
         const POI_RADIUS = %(poi_radius)f;
 
         // Animation constants
-        const START_HOUR = 6;
-        const END_HOUR = 22;
+        const START_HOUR = 7;
+        const END_HOUR = 19;
         const HOURS_PER_DAY = END_HOUR - START_HOUR;
-        const ANIMATION_DURATION = 240000;  // 240 seconds (4 minutes per cycle, longer than original)
+        const ANIMATION_DURATION = 240000;  // 240 seconds (4 minutes per cycle)
         const LOOP_LENGTH = ANIMATION_DURATION;
         const MS_PER_HOUR = ANIMATION_DURATION / HOURS_PER_DAY;
 
@@ -247,7 +247,7 @@ HTML_TEMPLATE = """
                     'Ben-Gurion-University': 0,
                     'Soroka-Medical-Center': 0
                 };
-            } else if (currentHour > lastHour && lastHour >= 6) {
+            } else if (currentHour > lastHour && lastHour >= 7) {
                 // Add hourly totals to cumulative counts
                 Object.keys(cumulativeCounts).forEach(poi => {
                     cumulativeCounts[poi] += HOURLY_TOTALS[lastHour][poi];
