@@ -270,18 +270,27 @@ HTML_TEMPLATE = """
                 animation.stop();
             }
 
+            let startTime = null;
+            
             animation = popmotion.animate({
                 from: 0,
                 to: LOOP_LENGTH,
                 duration: LOOP_LENGTH / animationSpeed,
                 repeat: Infinity,
-                onUpdate: time => {
-                    const currentFrame = time % ANIMATION_DURATION;
-                    const currentTime = formatTimeString(currentFrame);
-                    // Calculate current hour here before using it
-                    const currentHour = Math.floor((currentFrame / MS_PER_HOUR) + START_HOUR);
+                onUpdate: (time) => {
+                    // Use performance.now() for accurate time tracking
+                    const now = performance.now();
+                    if (!startTime) startTime = now;
                     
-                    // Update time displays
+                    // Calculate elapsed time adjusted for animation speed
+                    const elapsed = (now - startTime) * animationSpeed;
+                    const currentFrame = elapsed % ANIMATION_DURATION;
+                    
+                    // Calculate current hour using adjusted frame
+                    const currentHour = Math.floor((currentFrame / MS_PER_HOUR) + START_HOUR);
+                    const currentTime = formatTimeString(currentFrame);
+                    
+                    // Update displays
                     document.querySelector('.time-display').textContent = currentTime;
                     document.getElementById('current-time').textContent = currentTime;
                     
