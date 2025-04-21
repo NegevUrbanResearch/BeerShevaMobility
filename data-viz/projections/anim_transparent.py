@@ -20,6 +20,7 @@ from trip_processing import (
     standardize_poi_name,
     get_original_trip_counts
 )
+import glob
 
 # Configure logging
 logging.basicConfig(level=ANIMATION_CONFIG['log_level'])
@@ -55,6 +56,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
     routes_json = json.dumps(routes_data)
     poi_colors_json = json.dumps(poi_colors)
     viewport_json = json.dumps(viewport)
+    animation_config_json = json.dumps(ANIMATION_CONFIG)
     
     # Get mode and direction specific settings
     mode_settings = get_mode_settings(mode)
@@ -63,6 +65,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
     # Define animation JavaScript
     animation_js = f"""
             // Animation settings from config
+            const ANIMATION_CONFIG = {animation_config_json};
             const MODE_SETTINGS = {json.dumps(mode_settings)};
             const DIRECTION_SETTINGS = {json.dumps(direction_settings)};
             
@@ -72,6 +75,8 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
             let lastFrame = -1;
             let lastHour = -1;
             let lastCacheUpdate = 0;
+            let lastLoggedMinute = -1;
+            let lastLogTime = 0;
             
             function validateNumericData(route) {{
                 return (
@@ -83,9 +88,56 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
                 );
             }}
             
+            function calculateSegmentSpeed(segment, modeSettings) {{
+                const settings = modeSettings.segment_speed_adjustment;
+                const length = Math.sqrt(
+                    Math.pow(segment[1][0] - segment[0][0], 2) +
+                    Math.pow(segment[1][1] - segment[0][1], 2)
+                );
+                
+                // Normalize length between min and max
+                const normalizedLength = Math.min(
+                    Math.max(
+                        (length - settings.min_segment_length) / 
+                        (settings.max_segment_length - settings.min_segment_length),
+                        0
+                    ),
+                    1
+                );
+                
+                // Calculate speed factor based on length
+                let speedFactor = settings.min_speed_factor + 
+                       (settings.max_speed_factor - settings.min_speed_factor) * normalizedLength;
+                
+                // Apply minimum speed threshold
+                speedFactor = Math.max(speedFactor, settings.min_speed_threshold);
+                
+                return speedFactor;
+            }}
+            
+            function smoothSegmentSpeeds(segments, modeSettings) {{
+                const window = modeSettings.segment_speed_adjustment.smoothing_window;
+                const smoothed = [];
+                
+                for (let i = 0; i < segments.length; i++) {{
+                    let sum = 0;
+                    let count = 0;
+                    
+                    for (let j = Math.max(0, i - window); j <= Math.min(segments.length - 1, i + window); j++) {{
+                        sum += calculateSegmentSpeed(segments[j], modeSettings);
+                        count++;
+                    }}
+                    
+                    smoothed.push(sum / count);
+                }}
+                
+                return smoothed;
+            }}
+            
             function processTrips(currentFrame) {{
                 const currentTime = performance.now();
                 const currentHour = Math.floor((currentFrame / ANIMATION_DURATION) * 24);
+                const currentMinute = Math.floor(((currentFrame / ANIMATION_DURATION) * 24 * 60) % 60);
                 
                 if (
                     currentFrame === lastFrame && 
@@ -107,9 +159,24 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
                     return elapsedTime >= 0 && elapsedTime <= route.duration;
                 }});
                 
-                if ({str(ANIMATION_CONFIG['debug_mode']).lower()}) {{
+                // Log statistics every 30 minutes
+                if (currentMinute % 30 === 0 && currentMinute !== lastLoggedMinute) {{
                     logTripStatistics(currentFrame, activeTrips);
+                    lastLoggedMinute = currentMinute;
                 }}
+                
+                // Apply segment-based speed adjustment
+                activeTrips.forEach(trip => {{
+                    if (trip.path && trip.path.length > 1) {{
+                        const segments = [];
+                        for (let i = 0; i < trip.path.length - 1; i++) {{
+                            segments.push([trip.path[i], trip.path[i + 1]]);
+                        }}
+                        
+                        const speedFactors = smoothSegmentSpeeds(segments, MODE_SETTINGS);
+                        trip.segmentSpeeds = speedFactors;
+                    }}
+                }});
                 
                 cachedActiveTrips = activeTrips;
                 return activeTrips;
@@ -174,27 +241,70 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
             
             function logTripStatistics(currentFrame, activeTrips) {{
                 const currentTime = performance.now();
-                if (currentTime - lastLogTime > 1000) {{
-                    const currentHour = Math.floor((currentFrame / ANIMATION_DURATION) * 24);
-                    const tripsByPOI = {{}};
-                    
-                    Object.keys(POI_COLORS).forEach(poi => {{
-                        tripsByPOI[poi] = 0;
-                    }});
-                    
-                    let totalTrips = 0;
-                    activeTrips.forEach(trip => {{
-                        if (trip.poi && typeof trip.numTrips === 'number') {{
-                            tripsByPOI[trip.poi] = (tripsByPOI[trip.poi] || 0) + trip.numTrips;
-                            totalTrips += trip.numTrips;
+                const currentHour = Math.floor((currentFrame / ANIMATION_DURATION) * 24);
+                const currentMinute = Math.floor(((currentFrame / ANIMATION_DURATION) * 24 * 60) % 60);
+                
+                const tripsByPOI = {{}};
+                const speedStats = {{
+                    min: Infinity,
+                    max: -Infinity,
+                    total: 0,
+                    count: 0
+                }};
+                
+                Object.keys(POI_COLORS).forEach(poi => {{
+                    tripsByPOI[poi] = 0;
+                }});
+                
+                let totalTrips = 0;
+                activeTrips.forEach(trip => {{
+                    if (trip.poi && typeof trip.numTrips === 'number') {{
+                        tripsByPOI[trip.poi] = (tripsByPOI[trip.poi] || 0) + trip.numTrips;
+                        totalTrips += trip.numTrips;
+                        
+                        // Calculate speed statistics
+                        if (trip.path && trip.path.length > 1 && trip.segmentSpeeds) {{
+                            const duration = trip.duration / ANIMATION_CONFIG['fps'];
+                            const distance = trip.path.reduce((total, point, i) => {{
+                                if (i === 0) return 0;
+                                const prev = trip.path[i-1];
+                                const dx = point[0] - prev[0];
+                                const dy = point[1] - prev[1];
+                                return total + Math.sqrt(dx*dx + dy*dy);
+                            }}, 0);
+                            
+                            const baseSpeed = distance / duration;
+                            const adjustedSpeed = baseSpeed * trip.segmentSpeeds.reduce((a, b) => a + b, 0) / trip.segmentSpeeds.length;
+                            
+                            speedStats.min = Math.min(speedStats.min, adjustedSpeed);
+                            speedStats.max = Math.max(speedStats.max, adjustedSpeed);
+                            speedStats.total += adjustedSpeed;
+                            speedStats.count++;
                         }}
-                    }});
-                    
-                    console.log(`Hour ${{currentHour}}:00 - Active trips: ${{totalTrips.toFixed(0)}}`);
-                    console.log('Trips by POI:', tripsByPOI);
-                    
-                    lastLogTime = currentTime;
-                }}
+                    }}
+                }});
+                
+                const avgSpeed = speedStats.count > 0 ? speedStats.total / speedStats.count : 0;
+                
+                console.log(`\\n=== Time: ${{currentHour}}:${{currentMinute.toString().padStart(2, '0')}} ===`);
+                console.log(`Active trips: ${{totalTrips.toFixed(0)}}`);
+                console.log('Trips by POI:', tripsByPOI);
+                console.log('Speed Statistics:', {{
+                    min: speedStats.min.toFixed(2),
+                    max: speedStats.max.toFixed(2),
+                    average: avgSpeed.toFixed(2),
+                    'total trips': speedStats.count
+                }});
+                
+                // Add performance metrics
+                const fps = 1000 / (currentTime - lastLogTime);
+                console.log('Performance:', {{
+                    fps: fps.toFixed(1),
+                    'active trips': activeTrips.length,
+                    'memory usage': (performance.memory?.usedJSHeapSize / 1024 / 1024).toFixed(1) + 'MB'
+                }});
+                
+                lastLogTime = currentTime;
             }}
     """
     
@@ -254,7 +364,6 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
             const ROUTES_DATA = {routes_json};
             const POI_COLORS = {poi_colors_json};
             const HOURS_PER_DAY = 24;
-            let lastLogTime = 0;
             
             const ambientLight = new deck.AmbientLight({{
                 color: [255, 255, 255],
@@ -392,7 +501,17 @@ def load_trip_data(mode, direction):
             )
         else:
             # Load POI data for car trips
-            poi_polygons = gpd.read_file("shapes/data/maps/Be'er_Sheva_Shapefiles_Attraction_Centers.shp")
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            workspace_root = os.path.join(base_dir, 'BeerShevaMobility')
+            search_path = os.path.join(workspace_root, 'shapes', 'data', 'maps', '*Attraction*Centers*.shp')
+            poi_files = glob.glob(search_path)
+            if not poi_files:
+                # Try alternative search pattern
+                search_path = os.path.join(workspace_root, 'shapes', 'data', 'maps', '*.shp')
+                poi_files = glob.glob(search_path)
+                if not poi_files:
+                    raise FileNotFoundError(f"Could not find POI shapefile in {os.path.dirname(search_path)}")
+            poi_polygons = gpd.read_file(poi_files[0])  # Use the first matching file
             poi_polygons = poi_polygons[poi_polygons['ID'].isin([11, 12, 7])]
             POI_ID_MAP = {7: 'BGU', 12: 'Gav Yam', 11: 'Soroka Hospital'}
 
@@ -434,7 +553,8 @@ def main():
                 for model_size in models:
                     # Load model outline and create viewport
                     logger.info(f"Loading model outline for {model_size}")
-                    model_path = f'data-viz/data/model_outline/{model_size} model.shp'
+                    model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                                            'data-viz', 'data', 'model_outline', f'{model_size} model.shp')
                     outline_data = load_model_outline(model_path)
                     logger.info(f"Model outline loaded, got {len(outline_data)} values")
                     model_outline, bounds = outline_data
