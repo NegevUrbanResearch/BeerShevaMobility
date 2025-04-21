@@ -537,17 +537,17 @@ def main():
     segment_duration = 30  # 30 seconds per animation segment
     
     # Define segments to record for each direction
-    # Format: (hour_offset, minute_offset)
-    # For 24-hour animation that spans a full day (12 minutes = 720 seconds total)
-    # Each hour = 30 seconds, each minute = 0.5 seconds
-    inbound_segment = (7, 0)  # 7-8 AM segment for inbound (starts at 7:00 AM)
-    outbound_segment = (17, 0)  # 5-6 PM segment for outbound (starts at 5:00 PM)
+    # Format: (hour_offset, half_hour_offset)
+    # For 24-hour animation that spans a full day (24 minutes = 1440 seconds total)
+    # Each half hour = 30 seconds, each minute = 1 second
+    inbound_segment = (7, 0)  # 7:00-7:30 AM segment for inbound
+    outbound_segment = (17, 0)  # 5:00-5:30 PM segment for outbound
     
     # Convert time offsets to seconds
-    # In a 12-minute (720 second) animation representing 24 hours:
-    # Each hour = 30 seconds of animation time
-    seconds_per_hour = 30
-    seconds_per_minute = 0.5
+    # In a 24-minute (1440 second) animation representing 24 hours:
+    # Each half hour = 30 seconds of animation time
+    seconds_per_half_hour = 30
+    seconds_per_minute = 1
     
     modes = ['car', 'walk']
     directions = ['inbound', 'outbound']
@@ -564,14 +564,14 @@ def main():
                 
                 # Choose appropriate time segment based on direction
                 if direction == 'inbound':
-                    hour, minute = inbound_segment
-                    time_description = f"{hour}-{hour+1}am"
+                    hour, half_hour = inbound_segment
+                    time_description = f"{hour}:00-{hour}:30am"
                 else:  # outbound
-                    hour, minute = outbound_segment
-                    time_description = f"{hour-12}-{hour-11}pm"
+                    hour, half_hour = outbound_segment
+                    time_description = f"{hour-12}:00-{hour-12}:30pm"
                 
                 # Calculate start time offset in seconds
-                start_time_offset = (hour * seconds_per_hour) + (minute * seconds_per_minute)
+                start_time_offset = (hour * 2 * seconds_per_half_hour) + (half_hour * seconds_per_half_hour)
                 
                 # Define output filename with time segment info
                 output_path = os.path.join(
