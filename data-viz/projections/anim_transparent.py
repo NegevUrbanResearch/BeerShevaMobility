@@ -47,7 +47,7 @@ def calculate_animation_duration():
         'car': {
             'speed_factor': 1.0,       # Base speed factor (higher = slower animation)
             'path_multiplier': 15,     # Keeps your path stretching
-            'trail_length': 4,          
+            'trail_length': 6,          
             'min_width': 3,            # Slightly thicker
             'max_width': 8,            # Allow more prominent paths
             'opacity': 0.6,              
@@ -57,7 +57,7 @@ def calculate_animation_duration():
         'walk': {
             'speed_factor': 1.0,       # Base speed factor (higher = slower animation)
             'path_multiplier': 15,     # Keep path stretching
-            'trail_length': 2,           
+            'trail_length': 4,           
             'min_width': 2,            # Slightly thinner than cars
             'max_width': 6,            # Still prominent
             'opacity': 0.6,             
@@ -414,9 +414,9 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     
     for idx, row in trips_gdf.iterrows():
         try:
-            # Filter out trips longer than 25 km
+            # Filter out trips longer than 30 km
             route_distance = calculate_route_distance(row.geometry)
-            if route_distance > 25:
+            if route_distance > 30:
                 debug['filtered_by_distance'] += 1
                 continue
                 
@@ -484,7 +484,7 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     logger.info(f"Original total trips: {debug['original_total']:.2f}")
     logger.info(f"Distributed total trips: {debug['distributed_total']:.2f}")
     logger.info(f"Difference: {(debug['distributed_total'] - debug['original_total']):.2f}")
-    logger.info(f"Trips filtered by distance (>25km): {debug['filtered_by_distance']}")
+    logger.info(f"Trips filtered by distance (>30km): {debug['filtered_by_distance']}")
     if debug['skipped_pois']:
         logger.warning(f"Skipped POIs: {', '.join(debug['skipped_pois'])}")
 
