@@ -362,7 +362,8 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
         'original_total': 0,
         'distributed_total': 0,
         'skipped_pois': set(),
-        'filtered_by_distance': 0
+        'filtered_by_distance': 0,
+        'truncated_trips': 0
     }
 
     # Get the POI name based on direction
@@ -403,6 +404,39 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
             
         return total_distance
 
+    # Function to truncate route at 5km
+    def truncate_route_at_5km(coords):
+        # Calculate cumulative distances
+        cumulative_distance = [0]  # Start with 0 for first point
+        total_distance = 0
+        
+        for i in range(1, len(coords)):
+            # Calculate Haversine distance between consecutive points
+            lon1, lat1 = coords[i-1]
+            lon2, lat2 = coords[i]
+            
+            # Convert to radians
+            lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+            
+            # Haversine formula
+            dlon = lon2 - lon1
+            dlat = lat2 - lat1
+            a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+            c = 2 * np.arcsin(np.sqrt(a))
+            r = 6371  # Radius of earth in kilometers
+            distance = c * r
+            
+            total_distance += distance
+            cumulative_distance.append(total_distance)
+            
+            # If we've reached 5km, truncate here
+            if total_distance >= 5:
+                # Include this point but none after
+                return coords[:i+1], True
+        
+        # If we never reach 5km, return the original coords
+        return coords, False
+
     # Convert temporal_dist values from DataFrame to array if needed
     processed_temporal_dist = {}
     for poi, dist_data in temporal_dist.items():
@@ -414,11 +448,12 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     
     for idx, row in trips_gdf.iterrows():
         try:
-            # Filter out trips longer than 30 km
-            route_distance = calculate_route_distance(row.geometry)
-            if route_distance > 30:
-                debug['filtered_by_distance'] += 1
-                continue
+            # Check if route is longer than 5km and truncate if needed
+            coords = list(row.geometry.coords)
+            truncated_coords, was_truncated = truncate_route_at_5km(coords)
+            
+            if was_truncated:
+                debug['truncated_trips'] += 1
                 
             # 1. Get base trip count
             base_trips = float(row['num_trips'])
@@ -446,12 +481,13 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
                 speed_factor = mode_settings.get('speed_factor', 1.0)
                 
                 route = {
-                    'path': [[float(p[0]), float(p[1])] for p in row.geometry.coords],
+                    'path': [[float(p[0]), float(p[1])] for p in truncated_coords],
                     'startTime': int(hour * frames_per_hour),
                     'duration': int(frames_per_hour * speed_factor),
                     'numTrips': 1,  # Always 1 for walking
                     'mode': mode,
-                    'poi': poi_name
+                    'poi': poi_name,
+                    'truncated': was_truncated
                 }
                 routes_data.append(route)
                 debug['distributed_total'] += 1
@@ -465,12 +501,13 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
                         speed_factor = mode_settings.get('speed_factor', 1.0)
                         
                         route = {
-                            'path': [[float(p[0]), float(p[1])] for p in row.geometry.coords],
+                            'path': [[float(p[0]), float(p[1])] for p in truncated_coords],
                             'startTime': int(hour * frames_per_hour),
                             'duration': int(frames_per_hour * speed_factor),
                             'numTrips': float(trips_in_hour),
                             'mode': mode,
-                            'poi': poi_name
+                            'poi': poi_name,
+                            'truncated': was_truncated
                         }
                         routes_data.append(route)
                         debug['distributed_total'] += trips_in_hour
@@ -484,7 +521,7 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     logger.info(f"Original total trips: {debug['original_total']:.2f}")
     logger.info(f"Distributed total trips: {debug['distributed_total']:.2f}")
     logger.info(f"Difference: {(debug['distributed_total'] - debug['original_total']):.2f}")
-    logger.info(f"Trips filtered by distance (>30km): {debug['filtered_by_distance']}")
+    logger.info(f"Trips truncated at 5km: {debug['truncated_trips']}")
     if debug['skipped_pois']:
         logger.warning(f"Skipped POIs: {', '.join(debug['skipped_pois'])}")
 
@@ -568,8 +605,11 @@ def randomize_trip_timing(routes_data, animation_config):
 # HTML Generation
 #############################################
 
-def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode, direction, model_outline):
+def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode, direction, model_outline, model_size='big'):
     """Create HTML visualization with natural trip distribution and unified speed control."""
+    # Log the model size
+    logger.info(f"Creating visualization with model_size: {model_size}")
+    
     # Convert model outline to GeoJSON format
     model_geojson = {
         'type': 'Feature',
@@ -589,12 +629,16 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
     mode_settings = get_mode_settings(mode)
     direction_settings = get_direction_settings(direction)
     
+    # Adjust trail length for small model
+    trail_length_multiplier = 0.6 if model_size == 'small' else 1.0
+    
     # Define animation JavaScript with improved speed control and smooth movement
     animation_js = f"""
             // Animation control variables
             let isRecording = false, controlledFrame = 0, renderComplete = false, frameCounter = 0;
             let lastFrameTime = performance.now(), lastFrame = -1, lastHour = -1, lastCacheUpdate = 0;
             const MODE_SETTINGS = {json.dumps(mode_settings)};
+            const TRAIL_LENGTH_MULTIPLIER = {trail_length_multiplier};  // Adjust trail length based on model size
             let animationSpeed = 1.0;  // Default animation speed (1.0 = normal speed)
             let cachedActiveTrips = null;
             const BASE_FPS = 30;
@@ -828,7 +872,7 @@ def create_deck_html(routes_data, animation_duration, poi_colors, viewport, mode
                     widthMaxPixels: MODE_SETTINGS.max_width,
                     jointRounded: true,
                     capRounded: true,
-                    trailLength: MODE_SETTINGS.trail_length * 1.5, // Longer trail for smoother appearance
+                    trailLength: MODE_SETTINGS.trail_length * TRAIL_LENGTH_MULTIPLIER * 1.5, // Adjust trail length based on model size
                     currentTime: frame,
                     shadowEnabled: false
                 }});
@@ -1089,7 +1133,8 @@ def main():
                         viewport,
                         mode,
                         direction,
-                        model_outline
+                        model_outline,
+                        model_size
                     )
                     
                     # Save HTML file
