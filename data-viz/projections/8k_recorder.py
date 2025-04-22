@@ -1,231 +1,528 @@
-"""
-Optimized recorder script for capturing animation segments in 8K resolution
-with consistent speed and proper viewport
-"""
 import os
 import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import logging
 import time
 import io
 import cv2
 import numpy as np
-import gc
-
-# Add parent directory to Python path
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(parent_dir)
-
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
-from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from PIL import Image
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
+from itertools import islice
 import subprocess
 import platform
 import shutil
-import psutil
-from config import OUTPUT_DIR
-from projections.anim_transparent import ANIMATION_CONFIG
+# Import configuration from anim_transparent.py
+from anim_transparent import ANIMATION_CONFIG, OUTPUT_DIR
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def monitor_memory():
-    """Monitor and log memory usage"""
-    process = psutil.Process(os.getpid())
-    mem_gb = process.memory_info().rss / 1024 / 1024 / 1024
-    logger.info(f"Current memory usage: {mem_gb:.2f} GB")
-    return mem_gb
-
-def record_hour_segment(html_path, output_dir, hour, fps=30, browser_type='firefox'):
-    """
-    Record a full hour segment in 8K resolution with consistent speed
+def save_frames_as_images(html_path, output_dir):
+    """Save individual frames as PNG images with proper timing"""
+    # Get duration from shared config
+    duration_seconds = ANIMATION_CONFIG['total_seconds']
+    source_fps = ANIMATION_CONFIG['fps']  # Original FPS from config (30)
+    target_fps = 30  # Restore to original FPS
     
-    Parameters:
-    - html_path: Path to the HTML file
-    - output_dir: Directory to save output frames
-    - hour: Hour of day to record (0-23)
-    - fps: Frames per second to capture
-    - browser_type: 'firefox' or 'chrome'
-    """
-    # Calculate frame range for hour
-    frames_per_hour = ANIMATION_CONFIG['frames_per_hour']
-    start_frame = hour * frames_per_hour
-    end_frame = (hour + 1) * frames_per_hour
-    frames_to_capture = end_frame - start_frame
+    # Calculate total frames needed
+    frames_to_capture = int(duration_seconds * target_fps)
     
-    # 8K Resolution settings
-    width = 7680   # 8K width
-    height = 4320  # 8K height
-    
-    # Log memory before starting
-    monitor_memory()
-    
-    # Browser setup for 8K
-    if browser_type == 'firefox':
-        options = FirefoxOptions()
-        options.add_argument('--headless')
-        options.add_argument(f'--width={width}')
-        options.add_argument(f'--height={height}')
-        
-        # Performance settings for 8K rendering
-        options.set_preference('webgl.force-enabled', True)
-        options.set_preference('webgl.disabled', False)
-        options.set_preference('layers.acceleration.force-enabled', True)
-        options.set_preference('gfx.canvas.azure.accelerated', True)
-        options.set_preference('media.hardware-video-decoding.force-enabled', True)
-        
-        # Memory settings for large resolution
-        options.set_preference('javascript.options.mem.max', 4096)  # 4GB JS heap
-        
-        driver = webdriver.Firefox(options=options)
-    else:  # chrome
-        options = ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument(f'--window-size={width},{height}')
-        options.add_argument('--disable-gpu')  # For headless
-        options.add_argument('--enable-webgl')
-        options.add_argument('--js-flags=--max-old-space-size=4096')  # 4GB JS heap
-        
-        driver = webdriver.Chrome(options=options)
+    # Set to 8K resolution (7680x4320)
+    firefox_options = FirefoxOptions()
+    firefox_options.add_argument('--headless')
+    firefox_options.add_argument('--width=7680')
+    firefox_options.add_argument('--height=4320')
+    firefox_options.set_preference('webgl.force-enabled', True)
+    firefox_options.set_preference('webgl.disabled', False)
+    # Add hardware acceleration options
+    firefox_options.set_preference('layers.acceleration.force-enabled', True)
+    firefox_options.set_preference('gfx.canvas.azure.accelerated', True)
+    firefox_options.set_preference('media.hardware-video-decoding.force-enabled', True)
     
     os.makedirs(output_dir, exist_ok=True)
     
+    logger.info("Starting Firefox WebDriver at 8K resolution...")
+    driver = webdriver.Firefox(options=firefox_options)
+    
     try:
-        # Load page
-        logger.info(f"Loading: {html_path}")
+        logger.info(f"Loading page: file://{html_path}")
         driver.get(f'file://{html_path}')
         
-        # Wait for animation to initialize
+        # Wait for initialization with improved checks
         logger.info("Waiting for animation to initialize...")
-        wait = WebDriverWait(driver, 120)  # Increased timeout for 8K
+        max_wait_time = 60
+        start_time = time.time()
         
-        # Check initialization
-        max_attempts = 60  # More attempts for 8K resolution
-        for attempt in range(max_attempts):
-            initialized = driver.execute_script("""
-                return (window.animationStarted === true && 
-                        window.deckglLoaded === true &&
-                        typeof window.setAnimationFrame === 'function')
-            """)
-            
-            if initialized:
-                logger.info("Animation initialized")
-                break
+        while time.time() - start_time < max_wait_time:
+            try:
+                # Check for canvas
+                deck_canvas = driver.find_element(By.CSS_SELECTOR, 'canvas')
+                if not deck_canvas:
+                    logger.info("Canvas element not found yet...")
+                    time.sleep(1)
+                    continue
                 
-            if attempt == max_attempts - 1:
-                raise TimeoutError("Animation failed to initialize")
+                # Check WebGL context
+                webgl_status = driver.execute_script("""
+                    const canvas = document.querySelector('canvas');
+                    if (!canvas) return 'No canvas found';
+                    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                    if (!gl) return 'No WebGL context';
+                    return 'WebGL available';
+                """)
+                logger.info(f"WebGL status: {webgl_status}")
                 
-            time.sleep(2)  # Longer wait between checks for 8K
+                initialized = driver.execute_script("""
+                    if (typeof deck === 'undefined') {
+                        return 'deck.gl not loaded';
+                    }
+                    if (!window.deckglLoaded) {
+                        return 'deck.gl not initialized';
+                    }
+                    if (!window.animationStarted) {
+                        return 'animation not started';
+                    }
+                    return true;
+                """)
+                
+                logger.info(f"Initialization check: {initialized}")
+                
+                if initialized is True:
+                    break
+                    
+            except Exception as e:
+                logger.warning(f"Initialization check error: {str(e)}")
+                
+            time.sleep(1)
         
-        # Configure viewport for 8K (ensure full visibility)
+        if time.time() - start_time >= max_wait_time:
+            logger.error("Initialization timeout - Debug info:")
+            logger.error(f"Page title: {driver.title}")
+            logger.error(f"Page source preview: {driver.page_source[:500]}...")
+            raise TimeoutError("Animation failed to initialize within timeout period")
+        
+        logger.info("Animation initialized successfully!")
+
+        # Apply browser zoom using CSS transform
         driver.execute_script("""
-            // Ensure proper viewport handling for 8K
-            document.body.style.margin = '0';
-            document.body.style.padding = '0';
-            document.body.style.overflow = 'hidden';
+            // Apply strong browser zoom using CSS transforms
+            document.body.style.transformOrigin = 'center center';
+            document.body.style.transform = 'scale(4.0)'; // 400% zoom (4x)
             
-            // Force WebGL to use hardware acceleration if available
-            const canvas = document.querySelector('canvas');
-            if (canvas) {
-                const gl = canvas.getContext('webgl2', {
-                    antialias: true,
-                    preserveDrawingBuffer: true,
-                    powerPreference: 'high-performance'
-                });
-            }
-            
-            // Center view without zooming
+            // Adjust scroll position to center the view if needed
             try {
-                const container = document.getElementById('container');
-                if (container) {
-                    container.style.width = '100vw';
-                    container.style.height = '100vh';
-                    container.style.overflow = 'hidden';
+                // Find the main canvas or container
+                const mapContainer = document.querySelector('.deck-container') || 
+                                   document.querySelector('#deck-container') ||
+                                   document.querySelector('canvas').parentElement;
+                
+                if (mapContainer) {
+                    // Calculate center points
+                    const containerRect = mapContainer.getBoundingClientRect();
+                    const centerX = containerRect.width / 2;
+                    const centerY = containerRect.height / 2;
+                    
+                    // Scroll to center of interest
+                    window.scrollTo({
+                        left: centerX * 4 - window.innerWidth / 2,
+                        top: centerY * 4 - window.innerHeight / 2,
+                        behavior: 'instant'
+                    });
                 }
-            } catch(e) {
-                console.error('Error adjusting container:', e);
+            } catch (e) {
+                // Silent fail for scroll adjustment
             }
         """)
         
-        # Set speed multiplier for consistent playback
-        driver.execute_script("window.setAnimationSpeed(1.0);")
+        # Calculate frame timing
+        frame_interval = 1.0 / target_fps
+        source_frame_interval = 1.0 / source_fps
         
-        # Log activity
-        logger.info(f"Starting 8K recording hour {hour}:00-{hour+1}:00 (frames {start_frame}-{end_frame})...")
-        monitor_memory()
+        # Get the initial animation time
+        start_time = driver.execute_script("return performance.now()")
         
-        # Warm up the renderer with several frames
-        logger.info("Warming up renderer...")
-        for i in range(10):
-            warmup_frame = start_frame + (i % 10)
-            driver.execute_script(f"window.setAnimationFrame({warmup_frame});")
-            time.sleep(0.5)  # Longer warm-up time for 8K
-        
-        # Determine optimal batch size based on available memory
-        available_memory_gb = psutil.virtual_memory().available / (1024**3)
-        batch_size = max(10, min(100, int(available_memory_gb * 10)))
-        logger.info(f"Using batch size of {batch_size} frames based on {available_memory_gb:.2f}GB available memory")
-        
-        # Process frames in batches to manage memory
-        start_time = time.time()
-        for batch_start in range(0, frames_to_capture, batch_size):
-            batch_end = min(batch_start + batch_size, frames_to_capture)
-            logger.info(f"Processing batch {batch_start//batch_size + 1}, frames {batch_start}-{batch_end-1}")
+        # Create a thread pool for parallel image processing
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            futures = []
             
-            # Process frames in parallel within the batch
-            with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
-                futures = []
+            for i in range(frames_to_capture):
+                current_frame = i + 1
+                progress = (current_frame * 100) / frames_to_capture
                 
-                for i in range(batch_start, batch_end):
-                    # Set exact frame to render
-                    frame = start_frame + i
-                    driver.execute_script(f"window.setAnimationFrame({frame});")
-                    
-                    # Wait for rendering to complete (longer for 8K)
-                    max_wait = 1.0  # seconds
-                    render_wait_start = time.time()
-                    render_complete = False
-                    
-                    while time.time() - render_wait_start < max_wait and not render_complete:
-                        try:
-                            render_complete = driver.execute_script("return window.isFrameRendered();")
-                            if render_complete:
-                                break
-                        except Exception as e:
-                            logger.warning(f"Error checking render state: {e}")
-                        time.sleep(0.05)
-                    
-                    # Take screenshot
-                    screenshot = driver.get_screenshot_as_png()
-                    
-                    # Process in parallel
-                    output_path = os.path.join(output_dir, f'frame_{i:05d}.png')
-                    futures.append(executor.submit(process_frame, screenshot, output_path))
-                    
-                    # Log progress
-                    if (i - batch_start) % 10 == 0 or i == batch_end - 1:
-                        frame_progress = 100 * (i + 1) / frames_to_capture
-                        elapsed = time.time() - start_time
-                        rate = (i + 1) / elapsed if elapsed > 0 else 0
-                        remaining = (frames_to_capture - i - 1) / rate if rate > 0 else 0
-                        logger.info(f"Progress: {frame_progress:.1f}% ({i+1}/{frames_to_capture}) | " 
-                                 f"Speed: {rate:.1f} fps | ETA: {remaining:.1f}s")
+                # Calculate timing
+                source_frame = int((i * source_fps) / target_fps)
+                expected_time = start_time + (source_frame * source_frame_interval * 1000)
+                current_time = driver.execute_script("return performance.now()")
                 
-                # Wait for all processing to complete
-                for future in futures:
-                    future.result()
+                if current_time < expected_time:
+                    time.sleep((expected_time - current_time) / 1000)
+                
+                # Capture frame
+                screenshot = driver.get_screenshot_as_png()
+                
+                # Process image in parallel
+                frame_path = os.path.join(output_dir, f'frame_{i:05d}.png')
+                futures.append(executor.submit(process_frame, screenshot, frame_path))
+                
+                # Print progress every 30 frames
+                if current_frame % 30 == 0 or current_frame == frames_to_capture:
+                    logger.info(f"Progress: {progress:.1f}% ({current_frame}/{frames_to_capture} frames)")
+                
+                # Update progress bar
+                driver.execute_script("""
+                    const progressElement = document.querySelector('.progress');
+                    if (progressElement) {
+                        progressElement.style.width = '""" + str(progress) + """%';
+                    }
+                """)
             
-            # Force garbage collection between batches
-            gc.collect()
-            monitor_memory()
+            # Wait for all image processing to complete
+            for future in futures:
+                future.result()
         
-        logger.info("Frame capture completed")
-        return frames_to_capture, fps
+        logger.info("Frame capture completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"Error during frame capture: {str(e)}")
+        raise
+    
+    finally:
+        driver.quit()
+
+def process_frame(screenshot_data, output_path):
+    """Process a single frame in parallel"""
+    image = Image.open(io.BytesIO(screenshot_data))
+    
+    # Convert to RGBA if needed
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    # Optimize image saving
+    image.save(output_path, 'PNG', optimize=True)
+
+def create_video_from_frames(frame_dir, output_path):
+    """Create video from frames using hardware acceleration with 8K settings"""
+    target_fps = 30  # Restore to original FPS
+    frame_files = sorted([f for f in os.listdir(frame_dir) if f.startswith('frame_')])
+    if not frame_files:
+        raise ValueError("No frames found in directory")
+    
+    logger.info(f"Found {len(frame_files)} frames to process")
+    first_frame = cv2.imread(os.path.join(frame_dir, frame_files[0]), cv2.IMREAD_UNCHANGED)
+    height, width = first_frame.shape[:2]
+    
+    # Calculate expected durations
+    total_frames = len(frame_files)
+    total_duration = total_frames / target_fps
+    
+    logger.info(f"Animation timing:")
+    logger.info(f"Total frames: {total_frames}")
+    logger.info(f"Target FPS: {target_fps}")
+    logger.info(f"Total duration: {total_duration:.2f} seconds")
+    logger.info(f"Resolution: {width}x{height}")
+    
+    # Try hardware-accelerated encoding first
+    output_file = output_path.rsplit('.', 1)[0] + '.mp4'
+    
+    # Determine available hardware acceleration
+    system = platform.system()
+    if system == 'Darwin':  # macOS
+        # Use videotoolbox encoder which supports Metal Performance Shaders (MPS)
+        encoder = 'hevc_videotoolbox'
+    elif system == 'Windows':
+        encoder = 'h264_nvenc'  # NVIDIA GPU
+    else:  # Linux
+        encoder = 'h264_vaapi'  # Intel GPU
+    
+    try:
+        # Use 8K-optimized bitrate settings
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',  # Overwrite output file
+            '-framerate', str(target_fps),
+            '-i', os.path.join(frame_dir, 'frame_%05d.png'),
+            '-c:v', encoder,
+            '-b:v', '120M',  # Bitrate for 8K
+            '-maxrate', '140M',
+            '-bufsize', '140M',
+            '-allow_sw', '1',  # Allow software processing if needed
+            '-pix_fmt', 'yuv420p',
+            '-tag:v', 'hvc1',  # For better compatibility
+            '-movflags', '+faststart',
+            output_file
+        ]
+        
+        logger.info(f"Creating 8K video with hardware acceleration ({encoder})...")
+        subprocess.run(ffmpeg_cmd, check=True)
+        logger.info(f"8K video successfully created at: {output_file}")
+        return output_file
+        
+    except subprocess.CalledProcessError:
+        logger.warning(f"Hardware acceleration failed, falling back to software encoding...")
+        
+        # Fall back to software encoding with 8K optimized settings
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',
+            '-framerate', str(target_fps),
+            '-i', os.path.join(frame_dir, 'frame_%05d.png'),
+            '-c:v', 'libx264',
+            '-preset', 'medium',  # Balance between speed and quality
+            '-crf', '20',  # Good quality
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            output_file
+        ]
+        
+        subprocess.run(ffmpeg_cmd, check=True)
+        logger.info(f"8K video successfully created at: {output_file}")
+        return output_file
+
+def record_animation_mac(html_path, output_path, duration_seconds, start_time_offset=0):
+    """Record animation using headless Firefox and ffmpeg at 8K resolution
+    
+    Parameters:
+    - html_path: Path to the HTML file
+    - output_path: Path to save the output video
+    - duration_seconds: Duration to record in seconds
+    - start_time_offset: Seconds to skip before starting recording (default: 0)
+    """
+    logger.info(f"Starting Firefox for 8K screen recording (segment: {start_time_offset}s to {start_time_offset + duration_seconds}s)...")
+    
+    # Set Firefox options for 8K resolution with standard view proportions
+    firefox_options = FirefoxOptions()
+    firefox_options.add_argument('--headless')
+    
+    # Use 8K resolution (7680x4320)
+    firefox_options.add_argument('--width=7680')  # 8K width
+    firefox_options.add_argument('--height=4320')  # 8K height
+    
+    firefox_options.set_preference('webgl.force-enabled', True)
+    firefox_options.set_preference('webgl.disabled', False)
+    firefox_options.set_preference('layers.acceleration.force-enabled', True)
+    firefox_options.set_preference('gfx.canvas.azure.accelerated', True)
+    firefox_options.set_preference('media.hardware-video-decoding.force-enabled', True)
+    
+    driver = webdriver.Firefox(options=firefox_options)
+    
+    try:
+        logger.info(f"Loading page: file://{html_path}")
+        driver.get(f'file://{html_path}')
+        
+        # Wait for initialization
+        WebDriverWait(driver, 60).until(
+            lambda d: d.execute_script("return window.animationStarted === true")
+        )
+        
+        logger.info(f"Animation initialized, applying browser zoom and skipping to {start_time_offset} seconds...")
+        
+        # Use browser-level zoom to get a much stronger zoom effect
+        driver.execute_script("""
+            // Apply moderate browser zoom using CSS transforms
+            document.body.style.transformOrigin = '0 0';  // Top-left corner as origin
+            document.body.style.transform = 'scale(4.0)'; // 400% zoom (4x)
+            
+            // Force immediate scroll to top-left to reset view position
+            window.scrollTo(0, 0);
+            
+            // Now find the map center and scroll to it
+            setTimeout(function() {
+                try {
+                    // Find the main canvas or container
+                    const canvas = document.querySelector('canvas');
+                    const mapContainer = document.querySelector('.deck-container') || 
+                                       document.querySelector('#deck-container') ||
+                                       canvas.parentElement;
+                    
+                    if (mapContainer) {
+                        // Get the center of the map (use the canvas dimensions)
+                        const centerX = canvas.width / 2;
+                        const centerY = canvas.height / 2;
+                        
+                        // Adjust for the zoom factor (4x)
+                        const zoomFactor = 4.0;
+                        const scrollX = (centerX * zoomFactor) - (window.innerWidth / 2);
+                        const scrollY = (centerY * zoomFactor) - (window.innerHeight / 2);
+                        
+                        // Scroll to the calculated center point
+                        window.scrollTo(scrollX, scrollY);
+                    }
+                } catch (e) {
+                    // Silent fail for scroll adjustment
+                }
+            }, 500); // Wait a bit for the transform to take effect
+        """)
+        
+        # Skip to desired start time by advancing the animation time
+        if start_time_offset > 0:
+            # Set animation time variable to start_time_offset
+            driver.execute_script(f"""
+                if (window.animationTime !== undefined) {{
+                    window.animationTime = {start_time_offset};
+                }}
+                
+                // Try to find animation controllers in common frameworks
+                if (window.deck && window.deck.timeline) {{
+                    window.deck.timeline.setTime({start_time_offset});
+                }}
+                
+                // Update any progress indicators
+                const progressElement = document.querySelector('.progress');
+                if (progressElement) {{
+                    const totalDuration = {ANIMATION_CONFIG['total_seconds']};
+                    const progressPercentage = ({start_time_offset} / totalDuration) * 100;
+                    progressElement.style.width = progressPercentage + '%';
+                }}
+            """)
+        
+        logger.info(f"Starting 8K recording for {duration_seconds} seconds...")
+        
+        # Create temporary directory for frames
+        temp_dir = os.path.join(os.path.dirname(output_path), "temp_frames")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        target_fps = ANIMATION_CONFIG['fps']  # Use FPS from config (30)
+        frames_to_capture = int(duration_seconds * target_fps)
+        frame_interval = 1.0 / target_fps
+        
+        logger.info(f"Recording configuration:")
+        logger.info(f"Resolution: 7680x4320 (8K)")
+        logger.info(f"Target FPS: {target_fps}")
+        logger.info(f"Total frames to capture: {frames_to_capture}")
+        logger.info(f"Recording duration: {duration_seconds} seconds")
+        
+        # Inject frame rate control into the page
+        driver.execute_script("""
+            window.lastFrameTime = performance.now();
+            window.frameInterval = %f * 1000;  // Convert to milliseconds
+            
+            // Override requestAnimationFrame to control frame rate
+            const originalRAF = window.requestAnimationFrame;
+            window.requestAnimationFrame = function(callback) {
+                const now = performance.now();
+                const elapsed = now - window.lastFrameTime;
+                
+                if (elapsed >= window.frameInterval) {
+                    window.lastFrameTime = now;
+                    return originalRAF(callback);
+                }
+                
+                // Wait until next frame interval
+                return setTimeout(() => {
+                    window.lastFrameTime = performance.now();
+                    originalRAF(callback);
+                }, window.frameInterval - elapsed);
+            };
+        """ % frame_interval)
+        
+        # Get initial animation time
+        start_time = time.perf_counter()
+        
+        # Create a thread pool for parallel image processing
+        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+            futures = []
+            
+            # Capture frames
+            for i in range(frames_to_capture):
+                # Calculate when this frame should be captured
+                target_time = start_time + (i * frame_interval)
+                current_time = time.perf_counter()
+                
+                # Wait if we're ahead of schedule
+                if current_time < target_time:
+                    time.sleep(target_time - current_time)
+                
+                # Take screenshot
+                screenshot = driver.get_screenshot_as_png()
+                
+                # Process frame in parallel
+                frame_path = os.path.join(temp_dir, f'frame_{i:05d}.png')
+                futures.append(executor.submit(process_frame, screenshot, frame_path))
+                
+                # Print progress
+                if i % 30 == 0 or i == frames_to_capture - 1:
+                    progress = ((i + 1) * 100) / frames_to_capture
+                    logger.info(f"Recording progress: {progress:.1f}% ({i + 1}/{frames_to_capture} frames)")
+                
+                # Update progress bar in browser
+                driver.execute_script(f"""
+                    const progressElement = document.querySelector('.progress');
+                    if (progressElement) {{
+                        progressElement.style.width = '{progress}%';
+                    }}
+                """)
+            
+            # Wait for all image processing to complete
+            for future in futures:
+                future.result()
+        
+        # Calculate actual duration
+        actual_duration = time.perf_counter() - start_time
+        logger.info(f"Recording completed in {actual_duration:.2f} seconds")
+        
+        # Use ffmpeg to create video with exact frame rate
+        output_file = output_path.rsplit('.', 1)[0] + '.mp4'
+        
+        # Determine hardware acceleration codec
+        system = platform.system()
+        if system == 'Darwin':  # macOS
+            # For MPS acceleration on macOS, can use h265 (HEVC) for better quality
+            encoder = 'hevc_videotoolbox'
+        elif system == 'Windows':
+            encoder = 'h264_nvenc'  # NVIDIA GPU
+        else:  # Linux
+            encoder = 'h264_vaapi'  # Intel GPU
+        
+        try:
+            # For 8K quality
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',  # Overwrite output file if it exists
+                '-framerate', str(target_fps),
+                '-i', os.path.join(temp_dir, 'frame_%05d.png'),
+                '-c:v', encoder,
+                '-b:v', '120M',  # High bitrate for 8K
+                '-maxrate', '140M',
+                '-bufsize', '140M',
+                '-allow_sw', '1',  # Allow software processing if needed
+                '-pix_fmt', 'yuv420p',
+                '-tag:v', 'hvc1',  # For better compatibility
+                '-movflags', '+faststart',
+                output_file
+            ]
+            
+            logger.info(f"Creating 8K video with hardware acceleration ({encoder})...")
+            subprocess.run(ffmpeg_cmd, check=True)
+            
+        except subprocess.CalledProcessError:
+            logger.warning("Hardware acceleration failed, falling back to software encoding...")
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-y',
+                '-framerate', str(target_fps),
+                '-i', os.path.join(temp_dir, 'frame_%05d.png'),
+                '-c:v', 'libx264',
+                '-preset', 'medium',  # Balance between speed and quality
+                '-crf', '20',  # Good quality
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                output_file
+            ]
+            subprocess.run(ffmpeg_cmd, check=True)
+        
+        # Clean up temporary files
+        shutil.rmtree(temp_dir)
+        
+        logger.info(f"8K recording completed: {output_file}")
+        return output_file
         
     except Exception as e:
         logger.error(f"Error during recording: {str(e)}")
@@ -233,163 +530,26 @@ def record_hour_segment(html_path, output_dir, hour, fps=30, browser_type='firef
         
     finally:
         driver.quit()
-        gc.collect()
-
-def process_frame(screenshot_data, output_path):
-    """Process a single frame with optimizations for 8K"""
-    try:
-        image = Image.open(io.BytesIO(screenshot_data))
-        
-        # Optimize PNG saving for 8K
-        image.save(output_path, 'PNG', optimize=True, compression_level=6)
-        
-        # Explicitly delete to help memory management
-        del image
-        return output_path
-    except Exception as e:
-        logger.error(f"Error processing frame: {e}")
-        raise
-
-def create_8k_video(frames_dir, output_path, fps):
-    """Create 8K video from frames with appropriate bitrate"""
-    frame_files = sorted([f for f in os.listdir(frames_dir) if f.startswith('frame_')])
-    if not frame_files:
-        raise ValueError("No frames found in directory")
-    
-    # Count frames
-    frame_count = len(frame_files)
-    logger.info(f"Creating 8K video from {frame_count} frames at {fps} fps")
-    
-    # Get dimensions from first frame to confirm 8K
-    first_frame = cv2.imread(os.path.join(frames_dir, frame_files[0]))
-    height, width = first_frame.shape[:2]
-    logger.info(f"Frame resolution: {width}x{height}")
-    
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    
-    # Define output file
-    output_file = output_path if output_path.endswith('.mp4') else output_path + '.mp4'
-    
-    # 8K requires higher bitrate for good quality
-    bitrate = '120M'  # 120 Mbps for 8K
-    
-    # Try hardware acceleration first
-    try:
-        # Choose encoder based on platform
-        if platform.system() == 'Darwin':  # macOS
-            # For macOS, h265/HEVC is better for 8K
-            encoder = 'hevc_videotoolbox'
-            codec_opts = [
-                '-tag:v', 'hvc1',  # For better compatibility
-                '-allow_sw', '1'    # Allow software fallback
-            ]
-        elif platform.system() == 'Windows':
-            # For Windows with NVIDIA GPU
-            encoder = 'h264_nvenc'
-            codec_opts = [
-                '-rc:v', 'vbr',
-                '-cq', '20'
-            ]
-        else:  # Linux
-            # For Linux with Intel GPU
-            encoder = 'h264_vaapi'
-            codec_opts = [
-                '-vaapi_device', '/dev/dri/renderD128'
-            ]
-        
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-framerate', str(fps),
-            '-i', os.path.join(frames_dir, 'frame_%05d.png'),
-            '-c:v', encoder,
-            '-b:v', bitrate,
-            '-maxrate', '140M',  # 140 Mbps max
-            '-bufsize', '160M',  # 160 Mbps buffer
-            '-pix_fmt', 'yuv420p'
-        ]
-        
-        # Add codec specific options
-        ffmpeg_cmd.extend(codec_opts)
-        
-        # Add output file path
-        ffmpeg_cmd.append(output_file)
-        
-        logger.info(f"Creating 8K video with hardware acceleration ({encoder})")
-        subprocess.run(ffmpeg_cmd, check=True)
-        
-    except subprocess.CalledProcessError:
-        logger.info("Hardware acceleration failed, using software encoding")
-        
-        # Fall back to software encoding (higher quality but slower)
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-framerate', str(fps),
-            '-i', os.path.join(frames_dir, 'frame_%05d.png'),
-            '-c:v', 'libx264',
-            '-preset', 'slow',  # Slower but better quality for 8K
-            '-crf', '18',       # Higher quality (lower is better)
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            output_file
-        ]
-        
-        subprocess.run(ffmpeg_cmd, check=True)
-    
-    # Check final video size
-    video_size_mb = os.path.getsize(output_file) / (1024 * 1024)
-    logger.info(f"8K Video created: {output_file} ({video_size_mb:.2f} MB)")
-    return output_file
-
-def record_rush_hour(html_path, output_path, direction):
-    """
-    Record a full rush hour segment in 8K
-    
-    Parameters:
-    - html_path: Path to the HTML file
-    - output_path: Path for the output video
-    - direction: 'inbound' (morning) or 'outbound' (evening)
-    """
-    # Determine hour based on direction
-    hour = 7 if direction == 'inbound' else 17  # 7am or 5pm
-    time_desc = "7am-8am" if direction == 'inbound' else "5pm-6pm"
-    
-    # Create temp directory for frames
-    temp_dir = os.path.join(os.path.dirname(output_path), f"temp_hour_{hour}")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    try:
-        logger.info(f"Recording 8K rush hour: {time_desc}")
-        
-        # Record frames
-        total_frames, fps = record_hour_segment(
-            html_path=html_path,
-            output_dir=temp_dir,
-            hour=hour,
-            fps=ANIMATION_CONFIG['fps']
-        )
-        
-        # Create 8K video
-        create_8k_video(temp_dir, output_path, fps)
-        
-        # Clean up temp files unless requested to keep them
-        if not os.environ.get('KEEP_FRAMES', False):
-            logger.info(f"Cleaning up temporary frames in {temp_dir}")
-            shutil.rmtree(temp_dir)
-        else:
-            logger.info(f"Keeping temporary frames in {temp_dir}")
-        
-        logger.info(f"8K rush hour recording completed: {output_path}")
-        return output_path
-        
-    except Exception as e:
-        logger.error(f"Error recording rush hour: {str(e)}")
-        raise
 
 def main():
-    """Record rush hour segments in 8K for all combinations"""
+    # Removed import from config module since it's now imported from anim_transparent
+    
+    # Recording duration in seconds
+    segment_duration = 30  # 30 seconds per animation segment
+    
+    # Define segments to record for each direction
+    # Format: (hour_offset, minute_offset)
+    # For 24-hour animation that spans a full day (12 minutes = 720 seconds total)
+    # Each hour = 30 seconds, each minute = 0.5 seconds
+    inbound_segment = (7, 0)  # 7-8 AM segment for inbound (starts at 7:00 AM)
+    outbound_segment = (17, 0)  # 5-6 PM segment for outbound (starts at 5:00 PM)
+    
+    # Convert time offsets to seconds
+    # In a 12-minute (720 second) animation representing 24 hours:
+    # Each hour = 30 seconds of animation time
+    seconds_per_hour = ANIMATION_CONFIG['seconds_per_hour']
+    seconds_per_minute = seconds_per_hour / 60  # Calculate based on seconds_per_hour
+    
     modes = ['car', 'walk']
     directions = ['inbound', 'outbound']
     models = ['big', 'small']
@@ -403,23 +563,45 @@ def main():
                     f"projection_animation_{model_size}_{mode}_{direction}.html"
                 )
                 
-                # Time description based on direction
-                time_desc = "7am-8am" if direction == 'inbound' else "5pm-6pm"
+                # Choose appropriate time segment based on direction
+                if direction == 'inbound':
+                    hour, minute = inbound_segment
+                    time_description = f"{hour}-{hour+1}am"
+                else:  # outbound
+                    hour, minute = outbound_segment
+                    time_description = f"{hour-12}-{hour-11}pm"
                 
-                # Output filename
+                # Calculate start time offset in seconds
+                start_time_offset = (hour * seconds_per_hour) + (minute * seconds_per_minute)
+                
+                # Define output filename with time segment info
                 output_path = os.path.join(
                     OUTPUT_DIR, 
-                    f"8K_rush_hour_{model_size}_{mode}_{direction}_{time_desc}.mp4"
+                    f"projection_animation_{model_size}_{mode}_{direction}_{time_description}_8k_zoomed.mp4"
                 )
                 
-                logger.info(f"\nProcessing 8K recording: {model_size} {mode} {direction}")
+                logger.info(f"\nProcessing {model_size} model {mode} {direction} animation at 8K resolution")
+                logger.info(f"Recording segment: {time_description} (offset: {start_time_offset}s, duration: {segment_duration}s)")
                 
-                # Record rush hour in 8K
-                record_rush_hour(
-                    os.path.abspath(html_path),
-                    output_path,
-                    direction
-                )
+                if platform.system() == 'Darwin':  # macOS
+                    record_animation_mac(
+                        os.path.abspath(html_path),
+                        output_path,
+                        segment_duration,
+                        start_time_offset
+                    )
+                else:
+                    # For non-macOS platforms, we'd need to implement similar time-skipping
+                    # in the save_frames_as_images function
+                    logger.warning("Time segment recording not implemented for non-macOS platforms")
+                    frames_dir = os.path.join(
+                        OUTPUT_DIR, 
+                        f"animation_frames_{model_size}_{mode}_{direction}_{time_description}_8k_zoomed"
+                    )
+                    save_frames_as_images(os.path.abspath(html_path), frames_dir)
+                    create_video_from_frames(frames_dir, output_path)
+                
+                logger.info(f"Completed 8K recording: {output_path}")
 
 if __name__ == "__main__":
     main()
