@@ -361,7 +361,8 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     debug = {
         'original_total': 0,
         'distributed_total': 0,
-        'skipped_pois': set()
+        'skipped_pois': set(),
+        'filtered_by_distance': 0
     }
 
     # Get the POI name based on direction
@@ -376,6 +377,32 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
             logger.debug(f"Available columns: {row.index.tolist()}")
             return None
 
+    # Function to calculate route distance in kilometers
+    def calculate_route_distance(geometry):
+        # Calculate total distance of the route in kilometers
+        total_distance = 0
+        coords = list(geometry.coords)
+        
+        for i in range(1, len(coords)):
+            # Calculate Haversine distance between consecutive points
+            lon1, lat1 = coords[i-1]
+            lon2, lat2 = coords[i]
+            
+            # Convert to radians
+            lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+            
+            # Haversine formula
+            dlon = lon2 - lon1
+            dlat = lat2 - lat1
+            a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+            c = 2 * np.arcsin(np.sqrt(a))
+            r = 6371  # Radius of earth in kilometers
+            distance = c * r
+            
+            total_distance += distance
+            
+        return total_distance
+
     # Convert temporal_dist values from DataFrame to array if needed
     processed_temporal_dist = {}
     for poi, dist_data in temporal_dist.items():
@@ -387,6 +414,12 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     
     for idx, row in trips_gdf.iterrows():
         try:
+            # Filter out trips longer than 25 km
+            route_distance = calculate_route_distance(row.geometry)
+            if route_distance > 25:
+                debug['filtered_by_distance'] += 1
+                continue
+                
             # 1. Get base trip count
             base_trips = float(row['num_trips'])
             debug['original_total'] += base_trips
@@ -451,6 +484,7 @@ def process_trips(trips_gdf: gpd.GeoDataFrame,
     logger.info(f"Original total trips: {debug['original_total']:.2f}")
     logger.info(f"Distributed total trips: {debug['distributed_total']:.2f}")
     logger.info(f"Difference: {(debug['distributed_total'] - debug['original_total']):.2f}")
+    logger.info(f"Trips filtered by distance (>25km): {debug['filtered_by_distance']}")
     if debug['skipped_pois']:
         logger.warning(f"Skipped POIs: {', '.join(debug['skipped_pois'])}")
 
