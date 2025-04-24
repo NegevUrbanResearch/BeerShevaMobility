@@ -20,6 +20,7 @@ import platform
 import shutil
 # Import configuration from anim_transparent.py
 from anim_transparent import ANIMATION_CONFIG, OUTPUT_DIR
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -286,220 +287,185 @@ def create_video_from_frames(frame_dir, output_path):
         logger.info(f"8K video successfully created at: {output_file}")
         return output_file
 
-def record_animation_mac(html_path, output_path, duration_seconds, start_time_offset=0):
-    """Record animation using headless Firefox and ffmpeg at 8K resolution
-    
-    Parameters:
-    - html_path: Path to the HTML file
-    - output_path: Path to save the output video
-    - duration_seconds: Duration to record in seconds
-    - start_time_offset: Seconds to skip before starting recording (default: 0)
+def record_animation_mac_enhanced(html_path, output_path, duration_seconds, start_time_offset=0, animation_speed=0.05):
     """
-    logger.info(f"Starting Firefox for 8K screen recording (segment: {start_time_offset}s to {start_time_offset + duration_seconds}s)...")
+    Record animation with guaranteed 30 FPS output and detailed FPS logging
+    to verify proper capture rate accounting for time warping.
+    """
+    logger.info(f"Starting forced 30 FPS recording with animation speed={animation_speed}x")
     
-    # Set Firefox options for 8K resolution with standard view proportions
+    # Setup Firefox
     firefox_options = FirefoxOptions()
     firefox_options.add_argument('--headless')
-    
-    # Use 8K resolution (7680x4320)
-    firefox_options.add_argument('--width=7680')  # 8K width
-    firefox_options.add_argument('--height=4320')  # 8K height
-    
+    firefox_options.add_argument('--width=7680')
+    firefox_options.add_argument('--height=4320')
     firefox_options.set_preference('webgl.force-enabled', True)
     firefox_options.set_preference('webgl.disabled', False)
     firefox_options.set_preference('layers.acceleration.force-enabled', True)
-    firefox_options.set_preference('gfx.canvas.azure.accelerated', True)
-    firefox_options.set_preference('media.hardware-video-decoding.force-enabled', True)
     
     driver = webdriver.Firefox(options=firefox_options)
     
     try:
-        logger.info(f"Loading page: file://{html_path}")
+        # Load animation
         driver.get(f'file://{html_path}')
         
-        # Wait for initialization
+        # Wait for animation to initialize
+        logger.info("Waiting for animation to initialize...")
         WebDriverWait(driver, 60).until(
             lambda d: d.execute_script("return window.animationStarted === true")
         )
         
-        logger.info(f"Animation initialized, applying browser zoom and skipping to {start_time_offset} seconds...")
-        
-        # Use browser-level zoom to get a much stronger zoom effect
-        driver.execute_script("""
-            // Apply moderate browser zoom using CSS transforms
-            document.body.style.transformOrigin = '0 0';  // Top-left corner as origin
-            document.body.style.transform = 'scale(4.0)'; // 400% zoom (4x)
-            
-            // Force immediate scroll to top-left to reset view position
-            window.scrollTo(0, 0);
-            
-            // Now find the map center and scroll to it
-            setTimeout(function() {
-                try {
-                    // Find the main canvas or container
-                    const canvas = document.querySelector('canvas');
-                    const mapContainer = document.querySelector('.deck-container') || 
-                                       document.querySelector('#deck-container') ||
-                                       canvas.parentElement;
-                    
-                    if (mapContainer) {
-                        // Get the center of the map (use the canvas dimensions)
-                        const centerX = canvas.width / 2;
-                        const centerY = canvas.height / 2;
-                        
-                        // Adjust for the zoom factor (4x)
-                        const zoomFactor = 4.0;
-                        const scrollX = (centerX * zoomFactor) - (window.innerWidth / 2);
-                        const scrollY = (centerY * zoomFactor) - (window.innerHeight / 2);
-                        
-                        // Scroll to the calculated center point
-                        window.scrollTo(scrollX, scrollY);
-                    }
-                } catch (e) {
-                    // Silent fail for scroll adjustment
-                }
-            }, 500); // Wait a bit for the transform to take effect
+        # Configure animation with slower speed
+        driver.execute_script(f"""
+            window.setAnimationSpeed({animation_speed});
+            console.log("Animation speed reduced to {animation_speed}x for smoother rendering");
+            document.body.style.transformOrigin = 'center center';
+            document.body.style.transform = 'scale(4.0)';
         """)
         
-        # Skip to desired start time by advancing the animation time
-        if start_time_offset > 0:
-            # Set animation time variable to start_time_offset
-            driver.execute_script(f"""
-                if (window.animationTime !== undefined) {{
-                    window.animationTime = {start_time_offset};
-                }}
-                
-                // Try to find animation controllers in common frameworks
-                if (window.deck && window.deck.timeline) {{
-                    window.deck.timeline.setTime({start_time_offset});
-                }}
-                
-                // Update any progress indicators
-                const progressElement = document.querySelector('.progress');
-                if (progressElement) {{
-                    const totalDuration = {ANIMATION_CONFIG['total_seconds']};
-                    const progressPercentage = ({start_time_offset} / totalDuration) * 100;
-                    progressElement.style.width = progressPercentage + '%';
-                }}
-            """)
-        
-        logger.info(f"Starting 8K recording for {duration_seconds} seconds...")
-        
-        # Create temporary directory for frames
+        # Create temporary directory
         temp_dir = os.path.join(os.path.dirname(output_path), "temp_frames")
         os.makedirs(temp_dir, exist_ok=True)
         
-        target_fps = ANIMATION_CONFIG['fps']  # Use FPS from config (30)
+        # Calculate frame counts
+        target_fps = 30  # FIXED at exactly 30 FPS for output
         frames_to_capture = int(duration_seconds * target_fps)
-        frame_interval = 1.0 / target_fps
+        
+        # Get animation configuration
+        animation_duration = ANIMATION_CONFIG['animation_duration']
+        animation_total_seconds = ANIMATION_CONFIG['total_seconds']
+        animation_frames_per_second = animation_duration / animation_total_seconds
+        start_frame = int(start_time_offset * animation_frames_per_second)
         
         logger.info(f"Recording configuration:")
-        logger.info(f"Resolution: 7680x4320 (8K)")
-        logger.info(f"Target FPS: {target_fps}")
-        logger.info(f"Total frames to capture: {frames_to_capture}")
-        logger.info(f"Recording duration: {duration_seconds} seconds")
+        logger.info(f"- Animation speed: {animation_speed}x")
+        logger.info(f"- Target output FPS: 30 (fixed)")
+        logger.info(f"- Animation frames per second: {animation_frames_per_second:.2f}")
+        logger.info(f"- Starting from animation frame: {start_frame}")
+        logger.info(f"- Frames to capture: {frames_to_capture}")
+        logger.info(f"- Expected final duration: {duration_seconds:.2f} seconds")
         
-        # Inject frame rate control into the page
-        driver.execute_script("""
-            window.lastFrameTime = performance.now();
-            window.frameInterval = %f * 1000;  // Convert to milliseconds
-            
-            // Override requestAnimationFrame to control frame rate
-            const originalRAF = window.requestAnimationFrame;
-            window.requestAnimationFrame = function(callback) {
-                const now = performance.now();
-                const elapsed = now - window.lastFrameTime;
-                
-                if (elapsed >= window.frameInterval) {
-                    window.lastFrameTime = now;
-                    return originalRAF(callback);
-                }
-                
-                // Wait until next frame interval
-                return setTimeout(() => {
-                    window.lastFrameTime = performance.now();
-                    originalRAF(callback);
-                }, window.frameInterval - elapsed);
-            };
-        """ % frame_interval)
+        # FPS tracking variables
+        fps_log_interval = 10  # Log FPS every 10 frames
+        capture_start_time = time.time()
+        last_log_time = capture_start_time
+        frames_since_last_log = 0
         
-        # Get initial animation time
-        start_time = time.perf_counter()
-        
-        # Create a thread pool for parallel image processing
-        with ThreadPoolExecutor(max_workers=mp.cpu_count()) as executor:
+        # Capture frames with precise timing
+        with ThreadPoolExecutor(max_workers=2) as executor:
             futures = []
             
-            # Capture frames
             for i in range(frames_to_capture):
-                # Calculate when this frame should be captured
-                target_time = start_time + (i * frame_interval)
-                current_time = time.perf_counter()
+                frame_start_time = time.time()
                 
-                # Wait if we're ahead of schedule
-                if current_time < target_time:
-                    time.sleep(target_time - current_time)
+                # Calculate exact animation frame for this output frame
+                animation_frame = start_frame + int((i / target_fps) * animation_frames_per_second)
                 
-                # Take screenshot
+                # Request the specific frame
+                driver.execute_script(f"""
+                    renderComplete = false;
+                    window.setAnimationFrame({animation_frame});
+                """)
+                
+                # Wait for frame to complete rendering
+                try:
+                    WebDriverWait(driver, 15).until(
+                        lambda d: d.execute_script("return window.isFrameRendered() === true")
+                    )
+                except Exception as e:
+                    logger.warning(f"Timeout waiting for frame {animation_frame} to render")
+                    time.sleep(1.0)
+                
+                # Capture screenshot
                 screenshot = driver.get_screenshot_as_png()
-                
-                # Process frame in parallel
                 frame_path = os.path.join(temp_dir, f'frame_{i:05d}.png')
                 futures.append(executor.submit(process_frame, screenshot, frame_path))
                 
-                # Print progress
-                if i % 30 == 0 or i == frames_to_capture - 1:
-                    progress = ((i + 1) * 100) / frames_to_capture
-                    logger.info(f"Recording progress: {progress:.1f}% ({i + 1}/{frames_to_capture} frames)")
+                # Update FPS tracking
+                frame_end_time = time.time()
+                frame_duration = frame_end_time - frame_start_time
+                frames_since_last_log += 1
                 
-                # Update progress bar in browser
-                driver.execute_script(f"""
-                    const progressElement = document.querySelector('.progress');
-                    if (progressElement) {{
-                        progressElement.style.width = '{progress}%';
-                    }}
-                """)
+                # Log FPS metrics periodically
+                if i % fps_log_interval == 0 or i == frames_to_capture - 1:
+                    current_time = time.time()
+                    elapsed_since_last_log = current_time - last_log_time
+                    total_elapsed = current_time - capture_start_time
+                    
+                    # Calculate various FPS metrics
+                    if elapsed_since_last_log > 0:
+                        actual_fps = frames_since_last_log / elapsed_since_last_log
+                        effective_fps = actual_fps / animation_speed  # Account for time warping
+                        
+                        # Calculate estimated final duration
+                        if i > 0:
+                            estimated_total_time = (total_elapsed / (i+1)) * frames_to_capture
+                            estimated_remaining = estimated_total_time - total_elapsed
+                        else:
+                            estimated_remaining = "calculating..."
+                        
+                        # Log detailed FPS information
+                        logger.info(f"\nFrame {i+1}/{frames_to_capture} ({((i+1)/frames_to_capture*100):.1f}%)")
+                        logger.info(f"- Last frame render time: {frame_duration:.2f}s")
+                        logger.info(f"- Real-time capture rate: {actual_fps:.2f} fps")
+                        logger.info(f"- Effective output rate: {effective_fps:.2f} fps (target: 30 fps)")
+                        logger.info(f"- Time elapsed: {total_elapsed:.2f}s")
+                        logger.info(f"- Estimated remaining: {estimated_remaining if isinstance(estimated_remaining, str) else f'{estimated_remaining:.2f}s'}")
+                        logger.info(f"- Final video will be exactly 30 fps regardless of capture rate")
+                        
+                        # Reset tracking for next interval
+                        last_log_time = current_time
+                        frames_since_last_log = 0
+                        
+                        # Warning if effective FPS is too far from target
+                        if effective_fps < 25 or effective_fps > 35:
+                            logger.warning(f"⚠️ Effective FPS ({effective_fps:.2f}) is significantly different from target (30)")
+                            if effective_fps < 25:
+                                logger.warning(f"Consider reducing animation_speed for smoother rendering")
             
-            # Wait for all image processing to complete
+            # Wait for processing
             for future in futures:
                 future.result()
         
-        # Calculate actual duration
-        actual_duration = time.perf_counter() - start_time
-        logger.info(f"Recording completed in {actual_duration:.2f} seconds")
+        # Calculate final recording statistics
+        total_record_time = time.time() - capture_start_time
+        average_real_fps = frames_to_capture / total_record_time
+        average_effective_fps = average_real_fps / animation_speed
         
-        # Use ffmpeg to create video with exact frame rate
+        logger.info(f"\nRecording completed!")
+        logger.info(f"- Total frames captured: {frames_to_capture}")
+        logger.info(f"- Total recording time: {total_record_time:.2f} seconds")
+        logger.info(f"- Average real-time capture rate: {average_real_fps:.2f} fps")
+        logger.info(f"- Average effective fps: {average_effective_fps:.2f} fps")
+        logger.info(f"- Animation speed used: {animation_speed}x")
+        logger.info(f"- Final video will be exactly 30 fps regardless of capture rate")
+        
+        # Reset animation
+        driver.execute_script("window.setNormalPlayback(); window.setAnimationSpeed(1.0);")
+        
+        # Create video with EXACTLY 30 FPS
         output_file = output_path.rsplit('.', 1)[0] + '.mp4'
         
-        # Determine hardware acceleration codec
-        system = platform.system()
-        if system == 'Darwin':  # macOS
-            # For MPS acceleration on macOS, can use h265 (HEVC) for better quality
-            encoder = 'hevc_videotoolbox'
-        elif system == 'Windows':
-            encoder = 'h264_nvenc'  # NVIDIA GPU
-        else:  # Linux
-            encoder = 'h264_vaapi'  # Intel GPU
-        
         try:
-            # For 8K quality
+            # macOS hardware-accelerated encoding
             ffmpeg_cmd = [
                 'ffmpeg',
-                '-y',  # Overwrite output file if it exists
-                '-framerate', str(target_fps),
+                '-y',
+                '-framerate', '30',  # Force 30 FPS input interpretation
                 '-i', os.path.join(temp_dir, 'frame_%05d.png'),
-                '-c:v', encoder,
-                '-b:v', '120M',  # High bitrate for 8K
+                '-c:v', 'hevc_videotoolbox',
+                '-b:v', '120M',
                 '-maxrate', '140M',
                 '-bufsize', '140M',
-                '-allow_sw', '1',  # Allow software processing if needed
+                '-r', '30',  # Force 30 FPS output
+                '-vsync', 'cfr',  # Constant frame rate
                 '-pix_fmt', 'yuv420p',
-                '-tag:v', 'hvc1',  # For better compatibility
+                '-tag:v', 'hvc1',
                 '-movflags', '+faststart',
                 output_file
             ]
             
-            logger.info(f"Creating 8K video with hardware acceleration ({encoder})...")
+            logger.info("Creating video with exact 30 FPS timing using hardware acceleration...")
             subprocess.run(ffmpeg_cmd, check=True)
             
         except subprocess.CalledProcessError:
@@ -507,27 +473,32 @@ def record_animation_mac(html_path, output_path, duration_seconds, start_time_of
             ffmpeg_cmd = [
                 'ffmpeg',
                 '-y',
-                '-framerate', str(target_fps),
+                '-framerate', '30',  # Force 30 FPS input interpretation
                 '-i', os.path.join(temp_dir, 'frame_%05d.png'),
                 '-c:v', 'libx264',
-                '-preset', 'medium',  # Balance between speed and quality
-                '-crf', '20',  # Good quality
+                '-preset', 'medium',
+                '-crf', '20',
+                '-r', '30',  # Force 30 FPS output
+                '-vsync', 'cfr',  # Constant frame rate
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
                 output_file
             ]
             subprocess.run(ffmpeg_cmd, check=True)
         
-        # Clean up temporary files
-        shutil.rmtree(temp_dir)
+        # Log final ffmpeg command that was used
+        logger.info(f"FFmpeg command used: {' '.join(ffmpeg_cmd)}")
         
-        logger.info(f"8K recording completed: {output_file}")
+        # Clean up
+        shutil.rmtree(temp_dir)
+        logger.info(f"Successfully created 30 FPS video: {output_file}")
         return output_file
         
     except Exception as e:
         logger.error(f"Error during recording: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
-        
     finally:
         driver.quit()
 
@@ -584,7 +555,7 @@ def main():
                 logger.info(f"Recording segment: {time_description} (offset: {start_time_offset}s, duration: {segment_duration}s)")
                 
                 if platform.system() == 'Darwin':  # macOS
-                    record_animation_mac(
+                    record_animation_mac_enhanced(
                         os.path.abspath(html_path),
                         output_path,
                         segment_duration,
