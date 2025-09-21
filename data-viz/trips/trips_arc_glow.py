@@ -5,6 +5,7 @@ import os
 import logging
 import json
 import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import OUTPUT_DIR
 
@@ -14,19 +15,20 @@ logger = logging.getLogger(__name__)
 
 # Constants
 POI_INFO = {
-    'BGU': {
-        'color': [0, 210, 255],
-        'lat': 31.2614375,
-        'lon': 34.7995625,
-        'name': 'Ben-Gurion-University'
+    "BGU": {
+        "color": [0, 210, 255],
+        "lat": 31.2614375,
+        "lon": 34.7995625,
+        "name": "Ben-Gurion-University",
     },
-    'Soroka Hospital': {
-        'color': [255, 100, 255],
-        'lat': 31.2579375,
-        'lon': 34.8003125,
-        'name': 'Soroka-Medical-Center'
-    }
+    "Soroka Hospital": {
+        "color": [255, 100, 255],
+        "lat": 31.2579375,
+        "lon": 34.8003125,
+        "name": "Soroka-Medical-Center",
+    },
 }
+
 
 def get_html_template():
     """Return HTML template with proper escaping"""
@@ -42,6 +44,9 @@ def get_html_template():
     <style>
         body { margin: 0; padding: 0; }
         #container { width: 100vw; height: 100vh; position: relative; }
+        
+        /* Basic RTL support - let the RTL plugin handle map labels */
+        
         .control-panel {
             position: absolute;
             top: 20px;
@@ -203,8 +208,16 @@ def get_html_template():
         let animationFrame;
         const ANIMATION_STEP = 0.01;  // How much time advances each frame
         
-        // Mapbox configuration
+        // Mapbox configuration  
         const MAPBOX_TOKEN = 'MAPBOX_API_KEY_PLACEHOLDER';  // Will be replaced by Python
+        
+        // Initialize RTL text plugin for Hebrew support
+        if (typeof maplibregl !== 'undefined' && maplibregl.setRTLTextPlugin) {
+            maplibregl.setRTLTextPlugin(
+                'https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js',
+                true // Lazy load the plugin
+            );
+        }
         
         // Initialize deck.gl
         const deckgl = new deck.DeckGL({
@@ -219,10 +232,12 @@ def get_html_template():
             },
             controller: true,
             getTooltip: ({object}) => object && {
-                html: `<div>Trip to ${object.destination}</div>`,
+                html: `<div style="direction: ltr; text-align: left;">Trip to ${object.destination}</div>`,
                 style: {
                     backgroundColor: '#f5f5f5',
-                    fontSize: '12px'
+                    fontSize: '12px',
+                    direction: 'ltr',
+                    textAlign: 'left'
                 }
             }
         });
@@ -404,71 +419,79 @@ def get_html_template():
 </html>
 """
 
+
 def create_arc_visualization(input_file, output_dir):
     """Create arc visualization from pre-processed temporal data"""
     logger.info(f"Loading temporal data from: {input_file}")
-    
+
     try:
         # Load temporal arc data
         gdf = gpd.read_file(input_file)
-        
+
         # Convert GeoDataFrame to arc format
         arc_data = []
         for _, row in gdf.iterrows():
             # Convert departure_time to hours since midnight
-            departure_time = pd.to_datetime(row['departure_time'])
+            departure_time = pd.to_datetime(row["departure_time"])
             # Add random minutes within the hour
             random_minutes = np.random.uniform(0, 60)
             hours = departure_time.hour + (departure_time.minute + random_minutes) / 60
-            
+
             # Extract coordinates from geometry
-            coords = list(row['geometry'].coords)
+            coords = list(row["geometry"].coords)
             source_coords = coords[0]
             target_coords = coords[-1]
-            
+
             # Validate coordinates
-            if not (isinstance(source_coords[0], (int, float)) and 
-                   isinstance(source_coords[1], (int, float)) and
-                   isinstance(target_coords[0], (int, float)) and
-                   isinstance(target_coords[1], (int, float))):
-                logger.warning(f"Invalid coordinates found: {source_coords}, {target_coords}")
+            if not (
+                isinstance(source_coords[0], (int, float))
+                and isinstance(source_coords[1], (int, float))
+                and isinstance(target_coords[0], (int, float))
+                and isinstance(target_coords[1], (int, float))
+            ):
+                logger.warning(
+                    f"Invalid coordinates found: {source_coords}, {target_coords}"
+                )
                 continue
-                
-            arc_data.append({
-                'source_lon': float(source_coords[0]),  # Ensure float
-                'source_lat': float(source_coords[1]),
-                'target_lon': float(target_coords[0]),
-                'target_lat': float(target_coords[1]),
-                'departure_time': float(hours),  # Ensure float
-                'destination': str(row['destination'])  # Ensure string
-            })
-        
+
+            arc_data.append(
+                {
+                    "source_lon": float(source_coords[0]),  # Ensure float
+                    "source_lat": float(source_coords[1]),
+                    "target_lon": float(target_coords[0]),
+                    "target_lat": float(target_coords[1]),
+                    "departure_time": float(hours),  # Ensure float
+                    "destination": str(row["destination"]),  # Ensure string
+                }
+            )
+
         logger.info(f"Processed {len(arc_data)} temporal arcs")
-        
+
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Get template and replace placeholders
         template = get_html_template()
-        html_content = template.replace('ARCDATA', json.dumps(arc_data))
-        
+        html_content = template.replace("ARCDATA", json.dumps(arc_data))
+
         # Save visualization
         output_file = os.path.join(output_dir, "walking_arc_visualization_glow.html")
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             f.write(html_content)
-            
+
         logger.info(f"Visualization saved to: {output_file}")
         return output_file
-        
+
     except Exception as e:
         logger.error(f"Failed to create visualization: {str(e)}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     # Example usage
     input_file = os.path.join(OUTPUT_DIR, "temporal_arcs.json")
     output_dir = OUTPUT_DIR
-    
+
     try:
         output_file = create_arc_visualization(input_file, output_dir)
         print(f"Arc visualization saved to: {output_file}")
