@@ -1,62 +1,41 @@
 # Beer Sheva Mobility Analysis
 
-A comprehensive mobility data analysis and visualization platform for Beer Sheva, focusing on Points of Interest (POIs) and travel patterns.
+Mobility data pipeline, analysis, and HTML visualizations for Beer Sheva POIs. Processed outputs in `output/dashboard_data/` are consumed by a separate JS frontend.
 
-## Project Components
+## Structure
 
-### 1. ETL & Analytics Pipeline (@EDA)
-Tools for analyzing and visualizing specific Points of Interest:
-- ETL scripts for loading, preprocessing, and exploring mobility data
-- Advanced geospatial analytics including:
-  - Origin-destination matrices
-  - Temporal trip pattern analysis
-  - Catchment area calculations
-  - Trip density clustering
-  - Modal split analysis
-- Static maps of trip patterns
-- Detecting and summarizing trip patterns
+| Directory | Purpose |
+|-----------|---------|
+| `src/mobility/` | Shared config, data loading, and utilities |
+| `pipeline/` | ETL scripts that produce `output/dashboard_data/` |
+| `viz/` | Deck.gl HTML visualizations and projection renders |
+| `analysis/` | Exploratory analysis, catchment maps, slides |
+| `data/` | Raw and processed input data (not in git) |
+| `shapes/data/` | Spatial layers (zones, buildings, entrances) |
+| `output/` | Generated outputs for the frontend and visualizations |
 
-### 2. Interactive Dashboard (@Dashboard)
-Web interface for exploring mobility data:
-- Interactive maps showing trip distributions
-- Charts for visualizing trip modes, purposes, and frequencies
-- Time-based analysis of trip patterns
+## Quick start
 
-### 3. Advanced Visualizations (@roads)
-Dynamic visualizations of mobility patterns:
-- Animated trip flows
-- Walking route analysis
-- Road usage heatmaps
-- Temporal distribution analysis
-- Building-level visualizations
+```bash
+pip install -r requirements.txt
+
+python pipeline/pre_preprocess_data.py
+python pipeline/preprocess_data.py
+python pipeline/temporal_preprocessing.py
+```
+
+Frontend-facing files land in `output/dashboard_data/` (`*_trips.csv`, `zones.geojson`, temporal CSVs, etc.).
+
+See `pipeline/README.md` for the full pipeline and visualization commands.
 
 ## Dataset
 
-The analysis uses mobility data for Beer Sheva prepared by PGL Transportation Engineering and Planning Ltd. and collected by Decell:
+Mobility data prepared by PGL Transportation Engineering and Planning Ltd., collected by Decell:
 
-- **Time Period**: November 2019 - February 2020, July 2021
+- **Time period**: November 2019 – February 2020; July 2021
 - **Coverage**: Hundreds of thousands of unique users (18+)
 - **Scope**: 13 Points of Interest
-- **Data Points**: 
-  - Origin/Destination
-  - Trip Purpose
-  - Travel Mode
-  - Travel Time
-  - Entry/Exit times
-  - Trip Frequency
 
-## Required Data Sources
+## Data privacy
 
-1. Trip Data:
-   - Excel files containing trip data (Proprietary)
-   - Statistical area spatial data (GDB format)
-   - POI coordinates (CSV from Google Maps API)
-
-2. Spatial Data:
-   - Building footprints (OpenStreetMap)
-   - Road network data (OTP model built locally)
-   - Statistical area boundaries
-
-## Note on Data Privacy
-
-This project uses sensitive mobility data. Raw data files are not included in the repository. Ensure you have necessary permissions before using or sharing any data.
+Raw trip data is not included in this repository. Do not commit proprietary data files.

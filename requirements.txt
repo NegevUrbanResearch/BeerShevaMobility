@@ -1,0 +1,36 @@
+# Core package (install with: pip install -e .)
+-e .
+
+# Geospatial
+fiona>=1.10b2
+geopandas==0.12.2
+pyproj
+osmnx
+rtree
+
+# Data processing
+pandas==1.5.3
+numpy==1.24.3
+openpyxl==3.0.10
+scipy
+fuzzywuzzy
+python-Levenshtein
+
+# Visualization
+matplotlib==3.7.1
+folium==0.14.0
+branca==0.6.0
+pydeck
+geopy
+
+# Pipeline / routing
+requests
+tqdm
+polyline
+python-dotenv
+
+# Analysis / reporting
+jinja2
+
+# Dev
+pytest

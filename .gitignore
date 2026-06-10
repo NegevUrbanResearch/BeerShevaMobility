@@ -1,36 +1,47 @@
-*# Python*
-**pycache**/
+# Python
+__pycache__/
 *.pyc
-*# System files*
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# System
 .DS_Store
-*# Draft files*
-Dashboard/dashboard-draft1.py
-Dashboard/pie-charts-draft1.py
-*# Data and output directories*
-Dashboard/data/*
-Dashboard/output/*
-**/output/dashboard_data/*
-**/output/comparison_maps/*
-*# Excel files*
+
+# Environment
+.env
+.venv/
+venv/
+
+# Test cache
+.pytest_cache/
+
+# Data and outputs (sensitive / large)
+data/
+output/
+shapes/data/
+cache/
+
+# Generated artifacts
 *.xlsx
-*# GDB files*
-*.gdb
-*.gdb/*
-*# CSV files*
 *.csv
 *.html
 *.png
-*# CSV files with sensitive/proprietary data*
-**/poi_with_exact_coordinates.csv
-*.env
-*json
-*maps*
-*/data
-*filtered-entrances*
-data-viz/data/
-EDA/shapes/data/*
-EDA/output/*
-EDA/temporal_preprocessing.py
-*.log
 *.jpg
-*.png
+*.mp4
+*.geojson
+*.json
+*.log
+
+# Geodatabases
+*.gdb
+*.gdb/**
+
+# Sensitive
+**/poi_with_exact_coordinates.csv
+
+# Legacy
+Dashboard/
+EDA/
+data-viz/
