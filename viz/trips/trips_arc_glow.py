@@ -1,11 +1,19 @@
-import pandas as pd
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
 import geopandas as gpd
 import numpy as np
-import os
-import logging
-import json
+import pandas as pd
 
-from mobility.config import OUTPUT_DIR
+from mobility.config import OUTPUT_DIR, OUTPUT_ROOT
+from mobility.utils.walk_work_trips import (
+    build_work_share_lookup,
+    compute_work_hourly_distributions,
+    get_work_share,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,14 +35,97 @@ POI_INFO = {
     },
 }
 
-def get_html_template():
+def get_theme_config(light_theme: bool) -> dict:
+    if light_theme:
+        return {
+            "map_style": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+            "panel_bg": "rgba(255, 255, 255, 0.92)",
+            "panel_color": "#1a1a1a",
+            "panel_shadow": "0 1px 4px rgba(0, 0, 0, 0.15)",
+            "group_bg": "rgba(0, 0, 0, 0.05)",
+            "slider_bg": "#d1d5db",
+            "speed_label_color": "#4b5563",
+            "time_color": "#0369a1",
+            "button_bg": "#0284c7",
+            "button_color": "#ffffff",
+            "pause_bg": "#dc2626",
+            "pause_color": "#ffffff",
+            "stats_note_color": "#4b5563",
+            "tooltip_bg": "#ffffff",
+            "title": "Work Trip Arc Visualization",
+            "description": (
+                "Inbound work-purpose walking trips to Ben-Gurion University "
+                "and Soroka Medical Center."
+            ),
+            "bgu_arc": "[0, 200, 90]",
+            "bgu_arc_target": "[0, 150, 70]",
+            "soroka_arc": "[170, 0, 255]",
+            "soroka_arc_target": "[130, 0, 200]",
+        }
+    return {
+        "map_style": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        "panel_bg": "rgba(0, 0, 0, 0.85)",
+        "panel_color": "#FFFFFF",
+        "panel_shadow": "0 4px 6px rgba(0, 0, 0, 0.1)",
+        "group_bg": "rgba(255, 255, 255, 0.1)",
+        "slider_bg": "#4a4a4a",
+        "speed_label_color": "#ccc",
+        "time_color": "#00d2ff",
+        "button_bg": "#00d2ff",
+        "button_color": "#000",
+        "pause_bg": "#ff4b4b",
+        "pause_color": "#ffffff",
+        "stats_note_color": "#ccc",
+        "tooltip_bg": "#f5f5f5",
+        "title": "Walking Trip Arc Visualization",
+        "description": (
+            "Arcs in this visualization represent inbound walking trips to "
+            "Ben Gurion University & Soroka Medical Center."
+        ),
+        "bgu_arc": "[0, 210, 255]",
+        "bgu_arc_target": "[0, 150, 255]",
+        "soroka_arc": "[255, 100, 255]",
+        "soroka_arc_target": "[200, 50, 255]",
+    }
+
+
+def apply_theme_to_template(template: str, light_theme: bool) -> str:
+    theme = get_theme_config(light_theme)
+    replacements = {
+        "THEME_TITLE": theme["title"],
+        "THEME_MAP_STYLE": theme["map_style"],
+        "THEME_PANEL_BG": theme["panel_bg"],
+        "THEME_PANEL_COLOR": theme["panel_color"],
+        "THEME_PANEL_SHADOW": theme["panel_shadow"],
+        "THEME_GROUP_BG": theme["group_bg"],
+        "THEME_SLIDER_BG": theme["slider_bg"],
+        "THEME_SPEED_LABEL_COLOR": theme["speed_label_color"],
+        "THEME_TIME_COLOR": theme["time_color"],
+        "THEME_BUTTON_BG": theme["button_bg"],
+        "THEME_BUTTON_COLOR": theme["button_color"],
+        "THEME_PAUSE_BG": theme["pause_bg"],
+        "THEME_PAUSE_COLOR": theme["pause_color"],
+        "THEME_STATS_NOTE_COLOR": theme["stats_note_color"],
+        "THEME_TOOLTIP_BG": theme["tooltip_bg"],
+        "THEME_DESCRIPTION": theme["description"],
+        "THEME_BGU_ARC": theme["bgu_arc"],
+        "THEME_BGU_ARC_TARGET": theme["bgu_arc_target"],
+        "THEME_SOROKA_ARC": theme["soroka_arc"],
+        "THEME_SOROKA_ARC_TARGET": theme["soroka_arc_target"],
+    }
+    for key, value in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        template = template.replace(key, value)
+    return template
+
+
+def get_html_template(light_theme: bool = False):
     """Return HTML template with proper escaping"""
-    return """
+    template = """
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset='utf-8'>
-    <title>Walking Trip Arc Visualization</title>
+    <title>THEME_TITLE</title>
     <script src='https://unpkg.com/deck.gl@^8.8.0/dist.min.js'></script>
     <script src='https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js'></script>
     <link href='https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css' rel='stylesheet' />
@@ -48,13 +139,13 @@ def get_html_template():
             position: absolute;
             top: 20px;
             left: 20px;
-            background: rgba(0, 0, 0, 0.85);
+            background: THEME_PANEL_BG;
             padding: 20px;
             border-radius: 10px;
-            color: #FFFFFF;
+            color: THEME_PANEL_COLOR;
             font-family: 'Helvetica Neue', Arial, sans-serif;
             z-index: 1;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            box-shadow: THEME_PANEL_SHADOW;
             backdrop-filter: blur(5px);
             width: 320px;
         }
@@ -62,12 +153,12 @@ def get_html_template():
             margin: 0 0 15px 0;
             font-size: 18px;
             font-weight: 500;
-            color: #ffffff;
+            color: THEME_PANEL_COLOR;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
         .time-control-group {
-            background: rgba(255, 255, 255, 0.1);
+            background: THEME_GROUP_BG;
             padding: 15px;
             border-radius: 8px;
             margin-bottom: 15px;
@@ -77,7 +168,7 @@ def get_html_template():
             margin: 10px 0;
             -webkit-appearance: none;
             height: 4px;
-            background: #4a4a4a;
+            background: THEME_SLIDER_BG;
             border-radius: 2px;
             outline: none;
         }
@@ -103,8 +194,8 @@ def get_html_template():
             padding: 8px 15px;
             border: none;
             border-radius: 5px;
-            background: #00d2ff;
-            color: #000;
+            background: THEME_BUTTON_BG;
+            color: THEME_BUTTON_COLOR;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
@@ -114,8 +205,8 @@ def get_html_template():
             box-shadow: 0 2px 4px rgba(0, 210, 255, 0.2);
         }
         .control-button.pause {
-            background: #ff4b4b;
-            color: white;
+            background: THEME_PAUSE_BG;
+            color: THEME_PAUSE_COLOR;
         }
         .speed-control {
             margin-top: 15px;
@@ -124,27 +215,27 @@ def get_html_template():
             display: block;
             margin-bottom: 8px;
             font-size: 14px;
-            color: #ccc;
+            color: THEME_SPEED_LABEL_COLOR;
         }
         #currentTime {
             font-size: 24px;
             font-weight: 600;
             text-align: center;
             margin: 10px 0;
-            color: #00d2ff;
+            color: THEME_TIME_COLOR;
             font-family: 'Courier New', monospace;
         }
         .stats-panel {
             position: absolute;
             top: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.85);
+            background: THEME_PANEL_BG;
             padding: 20px;
             border-radius: 10px;
-            color: #FFFFFF;
+            color: THEME_PANEL_COLOR;
             font-family: Arial;
             z-index: 1;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            box-shadow: THEME_PANEL_SHADOW;
             backdrop-filter: blur(5px);
         }
         .stats-panel h3 {
@@ -158,10 +249,10 @@ def get_html_template():
             font-size: 16px;
         }
         .bgu-stat {
-            color: #00d2ff;
+            color: #059669;
         }
         .soroka-stat {
-            color: #ff64ff;
+            color: #9333ea;
         }
     </style>
 </head>
@@ -187,11 +278,16 @@ def get_html_template():
         <div id="bguStats" class="stat-row bgu-stat">BGU Trips: 0</div>
         <div id="sorokaStats" class="stat-row soroka-stat">Soroka Trips: 0</div>
         <div id="totalStats" class="stat-row">Total Active Trips: 0</div>
-        <p style="color: #ccc; font-size: 14px; margin-bottom: 15px; max-width: 300px;">
-            Arcs in this visualization represent inbound walking trips to Ben Gurion University & Soroka Medical Center.
+        <p style="color: THEME_STATS_NOTE_COLOR; font-size: 14px; margin-bottom: 15px; max-width: 300px;">
+            THEME_DESCRIPTION
         </p>
     </div>
     <script>
+        const BGU_ARC_COLOR = THEME_BGU_ARC;
+        const BGU_ARC_TARGET = THEME_BGU_ARC_TARGET;
+        const SOROKA_ARC_COLOR = THEME_SOROKA_ARC;
+        const SOROKA_ARC_TARGET = THEME_SOROKA_ARC_TARGET;
+
         // Arc data
         const arcData = ARCDATA;
         
@@ -219,7 +315,7 @@ def get_html_template():
         // Initialize deck.gl
         const deckgl = new deck.DeckGL({
             container: 'container',
-            mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+            mapStyle: 'THEME_MAP_STYLE',
             initialViewState: {
                 longitude: 34.8113,
                 latitude: 31.2627,
@@ -231,7 +327,7 @@ def get_html_template():
             getTooltip: ({object}) => object && {
                 html: `<div style="direction: ltr; text-align: left;">Trip to ${object.destination}</div>`,
                 style: {
-                    backgroundColor: '#f5f5f5',
+                    backgroundColor: 'THEME_TOOLTIP_BG',
                     fontSize: '12px',
                     direction: 'ltr',
                     textAlign: 'left'
@@ -292,13 +388,13 @@ def get_html_template():
                 getSourcePosition: d => [d.source_lon, d.source_lat],
                 getTargetPosition: d => [d.target_lon, d.target_lat],
                 getSourceColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 210, 255] : [255, 100, 255];
+                    const baseColor = d.destination === 'Ben-Gurion-University' ?
+                        BGU_ARC_COLOR : SOROKA_ARC_COLOR;
                     return [...baseColor, 255 * d.opacity];
                 },
                 getTargetColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 150, 255] : [200, 50, 255];
+                    const baseColor = d.destination === 'Ben-Gurion-University' ?
+                        BGU_ARC_TARGET : SOROKA_ARC_TARGET;
                     return [...baseColor, 255 * d.opacity];
                 },
                 getWidth: 2,
@@ -325,13 +421,13 @@ def get_html_template():
                 getSourcePosition: d => [d.source_lon, d.source_lat],
                 getTargetPosition: d => [d.target_lon, d.target_lat],
                 getSourceColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 210, 255] : [255, 100, 255];
+                    const baseColor = d.destination === 'Ben-Gurion-University' ?
+                        BGU_ARC_COLOR : SOROKA_ARC_COLOR;
                     return [...baseColor, 50 * d.opacity];
                 },
                 getTargetColor: d => {
-                    const baseColor = d.destination === 'Ben-Gurion-University' ? 
-                        [0, 150, 255] : [200, 50, 255];
+                    const baseColor = d.destination === 'Ben-Gurion-University' ?
+                        BGU_ARC_TARGET : SOROKA_ARC_TARGET;
                     return [...baseColor, 50 * d.opacity];
                 },
                 getWidth: 2,
@@ -415,81 +511,111 @@ def get_html_template():
 </body>
 </html>
 """
+    return apply_theme_to_template(template, light_theme)
 
-def create_arc_visualization(input_file, output_dir):
-    """Create arc visualization from pre-processed temporal data"""
-    logger.info(f"Loading temporal data from: {input_file}")
 
-    try:
-        # Load temporal arc data
-        gdf = gpd.read_file(input_file)
+def load_arc_data_from_temporal(input_file) -> list:
+    gdf = gpd.read_file(input_file)
+    arc_data = []
+    for _, row in gdf.iterrows():
+        departure_time = pd.to_datetime(row["departure_time"])
+        random_minutes = np.random.uniform(0, 60)
+        hours = departure_time.hour + (departure_time.minute + random_minutes) / 60
+        coords = list(row["geometry"].coords)
+        source_coords = coords[0]
+        target_coords = coords[-1]
+        if not all(isinstance(value, (int, float)) for value in (*source_coords, *target_coords)):
+            logger.warning(f"Invalid coordinates found: {source_coords}, {target_coords}")
+            continue
+        arc_data.append(
+            {
+                "source_lon": float(source_coords[0]),
+                "source_lat": float(source_coords[1]),
+                "target_lon": float(target_coords[0]),
+                "target_lat": float(target_coords[1]),
+                "departure_time": float(hours),
+                "destination": str(row["destination"]),
+            }
+        )
+    return arc_data
 
-        # Convert GeoDataFrame to arc format
-        arc_data = []
-        for _, row in gdf.iterrows():
-            # Convert departure_time to hours since midnight
-            departure_time = pd.to_datetime(row["departure_time"])
-            # Add random minutes within the hour
-            random_minutes = np.random.uniform(0, 60)
-            hours = departure_time.hour + (departure_time.minute + random_minutes) / 60
 
-            # Extract coordinates from geometry
-            coords = list(row["geometry"].coords)
-            source_coords = coords[0]
-            target_coords = coords[-1]
+def build_work_arc_data(routes_file: Path, seed: int = 42) -> list:
+    np.random.seed(seed)
+    routes_gdf = gpd.read_file(routes_file)
+    work_lookup = build_work_share_lookup()
+    hourly_dists = compute_work_hourly_distributions()
+    arc_data = []
 
-            # Validate coordinates
-            if not (
-                isinstance(source_coords[0], (int, float))
-                and isinstance(source_coords[1], (int, float))
-                and isinstance(target_coords[0], (int, float))
-                and isinstance(target_coords[1], (int, float))
-            ):
-                logger.warning(
-                    f"Invalid coordinates found: {source_coords}, {target_coords}"
-                )
-                continue
+    for _, row in routes_gdf.iterrows():
+        num_trips = int(round(float(row["num_trips"]) * get_work_share(row, work_lookup)))
+        if num_trips <= 0:
+            continue
 
+        destination = row["destination"]
+        if destination not in hourly_dists:
+            continue
+
+        hours = list(hourly_dists[destination].keys())
+        probs = list(hourly_dists[destination].values())
+        coords = list(row.geometry.coords)
+        source_coords = coords[0]
+        target_coords = coords[-1]
+
+        for _ in range(num_trips):
+            hour = np.random.choice(hours, p=probs)
             arc_data.append(
                 {
-                    "source_lon": float(source_coords[0]),  # Ensure float
+                    "source_lon": float(source_coords[0]),
                     "source_lat": float(source_coords[1]),
                     "target_lon": float(target_coords[0]),
                     "target_lat": float(target_coords[1]),
-                    "departure_time": float(hours),  # Ensure float
-                    "destination": str(row["destination"]),  # Ensure string
+                    "departure_time": float(hour + np.random.uniform(0, 1)),
+                    "destination": str(destination),
                 }
             )
+    return arc_data
 
-        logger.info(f"Processed {len(arc_data)} temporal arcs")
 
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+def create_arc_visualization(
+    input_file=None,
+    output_dir=None,
+    work_trips_only: bool = False,
+    light_theme: bool = False,
+    output_filename: str = "walking_arc_visualization_glow.html",
+):
+    """Create arc visualization from temporal arcs or work-filtered walk routes."""
+    output_dir = Path(output_dir or OUTPUT_DIR)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Get template and replace placeholders
-        template = get_html_template()
+    try:
+        if work_trips_only:
+            routes_file = OUTPUT_DIR / "walk_routes_inbound.geojson"
+            logger.info("Building work-trip arcs from %s", routes_file)
+            arc_data = build_work_arc_data(routes_file)
+        else:
+            input_file = Path(input_file or OUTPUT_DIR / "temporal_arcs.json")
+            logger.info("Loading temporal data from: %s", input_file)
+            arc_data = load_arc_data_from_temporal(input_file)
+
+        logger.info("Processed %s arcs", len(arc_data))
+        template = get_html_template(light_theme=light_theme)
         html_content = template.replace("ARCDATA", json.dumps(arc_data))
 
-        # Save visualization
-        output_file = os.path.join(output_dir, "walking_arc_visualization_glow.html")
-        with open(output_file, "w") as f:
-            f.write(html_content)
-
-        logger.info(f"Visualization saved to: {output_file}")
+        output_file = output_dir / output_filename
+        output_file.write_text(html_content)
+        logger.info("Visualization saved to: %s", output_file)
         return output_file
 
     except Exception as e:
-        logger.error(f"Failed to create visualization: {str(e)}")
-        sys.exit(1)
+        logger.error("Failed to create visualization: %s", str(e))
+        raise
+
 
 if __name__ == "__main__":
-    # Example usage
-    input_file = os.path.join(OUTPUT_DIR, "temporal_arcs.json")
-    output_dir = OUTPUT_DIR
-
-    try:
-        output_file = create_arc_visualization(input_file, output_dir)
-        print(f"Arc visualization saved to: {output_file}")
-    except Exception as e:
-        logger.error(f"Error creating visualization: {str(e)}")
-        raise
+    create_arc_visualization(
+        output_dir=OUTPUT_ROOT / "working_trips",
+        work_trips_only=True,
+        light_theme=True,
+        output_filename="walking_arc_visualization.html",
+    )

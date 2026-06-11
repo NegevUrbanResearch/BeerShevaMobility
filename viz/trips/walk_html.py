@@ -13,49 +13,42 @@ HTML_TEMPLATE = """
     <style>
         body { margin: 0; padding: 0; }
         #container { width: 100vw; height: 100vh; position: relative; }
-        .control-panel {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 12px;
-            border-radius: 5px;
-            color: #FFFFFF;
-            font-family: Arial;
-        }
         .methodology-container {
             position: fixed;
             top: 20px;
             right: 20px;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(255, 255, 255, 0.92);
             padding: 12px;
             border-radius: 5px;
-            color: #FFFFFF;
+            color: #1a1a1a;
             font-family: Arial;
             max-width: 300px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
         }
         .time-display {
             position: absolute;
             top: 20px;
             left: 50%%;
             transform: translateX(-50%%);
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
+            background: rgba(255, 255, 255, 0.92);
+            color: #1a1a1a;
             padding: 12px 24px;
             border-radius: 5px;
             font-family: monospace;
             font-size: 24px;
             z-index: 1000;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
         }
         #tooltip {
             position: absolute;
             z-index: 1;
             pointer-events: none;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(255, 255, 255, 0.95);
             padding: 8px;
-            color: #fff;
+            color: #1a1a1a;
             border-radius: 4px;
             display: none;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
         }
     </style>
 </head>
@@ -63,16 +56,6 @@ HTML_TEMPLATE = """
     <div id="container"></div>
     <div id="tooltip"></div>
     <div class="time-display">07:00</div>
-    <div class="control-panel">
-        <div>
-            <label>Trail Length: <span id="trail-value">5</span></label>
-            <input type="range" min="1" max="20" value="5" id="trail-length" style="width: 200px">
-        </div>
-        <div>
-            <label>Animation Speed: <span id="speed-value">2</span></label>
-            <input type="range" min="0.1" max="5" step="0.1" value="1" id="animation-speed" style="width: 200px">
-        </div>
-    </div>
     <div class="methodology-container">
         <h3 style="margin: 0 0 10px 0;">Methodology</h3>
         <p style="margin: 0; font-size: 0.9em;">
@@ -179,9 +162,16 @@ HTML_TEMPLATE = """
             }
         };
 
+        if (typeof maplibregl !== 'undefined' && maplibregl.setRTLTextPlugin) {
+            maplibregl.setRTLTextPlugin(
+                'https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js',
+                true
+            );
+        }
+
         const deckgl = new deck.DeckGL({
             container: 'container',
-            mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-nolabels-gl-style/style.json',
+            mapStyle: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
             initialViewState: INITIAL_VIEW_STATE,
             controller: true
         });
@@ -317,7 +307,7 @@ HTML_TEMPLATE = """
                             getPolygon: d => d.polygon,
                             getElevation: d => d.height,
                             getFillColor: d => d.color,
-                            getLineColor: [255, 255, 255, 30],
+                            getLineColor: [60, 60, 60, 40],
                             lineWidthMinPixels: 1
                         }),
                         new deck.TripsLayer({
@@ -351,7 +341,7 @@ HTML_TEMPLATE = """
                             id: 'entrances',
                             data: ENTRANCE_FEATURES,
                             getPosition: d => d.position,
-                            getFillColor: [255, 255, 255, 200],
+                            getFillColor: [40, 40, 40, 200],
                             getRadius: 5,
                             pickable: true,
                             onHover: updateTooltip
@@ -363,21 +353,6 @@ HTML_TEMPLATE = """
             });
         }
 
-        // Control panel handlers
-        document.getElementById('trail-length').oninput = function() {
-            trailLength = Number(this.value);
-            document.getElementById('trail-value').textContent = this.value;
-            log('Trail length changed:', trailLength);
-        };
-
-        document.getElementById('animation-speed').oninput = function() {
-            animationSpeed = Number(this.value);
-            document.getElementById('speed-value').textContent = this.value;
-            log('Animation speed changed:', animationSpeed);
-            animate();
-        };
-
-        // Start animation
         animate();
     </script>
 </body>

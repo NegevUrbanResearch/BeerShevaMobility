@@ -6,12 +6,28 @@ import json
 import logging
 import os
 import re
+import sys
+from pathlib import Path
 
 import walk_html
 from pyproj import Transformer
 from shapely.geometry import Point
 
-from mobility.config import ATTRACTION_CENTERS_SHP, BUILDINGS_FILE, MAPBOX_API_KEY, OUTPUT_DIR
+from mobility.config import (
+    ATTRACTION_CENTERS_SHP,
+    BUILDINGS_FILE,
+    FILTERED_ENTRANCES_SHP,
+    MAPBOX_API_KEY,
+    OUTPUT_DIR,
+)
+from mobility.utils.walk_work_trips import (
+    DEFAULT_BGU_DIST,
+    DEFAULT_SOROKA_DIST,
+    build_work_share_lookup,
+    compute_work_hourly_distributions,
+    get_work_share,
+    normalize_distribution,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,15 +56,7 @@ POI_ID_MAP = {
     11: 'Soroka Hospital'
 }
 
-def normalize_distribution(dist):
-    """Normalize a probability distribution to sum to 1"""
-    total = sum(dist.values())
-    if total == 0:
-        logger.error("Distribution sums to 0")
-        return dist
-    return {k: v/total for k, v in dist.items()}
-
-def load_trip_data():
+def load_trip_data(work_trips_only=False):
     """Load and process walking trip data for animation with time-based distribution"""
     file_path = OUTPUT_DIR / "walk_routes_inbound.geojson"
     logger.info(f"Loading walking trip data from: {file_path}")
@@ -63,6 +71,7 @@ def load_trip_data():
     
     try:
         trips_gdf = gpd.read_file(file_path)
+        work_share_lookup = build_work_share_lookup() if work_trips_only else None
         raw_trip_count = trips_gdf['num_trips'].sum()
         logger.info(f"Loaded {len(trips_gdf)} walking routes representing {raw_trip_count:,} total trips")
         
@@ -71,22 +80,13 @@ def load_trip_data():
         center_lon = (total_bounds[0] + total_bounds[2]) / 2
         center_lat = (total_bounds[1] + total_bounds[3]) / 2
         
-        # Time distribution by hour (7-19) for BGU and Soroka
-        bgu_dist = {
-            7: 0.020829, 8: 0.148528, 9: 0.132706, 10: 0.181134,
-            11: 0.091648, 12: 0.110234, 13: 0.067655, 14: 0.071941, 15: 0.036371,
-            16: 0.044302, 17: 0.032646, 18: 0.029481, 19: 0.018466
-        }
-        
-        soroka_dist = {
-            7: 0.080456, 8: 0.270533, 9: 0.110459, 10: 0.089172,
-            11: 0.051793, 12: 0.052799, 13: 0.058666, 14: 0.103084, 15: 0.030003,
-            16: 0.042910, 17: 0.027154, 18: 0.017264, 19: 0.022796
-        }
-        
-        # Normalize distributions
-        bgu_dist = normalize_distribution(bgu_dist)
-        soroka_dist = normalize_distribution(soroka_dist)
+        if work_trips_only:
+            work_dists = compute_work_hourly_distributions()
+            bgu_dist = normalize_distribution(work_dists['Ben-Gurion-University'])
+            soroka_dist = normalize_distribution(work_dists['Soroka-Medical-Center'])
+        else:
+            bgu_dist = normalize_distribution(DEFAULT_BGU_DIST)
+            soroka_dist = normalize_distribution(DEFAULT_SOROKA_DIST)
         
         # Log normalized distributions
         logger.info("Normalized BGU distribution sum: %.6f", sum(bgu_dist.values()))
@@ -108,7 +108,12 @@ def load_trip_data():
             try:
                 coords = list(row.geometry.coords)
                 trip_duration = len(coords)
-                num_trips = int(row['num_trips'])
+                num_trips = float(row['num_trips'])
+                if work_trips_only:
+                    num_trips *= get_work_share(row, work_share_lookup)
+                num_trips = int(round(num_trips))
+                if num_trips <= 0:
+                    continue
                 
                 raw_destination = row['destination']
                 if raw_destination not in DEST_MAPPING:
@@ -215,9 +220,7 @@ def load_building_data():
                 continue
         
         # Load entrances and create icon features
-        entrances_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                    "data/filtered-entrances/filtered_entrances.shp")
-        entrances_gdf = gpd.read_file(entrances_path)
+        entrances_gdf = gpd.read_file(FILTERED_ENTRANCES_SHP)
         
         for idx, entrance in entrances_gdf.iterrows():
             icon_type = 'hospital' if entrance['Name'].startswith('Hospital') else 'university'
@@ -260,8 +263,10 @@ def load_building_data():
         logger.error(f"Error loading building data: {str(e)}")
         raise
 
-def create_animation():
-    trips_data, center_lat, center_lon, total_trips, hourly_totals = load_trip_data()
+def create_animation(output_path=None, work_trips_only=False):
+    trips_data, center_lat, center_lon, total_trips, hourly_totals = load_trip_data(
+        work_trips_only=work_trips_only
+    )
     buildings_data, entrance_features, poi_borders, poi_fills = load_building_data()
     
     # Update the HTML template to include icon handling
@@ -316,7 +321,10 @@ def create_animation():
                 logger.info(f"  - {key}: {value}")
         
         formatted_html = html_template % format_values
-        output_path = os.path.join(OUTPUT_DIR, "walking_trip_animation.html")
+        if output_path is None:
+            output_path = OUTPUT_DIR / "walking_trip_animation.html"
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, 'w') as f:
             f.write(formatted_html)
             
